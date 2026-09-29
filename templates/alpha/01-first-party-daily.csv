@@ -1,0 +1,3 @@
+Advertiser Name,Campaign Name,CM360 Campaign ID,Campaign Owner,Media Channel,Flight Start,Flight End,Report Date,Media Cost,Approved Budget,Pacing Percent,Primary KPI,Current Value,Goal,Platform,Billing Platform,1st Party Spend,Impressions,Clicks,Conversions
+Apex Athletics,Alpha Retargeting,ALPHA-RET-001,Jordan Davis,Display,2026-09-01,2026-10-31,2026-09-28,42000,100000,92,CPA,$42.00,$38.00,DSP,CM360,42000,500000,6000,1000
+Apex Athletics,Alpha Video,ALPHA-VID-002,Jordan Davis,Video,2026-09-01,2026-10-31,2026-09-28,57000,150000,88,VCR,72%,70%,DSP,CM360,57000,800000,4200,320

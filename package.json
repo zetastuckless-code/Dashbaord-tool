@@ -1,0 +1,16 @@
+{
+  "name": "northstar-campaign-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "vite --host 0.0.0.0 --port 4173",
+    "build": "vite build && cp -R templates dist/templates",
+    "test": "node --test",
+    "verify": "npm test && npm run build && test -f dist/templates/alpha/01-first-party-daily.csv"
+  },
+  "dependencies": {
+    "read-excel-file": "^5.8.6",
+    "vite": "^7.3.1"
+  }
+}

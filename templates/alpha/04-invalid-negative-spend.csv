@@ -1,0 +1,2 @@
+client,campaign,campaign_id,spend,budget,pacing,kpi,kpi_value,kpi_target,source
+Apex Athletics,Invalid Spend Test,ALPHA-BAD-003,-500,10000,90,CTR,1%,0.8%,DSP

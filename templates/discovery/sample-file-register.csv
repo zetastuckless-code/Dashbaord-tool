@@ -1,0 +1,2 @@
+sample_id,client,report_type,source_system,reporting_period,secure_file_reference,template_version,scenario,contains_sensitive_data,sanitized,owner,review_status,notes
+SAMPLE-001,Example Client,Daily performance,CM360,2026-09-01 to 2026-09-07,REPLACE_WITH_SECURE_REFERENCE,v1,Valid import,Yes,Yes,REPLACE_WITH_OWNER,Not started,Delete this example row before use

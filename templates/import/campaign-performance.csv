@@ -1,0 +1,5 @@
+client,campaign,campaign_id,owner,channel,start_date,end_date,data_as_of,spend,budget,pacing,kpi,kpi_value,kpi_target,source,updated,billing_source,first_party_spend,third_party_spend,impressions,clicks,conversions,revenue,video_starts,video_completions
+Apex Athletics,Always On - Retargeting,AA-RET-2026,Jordan Davis,Display,2026-09-01,2026-12-31,2026-09-25,184200,240000,112,CPA,$48.20,$36.50,1st party,Just now,1st party,184200,179600,,,3822,,,
+Apex Athletics,Fall Video - Prospecting,AA-VID-2026,Jordan Davis,Video,2026-08-15,2026-10-31,2026-09-25,221400,380000,101,VCR,74.8%,70%,CM360,Just now,CM360,216800,221400,,,,,100000,74800
+Lumon Home,Fall Product Launch,LH-FALL-2026,Morgan Lee,Display,2026-09-10,2026-11-15,2026-09-25,146800,280000,79,ROAS,4.2x,3.5x,CM360,Just now,CM360,128500,146800,,,,616560,,
+Nova Finance,Q3 Brand Awareness,NF-Q3-2026,Taylor Kim,Display,2026-07-01,2026-09-30,2026-09-25,131800,340000,96,CTR,0.82%,0.75%,1st party,Just now,1st party,131800,113100,1000000,8200,,,,
