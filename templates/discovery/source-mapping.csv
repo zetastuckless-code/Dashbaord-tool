@@ -1,0 +1,2 @@
+mapping_id,template_version,source_system,workbook_sheet,source_column,canonical_field,data_type,required,transformation,validation_rule,example_value,notes
+MAP-001,v1,Example source,Raw Data,Campaign ID,campaign_source_id,string,Yes,Trim whitespace,Must not be blank,123456,Delete this example row before use

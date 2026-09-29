@@ -1,0 +1,3 @@
+client,campaign,campaign_id,owner,channel,start_date,end_date,data_as_of,spend,budget,pacing,kpi,kpi_value,kpi_target,source,billing_source,third_party_spend,impressions,clicks,conversions
+Apex Athletics,Alpha Retargeting,ALPHA-RET-001,Jordan Davis,Display,2026-09-01,2026-10-31,2026-09-28,45500,100000,96,CPA,$45.50,$38.00,CM360,CM360,45500,512000,6150,1000
+Apex Athletics,Alpha Video,ALPHA-VID-002,Jordan Davis,Video,2026-09-01,2026-10-31,2026-09-28,59000,150000,91,VCR,72%,70%,CM360,CM360,59000,815000,4300,320

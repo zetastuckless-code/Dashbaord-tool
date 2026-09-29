@@ -1,0 +1,2 @@
+metric_key,display_name,description,source_system,source_field,aggregation,formula,unit,rounding,null_handling,attribution_window,authoritative_for_billing,owner,status,notes
+clicks,Clicks,Count of recorded ad clicks,Example source,Clicks,SUM,,count,whole number,Treat missing as unknown,,No,REPLACE_WITH_OWNER,Draft,Delete this example row before use

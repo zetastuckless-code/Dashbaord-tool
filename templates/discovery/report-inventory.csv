@@ -1,0 +1,2 @@
+report_id,report_name,client,campaign,source_system,delivery_method,cadence,report_grain,secure_file_reference,workbook_sheet,header_row,date_field,date_timezone,currency,gross_or_net,owner,expected_arrival,template_version,contains_pii,notes
+EXAMPLE-001,Daily Performance Example,Example Client,Example Campaign,CM360,Manual upload,Daily,Daily,REPLACE_WITH_SECURE_REFERENCE,Raw Data,1,Date,UTC,USD,Gross,REPLACE_WITH_OWNER,09:00 UTC,v1,No,Delete this example row before use

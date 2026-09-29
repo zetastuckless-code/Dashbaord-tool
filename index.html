@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Campaign performance and spend dashboard prototype" />
+    <title>Northstar | Campaign overview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#overview">Skip to dashboard content</a>
+    <div class="app-shell">
+      <aside class="sidebar" id="primary-navigation" aria-label="Primary navigation">
+        <a class="brand" href="#" aria-label="Northstar home">
+          <span class="brand-mark"><span></span></span>
+          <span>northstar</span>
+        </a>
+
+        <nav class="nav-list">
+          <a class="nav-item active" href="#overview" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
+          <a class="nav-item" href="#campaigns"><span class="nav-icon">◫</span>Campaigns</a>
+          <a class="nav-item" href="#reports"><span class="nav-icon">↗</span>Reports</a>
+          <a class="nav-item" href="#alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
+        </nav>
+
+        <p class="nav-label">Workspace</p>
+        <nav class="nav-list">
+          <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon">⇧</span>Data imports</button>
+          <a class="nav-item" href="#sources"><span class="nav-icon">⌁</span>Data sources</a>
+          <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>Settings</a>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="health-card" id="data-health-card" data-state="empty">
+            <div class="health-title"><span class="status-dot"></span><span id="data-health-title">Demo data</span></div>
+            <p id="data-health-detail">No reports imported</p>
+            <div class="health-row"><span>Last sync</span><strong id="data-health-sync">Not available</strong></div>
+          </div>
+          <div class="user-card">
+            <span class="avatar">JD</span>
+            <span><strong>Jordan Davis</strong><small>Campaign manager</small></span>
+            <button aria-label="User options">•••</button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content" id="overview" tabindex="-1">
+        <header class="topbar">
+          <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded="false">☰</button>
+          <div>
+            <p class="eyebrow">PERFORMANCE CENTER</p>
+            <h1>Good morning, Jordan</h1>
+            <p class="subtitle">Here’s how your campaigns are tracking today.</p>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" aria-label="Search">⌕</button>
+            <button class="icon-button notification" aria-label="Notifications">♢<span></span></button>
+            <button class="secondary-button" id="workspace-backup-button">Backup</button>
+            <button class="secondary-button" id="export-dashboard-button">Export CSV</button>
+            <button class="secondary-button" id="create-campaign-button">New campaign</button>
+            <button class="primary-button" id="upload-button"><span>＋</span> Import report</button>
+          </div>
+        </header>
+
+        <section class="control-bar" aria-label="Dashboard controls">
+          <div class="filter-group search-filter">
+            <label for="campaign-search">Find campaign</label>
+            <input id="campaign-search" type="search" placeholder="Name, ID, owner, source…" autocomplete="off" />
+          </div>
+          <div class="filter-group">
+            <label for="client-filter">Client</label>
+            <select id="client-filter">
+              <option value="all">All clients</option>
+              <option value="Apex Athletics">Apex Athletics</option>
+              <option value="Lumon Home">Lumon Home</option>
+              <option value="Nova Finance">Nova Finance</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="period-filter">Reporting period</label>
+            <select id="period-filter">
+              <option value="current">Current flight</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="status-filter">Flight status</label>
+            <select id="status-filter">
+              <option value="all">All active statuses</option>
+              <option value="live">Live</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="completed">Completed</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="owner-filter">Campaign owner</label>
+            <select id="owner-filter"><option value="all">All owners</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="channel-filter">Channel</label>
+            <select id="channel-filter"><option value="all">All channels</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="campaign-sort">Sort by</label>
+            <select id="campaign-sort">
+              <option value="portfolio">Portfolio order</option><option value="pacing-risk">Pacing risk</option><option value="spend">Highest spend</option><option value="freshness">Newest data</option><option value="name">Campaign name</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="attention-filter">Alert status</label>
+            <select id="attention-filter"><option value="all">All campaigns</option><option value="attention">Needs attention</option><option value="clear">No active alerts</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="kpi-view">KPI view</label>
+            <select id="kpi-view"><option value="primary">Campaign primary</option><option value="CTR">CTR</option><option value="VCR">VCR</option><option value="CPA">CPA</option><option value="ROAS">ROAS</option></select>
+          </div>
+          <div class="source-control" aria-label="Spend source">
+            <span>Spend source</span>
+            <div class="segmented" role="group">
+              <button class="active" type="button" data-source="billing" aria-pressed="true">Billing</button>
+              <button type="button" data-source="first" aria-pressed="false">1st party</button>
+              <button type="button" data-source="third" aria-pressed="false">3rd party</button>
+            </div>
+          </div>
+          <button class="text-button" id="manage-saved-views" type="button">Saved views</button>
+          <button class="text-button reset-view-button" id="reset-dashboard-view" type="button">Reset view</button>
+          <p class="updated"><span></span> Updated today at 9:42 AM</p>
+        </section>
+
+        <section class="metric-grid" aria-label="Key performance metrics">
+          <article class="metric-card">
+            <div class="metric-heading"><span>Active media budget</span><span class="metric-icon violet">$</span></div>
+            <strong class="metric-value" id="budget-value">$1.24M</strong>
+            <div class="metric-detail"><span class="positive">↗ 8.2%</span><span>vs. last period</span></div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-heading"><span id="spend-metric-label">Spend to date</span><span class="metric-icon blue">↗</span></div>
+            <strong class="metric-value" id="spend-value">$684.2K</strong>
+            <div class="progress-track"><span id="spend-progress" style="width:55%"></span></div>
+            <div class="progress-copy"><span id="utilization-value">55.2% utilized</span><span id="remaining-value">$555.8K remaining</span></div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-heading"><span>Overall pacing</span><span class="metric-icon green">◷</span></div>
+            <strong class="metric-value" id="portfolio-pacing-value">—</strong>
+            <div class="metric-detail"><span class="status-pill good" id="portfolio-pacing-status">On track</span><span id="portfolio-pacing-target">Target: 85–110%</span></div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-heading"><span id="portfolio-kpi-label">Primary KPI mix</span><span class="metric-icon violet">K</span></div>
+            <strong class="metric-value" id="portfolio-kpi-value">—</strong>
+            <div class="metric-detail"><span id="portfolio-kpi-coverage">No KPI data</span><span>live campaigns</span></div>
+          </article>
+          <article class="metric-card alert-card">
+            <div class="metric-heading"><span>Needs attention</span><span class="metric-icon amber">!</span></div>
+            <strong class="metric-value" id="alert-count">4</strong>
+            <div class="metric-detail" id="alert-summary"><span class="warning-text">2 critical</span><span>across 3 campaigns</span></div>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel performance-panel">
+            <div class="panel-header">
+              <div><h2>Spend performance</h2><p id="spend-chart-context">Billing spend vs. plan across active campaigns</p></div>
+              <div class="legend"><span><i class="actual"></i>Actual</span><span><i class="planned"></i>Planned</span><button class="text-button" id="export-spend-trend" type="button">Export trend</button></div>
+            </div>
+            <div class="chart-wrap">
+              <div class="y-axis" id="spend-chart-y-axis"><span>—</span><span>—</span><span>—</span><span>$0</span></div>
+              <svg class="spend-chart" id="spend-chart" viewBox="0 0 760 270" preserveAspectRatio="none" role="img" aria-label="Actual and planned cumulative spend chart">
+                <defs>
+                  <linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6658e8" stop-opacity=".24"/><stop offset="1" stop-color="#6658e8" stop-opacity="0"/></linearGradient>
+                </defs>
+                <g class="grid-lines"><line x1="0" x2="760" y1="10" y2="10"/><line x1="0" x2="760" y1="92" y2="92"/><line x1="0" x2="760" y1="174" y2="174"/><line x1="0" x2="760" y1="256" y2="256"/></g>
+                <path class="area" id="spend-chart-area" d=""/>
+                <path class="planned-line" id="spend-chart-planned" d=""/>
+                <path class="actual-line" id="spend-chart-actual" d=""/>
+              </svg>
+              <p class="chart-empty" id="spend-chart-empty" hidden>Import at least two dated campaign reports to display the portfolio trend.</p>
+              <div class="x-axis" id="spend-chart-x-axis"></div>
+            </div>
+          </article>
+
+          <article class="panel alerts-panel" id="alerts">
+            <div class="panel-header"><div><h2>Priority alerts</h2><p>Issues that need your attention</p></div><div class="panel-actions"><button class="text-button" id="export-alerts-button" type="button">Export alerts</button><button class="text-button" id="alert-settings-button">Configure</button></div></div>
+            <div class="alert-list" id="alert-list"></div>
+          </article>
+        </section>
+
+        <section class="panel campaign-panel" id="campaigns">
+          <div class="panel-header campaign-header">
+            <div><h2>Campaign performance</h2><p>Live performance and pacing across your portfolio</p></div>
+            <button class="secondary-button" id="customize-columns-button">Customize columns</button>
+          </div>
+          <div class="table-wrap">
+            <table><caption class="sr-only">Campaign performance, pacing, KPI, source, and freshness</caption>
+              <thead><tr><th>Client / campaign</th><th data-column="status">Status</th><th data-column="spend">Spend</th><th data-column="budget">Budget</th><th data-column="pacing">Pacing</th><th data-column="kpi" id="campaign-kpi-heading">Primary KPI</th><th data-column="source">Source</th><th data-column="updated">Updated</th><th></th></tr></thead>
+              <tbody id="campaign-rows"></tbody>
+            </table>
+          </div>
+          <div class="table-footer"><span id="campaign-count">Showing 4 active campaigns</span><button class="text-button">View all campaigns →</button></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="workspace-backup-dialog" aria-labelledby="workspace-backup-title">
+      <form class="dialog-card" id="workspace-backup-form">
+        <div class="dialog-header"><div><p class="eyebrow">LOCAL WORKSPACE</p><h2 id="workspace-backup-title">Back up or restore dashboard data</h2></div><button class="close-button close-workspace-backup" type="button" aria-label="Close">×</button></div>
+        <p>Download campaigns, preferences, alert settings, acknowledgments, and import history as JSON. Restoring replaces the workspace saved in this browser.</p>
+        <div class="workspace-backup-actions"><button class="secondary-button" id="download-workspace-backup" type="button">Download backup</button><label class="secondary-button" for="workspace-backup-input">Choose backup file</label><input id="workspace-backup-input" type="file" accept=".json,application/json" hidden /></div>
+        <p class="settings-error" id="workspace-backup-error" hidden></p>
+        <div class="workspace-danger-zone"><div><strong>Reset local workspace</strong><small>Remove imported campaigns, history, settings, saved views, and acknowledgments from this browser.</small></div><button class="text-button destructive-text" id="reset-workspace" type="button">Reset to demo data</button></div>
+        <div class="dialog-actions"><button class="secondary-button close-workspace-backup" type="button">Cancel</button><button class="primary-button" id="restore-workspace-backup" type="submit" disabled>Restore workspace</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="saved-views-dialog" aria-labelledby="saved-views-title">
+      <form class="dialog-card" id="saved-views-form">
+        <div class="dialog-header"><div><p class="eyebrow">DASHBOARD VIEWS</p><h2 id="saved-views-title">Save and reopen portfolio views</h2></div><button class="close-button close-saved-views" type="button" aria-label="Close">×</button></div>
+        <p>Save the current filters, search, reporting period, spend source, sort, and KPI selection for quick reuse.</p>
+        <div class="saved-view-create"><input id="saved-view-name" maxlength="60" placeholder="View name, e.g. Apex pacing review" /><button class="primary-button" type="submit">Save current view</button></div>
+        <p class="settings-error" id="saved-view-error" hidden></p>
+        <div class="saved-view-list" id="saved-view-list"></div>
+        <div class="dialog-actions"><button class="secondary-button close-saved-views" type="button">Close</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="upload-dialog" aria-labelledby="upload-title">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-header"><div><p class="eyebrow">DATA IMPORT</p><h2 id="upload-title">Import a performance report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <p>Select an Excel or CSV report to validate before any data is added to the dashboard. Your existing data remains unchanged until validation succeeds.</p>
+        <label class="dropzone" for="file-input"><span class="upload-symbol">⇧</span><strong>Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
+        <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+        <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
+        <div class="validation-result" id="validation-result" hidden role="status"></div>
+        <button class="text-button validation-export-button" id="export-validation-issues" type="button" hidden>Download validation issues</button>
+        <fieldset class="import-mode"><legend>Import behavior</legend><label><input type="radio" name="import-mode" value="merge" checked /><span><strong>Merge with dashboard</strong><small>Add campaigns and reconcile matching source reports.</small></span></label><label><input type="radio" name="import-mode" value="replace" /><span><strong>Replace dashboard data</strong><small>Remove current campaign rows before importing this report.</small></span></label></fieldset>
+        <section class="import-preview" id="import-preview" hidden aria-labelledby="import-preview-title"><div class="detail-section-heading"><h3 id="import-preview-title">Import impact preview</h3><small id="import-preview-mode"></small></div><div class="import-preview-summary" id="import-preview-summary"></div><div class="import-preview-list" id="import-preview-list"></div></section>
+        <section class="mapping-review" id="mapping-review" hidden aria-labelledby="mapping-review-title"><div class="detail-section-heading"><h3 id="mapping-review-title">Source column mapping</h3><button class="text-button" id="export-mapping-review" type="button">Download mapping</button></div><div class="mapping-review-summary" id="mapping-review-summary"></div><div class="mapping-review-list" id="mapping-review-list"></div></section>
+        <a class="template-link" href="templates/import/campaign-performance.csv" download>↓ Download CSV template</a>
+        <section class="import-history-section" aria-labelledby="import-history-title">
+          <div class="detail-section-heading"><h3 id="import-history-title">Recent import activity</h3><div class="panel-actions"><button class="text-button" id="view-import-audit" type="button">View all</button><button class="text-button" id="undo-last-import" type="button">Undo last import</button><button class="text-button" id="export-import-history" type="button">Export audit</button></div></div>
+          <div id="import-history"></div>
+        </section>
+        <div class="dialog-actions"><button class="secondary-button" value="cancel">Cancel</button><button class="secondary-button" id="validate-button" type="button" disabled>Validate report</button><button class="primary-button" id="confirm-import-button" type="button" disabled>Import validated report</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="import-audit-dialog" aria-labelledby="import-audit-title">
+      <form method="dialog" class="dialog-card import-audit-card">
+        <div class="dialog-header"><div><p class="eyebrow">IMPORT AUDIT</p><h2 id="import-audit-title">Report processing history</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="import-audit-summary" id="import-audit-summary"></div>
+        <div class="import-audit-controls"><input id="import-audit-search" type="search" placeholder="Search file, issue, or fingerprint" /><select id="import-audit-status"><option value="all">All statuses</option><option value="successful">Successful</option><option value="attention">Needs attention</option><option value="historical">Historical</option></select></div>
+        <div class="import-audit-list" id="import-audit-list"></div>
+        <div class="dialog-actions"><button class="secondary-button" value="cancel">Close</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="alert-dialog" aria-labelledby="alert-settings-title">
+      <form class="dialog-card" id="alert-settings-form">
+        <div class="dialog-header"><div><p class="eyebrow">ALERT RULES</p><h2 id="alert-settings-title">Configure monitoring thresholds</h2></div><button class="close-button close-alert-dialog" type="button" aria-label="Close">×</button></div>
+        <p>These rules apply to the campaign portfolio and update alerts immediately.</p>
+        <div class="settings-grid alert-settings-grid">
+          <label>Underpacing below<input id="under-pacing-input" type="number" min="0" max="99.9" step="0.1" required /><span>%</span></label>
+          <label>Overpacing above<input id="over-pacing-input" type="number" min="100.1" step="0.1" required /><span>%</span></label>
+          <label class="wide">Source discrepancy above<input id="discrepancy-input" type="number" min="0" max="100" step="0.1" required /><span>%</span></label>
+          <label class="wide">KPI target tolerance<input id="kpi-tolerance-input" type="number" min="0" max="100" step="0.1" required /><span>%</span></label>
+          <label class="wide">KPI deterioration above<input id="kpi-deterioration-input" type="number" min="0" max="1000" step="0.1" required /><span>%</span></label>
+          <label class="wide">Data stale after<input id="stale-hours-input" type="number" min="1" max="720" step="1" required /><span>hours</span></label>
+          <label class="wide">Minimum volume for KPI and source alerts<input id="minimum-impressions-input" type="number" min="0" max="1000000000" step="1" required /><span>impressions</span></label>
+        </div>
+        <p class="settings-error" id="alert-settings-error" hidden></p>
+        <section class="acknowledgment-section"><div class="detail-section-heading"><span>Acknowledged alert conditions</span><small>Restore individual conditions to the active queue</small></div><div id="acknowledgment-list" class="acknowledgment-list"></div></section>
+        <div class="dialog-actions"><button class="text-button" id="reset-acknowledged-alerts" type="button">Reset acknowledged alerts</button><button class="secondary-button close-alert-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Save rules</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="create-campaign-dialog" aria-labelledby="create-campaign-title">
+      <form class="dialog-card" id="create-campaign-form">
+        <div class="dialog-header"><div><p class="eyebrow">CAMPAIGN SETUP</p><h2 id="create-campaign-title">Create a campaign</h2></div><button class="close-button close-create-campaign-dialog" type="button" aria-label="Close">×</button></div>
+        <p>Set the approved budget and KPI before importing performance data.</p>
+        <div class="settings-grid campaign-create-grid">
+          <label>Client<input id="new-campaign-client" required /></label><label>Campaign name<input id="new-campaign-name" required /></label>
+          <label>Stable source campaign ID<input id="new-campaign-id" placeholder="CM360 or DSP campaign ID" /></label><label>Campaign owner<input id="new-campaign-owner" placeholder="Campaign manager" /></label>
+          <label class="wide">Channel<input id="new-campaign-channel" placeholder="Display, video, paid social…" /></label>
+          <label>Start date<input id="new-campaign-start" type="date" required /></label><label>End date<input id="new-campaign-end" type="date" required /></label>
+          <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" placeholder="250000" required /></label>
+          <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
+          <label>Primary KPI<input id="new-campaign-kpi" placeholder="VCR" required /></label><label>KPI target<input id="new-campaign-target" placeholder="70%" required /></label>
+          <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+          <label class="wide">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" required /></label>
+        </div>
+        <p class="revision-disclaimer">The prototype retains the IO filename and setup metadata locally; production will store the document securely.</p>
+        <p class="settings-error" id="create-campaign-error" hidden></p>
+        <div class="dialog-actions"><button class="secondary-button close-create-campaign-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Create campaign</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="column-dialog" aria-labelledby="column-settings-title">
+      <form class="dialog-card" id="column-settings-form">
+        <div class="dialog-header"><div><p class="eyebrow">TABLE SETTINGS</p><h2 id="column-settings-title">Customize campaign columns</h2></div><button class="close-button close-column-dialog" type="button" aria-label="Close">×</button></div>
+        <p>Choose the performance fields shown in your campaign overview. Client and campaign always remain visible.</p>
+        <div class="column-options">
+          <label><input type="checkbox" name="campaign-column" value="status" />Status</label>
+          <label><input type="checkbox" name="campaign-column" value="spend" />Spend</label>
+          <label><input type="checkbox" name="campaign-column" value="budget" />Budget</label>
+          <label><input type="checkbox" name="campaign-column" value="pacing" />Pacing</label>
+          <label><input type="checkbox" name="campaign-column" value="kpi" />Primary KPI</label>
+          <label><input type="checkbox" name="campaign-column" value="source" />Source and discrepancy</label>
+          <label><input type="checkbox" name="campaign-column" value="updated" />Last updated</label>
+        </div>
+        <p class="settings-error" id="column-settings-error" hidden></p>
+        <div class="dialog-actions"><button class="secondary-button close-column-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Apply columns</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="campaign-dialog" aria-labelledby="campaign-settings-title">
+      <form class="dialog-card campaign-settings-card" id="campaign-settings-form">
+        <div class="dialog-header"><div><p class="eyebrow">CAMPAIGN SETTINGS</p><h2 id="campaign-settings-title">Edit dashboard display</h2><p id="campaign-dialog-client"></p></div><button class="close-button close-campaign-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="source-summary">
+          <div><span>1st-party spend</span><strong id="detail-first-spend">—</strong></div>
+          <div><span>3rd-party spend</span><strong id="detail-third-spend">—</strong></div>
+          <div><span>Comparison</span><strong id="detail-variance" class="detail-variance">—</strong></div>
+        </div>
+        <div class="source-summary pacing-summary">
+          <div><span>Expected spend</span><strong id="detail-expected-spend">—</strong></div>
+          <div><span>Projected final spend</span><strong id="detail-projected-spend">—</strong></div>
+          <div><span>Flight elapsed</span><strong id="detail-flight-progress">—</strong></div>
+        </div>
+        <section id="component-metrics-section" hidden>
+          <div class="detail-section-heading"><span>Imported performance metrics</span><small id="kpi-calculation-note"></small></div>
+          <div class="source-summary component-summary" id="component-metrics"></div>
+          <div id="calculated-kpis-group">
+            <div class="detail-section-heading"><span>Available calculated KPIs</span><small>Using authoritative billing spend</small></div>
+            <div class="source-summary component-summary" id="calculated-kpis"></div>
+          </div>
+        </section>
+        <section id="snapshot-comparison-section" hidden>
+          <div class="detail-section-heading"><span>Performance change</span><label class="comparison-period-control"><span>Compare</span><select id="snapshot-period-select"><option value="previous">Previous report</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label></div>
+          <small class="comparison-period-label" id="snapshot-comparison-period"></small>
+          <div class="source-summary component-summary" id="snapshot-comparison-metrics"></div>
+        </section>
+        <section class="snapshot-history-section">
+          <div class="detail-section-heading"><span>Report snapshot history</span><button class="text-button" id="export-snapshot-history" type="button">Export CSV</button></div>
+          <div id="snapshot-history-list" class="snapshot-history-list"></div>
+        </section>
+        <div class="settings-grid">
+          <label class="wide">Campaign display name<input id="campaign-name-input" autocomplete="off" required /></label>
+          <label class="wide">Stable source campaign ID<input id="campaign-id-input" autocomplete="off" placeholder="CM360 or DSP campaign ID" /></label>
+          <label class="wide">Campaign owner<input id="campaign-owner-input" autocomplete="off" placeholder="Campaign manager" /></label>
+          <label class="wide">Channel<input id="campaign-channel-input" autocomplete="off" placeholder="Display, video, paid social…" /></label>
+          <label>Billing source<select id="billing-source-input"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
+          <label>Expected report<select id="report-cadence-input"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+          <label>Primary KPI<input id="campaign-kpi-input" required /></label>
+          <label>Current value<input id="campaign-kpi-value-input" required /></label>
+          <label>KPI target<input id="campaign-kpi-target-input" required /></label>
+        </div>
+        <section class="line-item-section">
+          <div class="budget-revision-heading"><div><span>Line item flights</span><strong id="line-item-flight-count">No flights</strong><small id="line-item-budget-summary">One flight and total budget per line item</small></div><button type="button" class="text-button" id="export-line-items" disabled>Export CSV</button></div>
+          <div id="line-item-flight-list" class="line-item-flight-list"></div>
+          <div class="line-item-import-row"><label class="text-button" for="line-item-import-input">Import CSV</label><input id="line-item-import-input" type="file" accept=".csv,text/csv" /><small>Use a previously exported line-item plan.</small></div>
+          <div class="settings-grid revision-fields">
+            <label>Line item ID<input id="line-item-id-input" autocomplete="off" /></label>
+            <label>Line item name<input id="line-item-name-input" autocomplete="off" /></label>
+            <label>Flight start<input id="line-item-start-input" type="date" /></label>
+            <label>Flight end<input id="line-item-end-input" type="date" /></label>
+            <label class="wide">Total line item budget<input id="line-item-budget-input" inputmode="decimal" placeholder="13285.30" /></label>
+            <button class="secondary-button wide" id="save-line-item-flight" type="button">Save line item flight</button>
+          </div>
+        </section>
+        <section class="budget-revision-section">
+          <div class="budget-revision-heading"><div><span>Current approved budget</span><strong id="current-budget-value">—</strong><small id="budget-revision-meta">No budget revisions recorded</small></div><button type="button" class="text-button" id="toggle-budget-revision">+ Add budget revision</button></div>
+          <div class="detail-section-heading"><span>Budget revision history</span><button class="text-button" id="export-budget-revisions" type="button">Export CSV</button></div>
+          <div id="budget-revision-list" class="budget-revision-list"></div>
+          <div class="settings-grid revision-fields" id="budget-revision-fields" hidden>
+            <label>Revised budget<input id="revision-budget-input" inputmode="decimal" placeholder="125000" /></label>
+            <label>Effective date<input id="revision-date-input" type="date" /></label>
+            <label class="wide">Approved IO / budget document<input id="revision-io-input" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
+            <label class="wide">Revision note<input id="revision-note-input" placeholder="Reason for the budget change" /></label>
+            <p class="revision-disclaimer wide">This prototype stores the document name and revision details locally. Production storage will retain the approved file in secure object storage.</p>
+          </div>
+        </section>
+        <p class="settings-note">Display names can change without affecting the stable source identifiers used during import.</p>
+        <p class="settings-error" id="campaign-settings-error" hidden></p>
+        <div class="dialog-actions"><button class="text-button" id="archive-campaign-button" type="button">Archive campaign</button><button class="secondary-button" id="acknowledge-alert-button" type="button" hidden>Acknowledge alert</button><button class="secondary-button close-campaign-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Save changes</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"><span>✓</span><div><strong id="toast-title">Report imported</strong><small id="toast-message">Your campaign data is now available.</small></div></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
