@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { findHeaderRow, rowsToCsv } from "../lib/workbook-import.js";
-import { extractPerformanceSummaryCampaigns, inferClientName, sheetPriority } from "../lib/native-workbook-import.js";
+import { extractPerformanceSummaryCampaigns, inferClientName, mergeNativeCampaigns, sheetPriority } from "../lib/native-workbook-import.js";
 import { validateCampaignCsv } from "../lib/importer.js";
 
 test("rowsToCsv preserves commas, quotes, line breaks, dates, and blanks", () => {
@@ -88,4 +88,42 @@ test("never scans raw-data, pixel, or mapping worksheets", () => {
   for (const name of ["DSP Raw Data", "Pixel Data", "Mapping"]) assert.equal(sheetPriority(name), 3);
   assert.equal(sheetPriority("Performance Summary"), 0);
   assert.equal(sheetPriority("May"), 2);
+});
+
+test("imports a flight summary without a budget column and leaves the budget blank", () => {
+  const rows = [
+    [null, null, "Note: not for billing"],
+    [null, null, "ZIAO-1_Ro2 - National Pork Board", null, null, null, null, null, null, "Start Date", "2026-05-25"],
+    [null, null, null, null, null, null, null, null, null, "End Date", "2026-09-07"],
+    [null, null, "Channel", "Impressions", "Clicks", "CTR", "Video Starts", "Video Completions", "VCR", "Spend"],
+    [null, null, "Display Awareness", 14_829_299, 63_717, 0.0043, null, null, null, 66_731.85],
+    [null, null, "OLV", 5_364_470, 2_921, 0.0005, 5_359_966, 4_943_425, 0.92, 75_102.58],
+    [null, null, null, 20_193_769, 66_638, 0.0033, 5_359_966, 4_943_425, 0.92, 141_834.43]
+  ];
+  const campaigns = extractPerformanceSummaryCampaigns(rows, { sheetName: "05.25-09.07 Flight", fileName: "National Pork Board - Flight 2 2026 Reporting.xlsx" });
+  assert.equal(campaigns.length, 2);
+  assert.equal(campaigns[0].client, "National Pork Board");
+  assert.equal(campaigns[0].campaign, "Display Awareness");
+  assert.equal(campaigns[0].budget, "");
+  assert.equal(campaigns[0].start_date, "2026-05-25");
+  const result = validateCampaignCsv(rowsToCsv([Object.keys(campaigns[0]), ...campaigns.map(campaign => Object.values(campaign))]));
+  assert.equal(result.valid, true);
+  assert.equal(result.campaigns[0].budget, null);
+});
+
+test("strips flight and date-range report suffixes from client names", () => {
+  assert.equal(inferClientName("National Pork Board - Flight 2 2026 Reporting.xlsx"), "National Pork Board");
+  assert.equal(inferClientName("National Pork Board - March-December 2026 Reporting Montly.xlsx"), "National Pork Board");
+});
+
+test("keeps the most recent flight when a workbook repeats a line across flights", () => {
+  const flight = (end, spend) => ({ client: "NPB", campaign: "OLV", campaign_id: "", channel: "OLV", end_date: end, spend, first_party_spend: spend, third_party_spend: "" });
+  const [merged] = mergeNativeCampaigns([flight("2026-04-15", 100), flight("2026-09-07", 300), flight("2026-06-01", 200)]);
+  assert.equal(merged.spend, 300);
+});
+
+test("ignores a later flight that has not delivered yet", () => {
+  const flight = (end, spend) => ({ client: "NPB", campaign: "OLV", campaign_id: "", channel: "OLV", end_date: end, spend, first_party_spend: spend, third_party_spend: "" });
+  const [merged] = mergeNativeCampaigns([flight("2026-09-07", 300), flight("2026-12-31", 0)]);
+  assert.equal(merged.spend, 300);
 });

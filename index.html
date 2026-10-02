@@ -296,11 +296,12 @@
           <label>Stable source campaign ID<input id="new-campaign-id" placeholder="CM360 or DSP campaign ID" /></label><label>Campaign owner<input id="new-campaign-owner" placeholder="Campaign manager" /></label>
           <label class="wide">Channel<input id="new-campaign-channel" placeholder="Display, video, paid social…" /></label>
           <label>Start date<input id="new-campaign-start" type="date" required /></label><label>End date<input id="new-campaign-end" type="date" required /></label>
-          <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" placeholder="250000" required /></label>
+          <label>Budget source<select id="new-campaign-budget-source"><option value="manual">Enter manually</option><option value="io">From an insertion order</option><option value="report">Read from reports</option></select></label>
+          <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" placeholder="250000" /><small id="new-campaign-budget-hint" class="field-hint"></small></label>
           <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
           <label>Primary KPI<input id="new-campaign-kpi" placeholder="VCR" required /></label><label>KPI target<input id="new-campaign-target" placeholder="70%" required /></label>
           <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-          <label class="wide">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" required /></label>
+          <label class="wide" id="new-campaign-io-label">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
         </div>
         <p class="revision-disclaimer">The prototype retains the IO filename and setup metadata locally; production will store the document securely.</p>
         <p class="settings-error" id="create-campaign-error" hidden></p>

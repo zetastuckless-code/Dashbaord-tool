@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeCampaignImports } from "../lib/import-merge.js";
+import { mergeCampaignImports, resolveMergedBudget } from "../lib/import-merge.js";
 
 test("adds new campaigns without removing the existing portfolio", () => {
   const result = mergeCampaignImports([{ client: "A", name: "One", source: "CM360", spend: 10 }], [{ client: "B", name: "Two", source: "DSP", spend: 20 }]);
@@ -66,4 +66,21 @@ test("does not mutate existing or imported arrays", () => {
   mergeCampaignImports(existing, imported);
   assert.equal(existing[0].spend, 1);
   assert.equal(imported[0].spend, 2);
+});
+
+test("manual and insertion-order budgets are never overwritten by a report", () => {
+  assert.deepEqual(resolveMergedBudget({ budget: 100, budgetSource: "manual" }, { budget: 999 }), { budget: 100, budgetSource: "manual" });
+  assert.deepEqual(resolveMergedBudget({ budget: 100, ioFileName: "io.pdf" }, { budget: 999 }), { budget: 100, budgetSource: "io" });
+});
+
+test("report-sourced budgets update, and reports without a budget never erase one", () => {
+  assert.deepEqual(resolveMergedBudget({ budget: 100, budgetSource: "report" }, { budget: 120 }), { budget: 120, budgetSource: "report" });
+  assert.deepEqual(resolveMergedBudget({ budget: 100, budgetSource: "report" }, { budget: null }), { budget: 100, budgetSource: "report" });
+});
+
+test("a budgetless campaign picks up the first budget a report provides", () => {
+  assert.deepEqual(resolveMergedBudget({ budget: null, budgetSource: null }, { budget: 500 }), { budget: 500, budgetSource: "report" });
+  assert.deepEqual(resolveMergedBudget({ budget: null }, { budget: null }), { budget: null, budgetSource: null });
+  const merged = mergeCampaignImports([{ client: "A", name: "One", source: "CM360", budget: null }], [{ client: "A", name: "One", source: "CM360", spend: 5, budget: 800 }]);
+  assert.equal(merged.campaigns[0].budget, 800);
 });

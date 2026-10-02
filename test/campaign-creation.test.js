@@ -29,7 +29,7 @@ test("rejects an end date before the start date", () => {
 test("rejects missing required campaign setup fields", () => {
   const result = createCampaign({});
   assert.equal(result.valid, false);
-  assert.equal(result.errors.length, 9);
+  assert.equal(result.errors.length, 8);
   assert.equal(result.campaign, null);
 });
 
@@ -47,4 +47,27 @@ test("rejects an unsupported report cadence atomically", () => {
   assert.equal(result.valid, false);
   assert.deepEqual(result.errors, ["Choose a valid report cadence."]);
   assert.equal(result.campaign, null);
+});
+
+test("manual budgets do not require an insertion order", () => {
+  const result = createCampaign({ ...valid, ioFileName: "", budgetSource: "manual" });
+  assert.equal(result.valid, true);
+  assert.equal(result.campaign.budgetSource, "manual");
+  assert.equal(result.campaign.ioFileName, null);
+});
+
+test("insertion-order budgets require the attached document", () => {
+  const result = createCampaign({ ...valid, ioFileName: "", budgetSource: "io" });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some(error => error.includes("insertion order")));
+  assert.equal(createCampaign(valid).campaign.budgetSource, "io");
+});
+
+test("report-sourced budgets may be left blank until a report supplies one", () => {
+  const result = createCampaign({ ...valid, ioFileName: "", budget: "", budgetSource: "report" });
+  assert.equal(result.valid, true);
+  assert.equal(result.campaign.budget, null);
+  assert.equal(result.campaign.pacing, null);
+  assert.equal(createCampaign({ ...valid, budget: "", budgetSource: "manual" }).valid, false);
+  assert.equal(createCampaign({ ...valid, budget: "abc", budgetSource: "report" }).valid, false);
 });

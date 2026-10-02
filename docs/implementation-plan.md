@@ -8,7 +8,7 @@ This plan converts the discovery workbook into an actionable delivery sequence. 
 - The initial KPI catalog and product scope are documented.
 - A browser prototype now exercises manual CSV/XLSX validation, source-column mapping review, pre-import impact review and rollback, stable campaign-ID matching, source reconciliation, alerts, budget revisions, and import history.
 - Daily CM360/Flashtalking delivery reports, a by-client rollup, and a browser-based report-folder auto-pull (fed by Power Automate; see `automation-setup.md`) are now in the prototype.
-- Summary workbooks for Highmark and McMaster-Carr were validated locally; National Pork Board flight reports have no budget column and still need a budget-source decision. Flashtalking column aliases are best-effort until a real export is tested.
+- Summary workbooks for Highmark, McMaster-Carr, and National Pork Board were validated locally. Budgets can come from a manual entry, an insertion order reference, or the report; IO files are attached as references only (automatic IO parsing is not built). Flashtalking column aliases are best-effort until a real export is tested.
 - No source files, field mappings, or metric formulas have been validated by the full pilot team yet.
 - The next milestone is **Pilot intake and sample analysis**.
 

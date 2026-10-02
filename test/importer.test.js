@@ -19,7 +19,7 @@ test("validateCampaignCsv transforms a valid campaign report", () => {
   assert.equal(result.campaigns.length, 1);
   assert.deepEqual(result.campaigns[0], {
     client: "Apex Athletics", name: "Fall Video", campaignId: null, requiresMapping: true, owner: null, channel: null, startDate: null, endDate: null, dataAsOf: null, short: "AA", className: "apex",
-    spend: 1000, budget: 2000, pacing: 50, kpi: "VCR", value: "74.8%", reportedValue: "74.8%",
+    spend: 1000, budget: 2000, budgetSource: "report", pacing: 50, kpi: "VCR", value: "74.8%", reportedValue: "74.8%",
     target: "Target 70%", source: "CM360", billingSource: "CM360",
     firstPartySpend: null, thirdPartySpend: null, impressions: null, clicks: null, conversions: null, revenue: null,
     videoStarts: null, videoCompletions: null, updated: "Today"
@@ -115,4 +115,16 @@ test("validateCampaignCsv rejects malformed, negative, and duplicate rows atomic
 
 test("escapeHtml neutralizes imported markup", () => {
   assert.equal(escapeHtml('<img src="x"> & test'), "&lt;img src=&quot;x&quot;&gt; &amp; test");
+});
+
+test("allows a blank budget and pacing, flags it with a warning, and leaves the budget unset", () => {
+  const result = validateCampaignCsv(`${header}
+Apex,Fall,1000,,,CTR,1%,1%,CM360,now`);
+  assert.equal(result.valid, true);
+  assert.equal(result.campaigns[0].budget, null);
+  assert.equal(result.campaigns[0].budgetSource, null);
+  assert.equal(result.campaigns[0].pacing, null);
+  assert.ok(result.warnings.some(warning => warning.includes("no budget")));
+  assert.equal(validateCampaignCsv(`${header}
+Apex,Fall,1000,-5,10,CTR,1%,1%,CM360,now`).valid, false);
 });

@@ -77,6 +77,23 @@ function loadAlertRules() {
 
 const formatMoney = value => value >= 1_000_000 ? `$${(value / 1_000_000).toFixed(2)}M` : `$${(value / 1000).toFixed(1)}K`;
 const formatExactMoney = value => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(value);
+const hasBudget = campaign => Number.isFinite(campaign.budget) && campaign.budget > 0;
+const BUDGET_HINTS = {
+  manual: "Type the approved amount. Reports will not overwrite it.",
+  io: "Attach the IO and enter its total. Reports will not overwrite it.",
+  report: "Optional. Leave blank to take the budget from the first report that includes one."
+};
+
+function syncBudgetSourceFields() {
+  const source = document.querySelector("#new-campaign-budget-source").value;
+  document.querySelector("#new-campaign-budget-hint").textContent = BUDGET_HINTS[source];
+  document.querySelector("#new-campaign-budget").required = source !== "report";
+  document.querySelector("#new-campaign-io").required = source === "io";
+  document.querySelector("#new-campaign-io-label").firstChild.textContent = source === "io" ? "Approved insertion order (required)" : "Insertion order (optional)";
+}
+document.querySelector("#new-campaign-budget-source").addEventListener("change", syncBudgetSourceFields);
+syncBudgetSourceFields();
+
 const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
@@ -101,7 +118,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
       <td><button class="campaign-name campaign-detail-button" data-campaign-index="${campaignIndex}"><span class="client-mark ${campaign.className}">${escapeHtml(campaign.short)}</span><span><strong>${escapeHtml(campaign.name)}</strong><small>${escapeHtml(campaign.client)}</small></span></button></td>
       <td data-column="status"><span class="status-${status}">${statusLabel}</span></td>
       <td data-column="spend"><strong>${selectedPeriodSpend === null ? "—" : formatMoney(selectedPeriodSpend)}</strong></td>
-      <td data-column="budget">${formatMoney(campaign.budget)}</td>
+      <td data-column="budget">${hasBudget(campaign) ? formatMoney(campaign.budget) : '<span class="warning-text">Needed</span>'}</td>
       <td data-column="pacing" class="pacing-cell"><div class="pacing-value"><strong>${pacingLabel}${pacing === null ? "" : "%"}</strong><span>${pacingStatus}</span></div><div class="mini-track ${pacingWarning ? "warn" : ""}"><span style="width:${Math.min(pacing || 0, 100)}%"></span></div></td>
       <td data-column="kpi" class="kpi"><strong>${escapeHtml(selectedKpi?.formatted || "—")} ${escapeHtml(selectedKpi?.metric || document.querySelector("#kpi-view")?.value || campaign.kpi)}</strong><small>${escapeHtml(selectedKpi?.target || (period === "current" ? "Required components unavailable" : "Period components unavailable"))}</small></td>
       <td data-column="source"><span class="source-tag ${campaign.source === "CM360" ? "third" : ""}">${escapeHtml((campaign.sources || [campaign.source]).join(" + "))}</span>${discrepancy.flagged ? `<small class="variance-flag">! ${discrepancy.label}</small>` : ""}</td>
@@ -118,7 +135,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
   renderSpendChart(activeRows);
   document.querySelector("#campaign-count").textContent = `Showing ${rows.length} campaign${rows.length === 1 ? "" : "s"} · ${activeRows.length} live`;
-  const budget = activeRows.reduce((sum, item) => sum + item.budget, 0);
+  const budget = activeRows.reduce((sum, item) => sum + (hasBudget(item) ? item.budget : 0), 0);
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
@@ -150,7 +167,7 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
   grid.innerHTML = rollup.map(client => `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
     <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
-    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? `of ${formatMoney(client.budget)} budget` : `last ${period} days`}</span></div>
+    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)} budget` : "budget needed") : `last ${period} days`}</span></div>
     ${client.utilization === null ? "" : `<div class="progress-track"><span style="width:${Math.min(client.utilization, 100)}%"></span></div>`}
     <div class="client-kpi-row"><span>${escapeHtml(client.kpi.metric)} <strong>${escapeHtml(client.kpi.formatted)}</strong></span><span class="${client.criticalCount ? "warning-text" : ""}">${client.alertCount ? `${client.alertCount} alert${client.alertCount === 1 ? "" : "s"}` : "No alerts"}</span></div>
     <ul class="client-campaigns">${client.campaigns.slice(0, 4).map(campaign => `<li><span>${escapeHtml(campaign.name)}</span><span class="${campaign.pacingBand}">${campaign.pacing === null ? "—" : `${campaign.pacing.toFixed(0)}%`}${campaign.kpi ? ` · ${escapeHtml(campaign.kpi)}` : ""}</span></li>`).join("")}${client.campaigns.length > 4 ? `<li><span>+${client.campaigns.length - 4} more</span><span></span></li>` : ""}</ul>
@@ -638,7 +655,7 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
     client: document.querySelector("#new-campaign-client").value, name: document.querySelector("#new-campaign-name").value,
     campaignId: document.querySelector("#new-campaign-id").value, owner: document.querySelector("#new-campaign-owner").value, channel: document.querySelector("#new-campaign-channel").value,
     startDate: document.querySelector("#new-campaign-start").value, endDate: document.querySelector("#new-campaign-end").value,
-    budget: document.querySelector("#new-campaign-budget").value, billingSource: document.querySelector("#new-campaign-billing-source").value,
+    budget: document.querySelector("#new-campaign-budget").value, budgetSource: document.querySelector("#new-campaign-budget-source").value, billingSource: document.querySelector("#new-campaign-billing-source").value,
     kpi: document.querySelector("#new-campaign-kpi").value, target: document.querySelector("#new-campaign-target").value,
     reportCadence: document.querySelector("#new-campaign-report-cadence").value, ioFileName: ioFile?.name
   });
@@ -888,12 +905,12 @@ function openCampaignDialog(index, alertId = null) {
   renderDailyDelivery(campaign);
   const latestRevision = latestBudgetRevision(campaign);
   const revisions = campaign.budgetRevisions?.length || 0;
-  document.querySelector("#current-budget-value").textContent = formatMoney(campaign.budget);
+  document.querySelector("#current-budget-value").textContent = hasBudget(campaign) ? formatMoney(campaign.budget) : "Not set";
   document.querySelector("#budget-revision-meta").textContent = latestRevision ? `${revisions} revision${revisions === 1 ? "" : "s"} · Latest effective ${latestRevision.effectiveDate}` : "No budget revisions recorded";
   renderBudgetRevisionHistory(campaign);
   document.querySelector("#budget-revision-fields").hidden = true;
   document.querySelector("#toggle-budget-revision").textContent = "+ Add budget revision";
-  document.querySelector("#revision-budget-input").value = campaign.budget;
+  document.querySelector("#revision-budget-input").value = hasBudget(campaign) ? campaign.budget : "";
   document.querySelector("#revision-date-input").value = "";
   document.querySelector("#revision-note-input").value = "";
   document.querySelector("#revision-io-input").value = "";
