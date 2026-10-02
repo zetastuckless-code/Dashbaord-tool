@@ -31,6 +31,7 @@ import { filterImportAudit, summarizeImportAudit } from "./lib/import-audit.js";
 import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from "./lib/saved-views.js";
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
+import { buildClientRollup } from "./lib/client-rollup.js";
 
 const sampleCampaigns = [
   { client: "Apex Athletics", owner: "Jordan Davis", channel: "Display", short: "AA", className: "apex", name: "Always On · Retargeting", spend: 184200, firstPartySpend: 184200, thirdPartySpend: 179600, billingSource: "1st party", budget: 240000, pacing: 112, kpi: "CPA", value: "$48.20", target: "Target $36.50", source: "1st party", updated: "8 min ago" },
@@ -135,7 +136,54 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   document.querySelector("#portfolio-pacing-target").textContent = `Target: ${alertRules.underPacing}–${alertRules.overPacing}%`;
   applyColumnVisibility();
   renderAlerts(rows);
+  const portfolioRows = filterCampaigns(campaigns, { client: "all", status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
+  renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateCampaignAlerts(portfolioRows, alertRules), acknowledgedAlertIds), filter);
 }
+
+function renderClientRollup(rows, activeAlerts, selectedClient) {
+  const period = document.querySelector("#period-filter")?.value || "current";
+  const kpiView = document.querySelector("#kpi-view")?.value || "primary";
+  const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules });
+  const grid = document.querySelector("#client-grid");
+  document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to filter the dashboard` : "No clients have live campaigns for the current filters";
+  const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
+  grid.innerHTML = rollup.map(client => `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
+    <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
+    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? `of ${formatMoney(client.budget)} budget` : `last ${period} days`}</span></div>
+    ${client.utilization === null ? "" : `<div class="progress-track"><span style="width:${Math.min(client.utilization, 100)}%"></span></div>`}
+    <div class="client-kpi-row"><span>${escapeHtml(client.kpi.metric)} <strong>${escapeHtml(client.kpi.formatted)}</strong></span><span class="${client.criticalCount ? "warning-text" : ""}">${client.alertCount ? `${client.alertCount} alert${client.alertCount === 1 ? "" : "s"}` : "No alerts"}</span></div>
+    <ul class="client-campaigns">${client.campaigns.slice(0, 4).map(campaign => `<li><span>${escapeHtml(campaign.name)}</span><span class="${campaign.pacingBand}">${campaign.pacing === null ? "—" : `${campaign.pacing.toFixed(0)}%`}${campaign.kpi ? ` · ${escapeHtml(campaign.kpi)}` : ""}</span></li>`).join("")}${client.campaigns.length > 4 ? `<li><span>+${client.campaigns.length - 4} more</span><span></span></li>` : ""}</ul>
+  </button>`).join("");
+}
+
+document.querySelector("#client-grid").addEventListener("click", event => {
+  const card = event.target.closest(".client-card");
+  if (!card) return;
+  const select = document.querySelector("#client-filter");
+  select.value = select.value === card.dataset.client ? "all" : card.dataset.client;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  if (select.value !== "all") document.querySelector("#campaigns").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+function renderProfile() {
+  let name = "";
+  try { name = localStorage.getItem("northstar-profile-name") || ""; } catch { name = ""; }
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  document.querySelector("#greeting").textContent = name ? `${greeting}, ${name.split(/\s+/)[0]}` : greeting;
+  document.querySelector("#profile-name").textContent = name || "Your name";
+  document.querySelector("#profile-avatar").textContent = name ? name.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase() : "?";
+}
+
+document.querySelector("#edit-profile").addEventListener("click", () => {
+  const current = localStorage.getItem("northstar-profile-name") || "";
+  const next = window.prompt("Display name for the dashboard greeting", current);
+  if (next === null) return;
+  if (next.trim()) localStorage.setItem("northstar-profile-name", next.trim().slice(0, 60));
+  else localStorage.removeItem("northstar-profile-name");
+  renderProfile();
+});
+renderProfile();
 
 function renderSpendChart(visibleCampaigns) {
   const points = buildPortfolioSpendTrend(visibleCampaigns, { spendView: selectedSource }).filter(point => point.actual !== null);

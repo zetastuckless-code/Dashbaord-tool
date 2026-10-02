@@ -40,9 +40,9 @@
             <div class="health-row"><span>Last sync</span><strong id="data-health-sync">Not available</strong></div>
           </div>
           <div class="user-card">
-            <span class="avatar">JD</span>
-            <span><strong>Jordan Davis</strong><small>Campaign manager</small></span>
-            <button aria-label="User options">•••</button>
+            <span class="avatar" id="profile-avatar">?</span>
+            <span><strong id="profile-name">Your name</strong><small>Campaign manager</small></span>
+            <button id="edit-profile" aria-label="Edit display name" title="Edit display name">•••</button>
           </div>
         </div>
       </aside>
@@ -52,7 +52,7 @@
           <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded="false">☰</button>
           <div>
             <p class="eyebrow">PERFORMANCE CENTER</p>
-            <h1>Good morning, Jordan</h1>
+            <h1 id="greeting">Good morning</h1>
             <p class="subtitle">Here’s how your campaigns are tracking today.</p>
           </div>
           <div class="top-actions">
@@ -159,6 +159,11 @@
             <strong class="metric-value" id="alert-count">4</strong>
             <div class="metric-detail" id="alert-summary"><span class="warning-text">2 critical</span><span>across 3 campaigns</span></div>
           </article>
+        </section>
+
+        <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
+          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div></div>
+          <div class="client-grid" id="client-grid"></div>
         </section>
 
         <section class="content-grid">
