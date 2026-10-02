@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { findHeaderRow, rowsToCsv } from "../lib/workbook-import.js";
-import { extractPerformanceSummaryCampaigns, inferClientName } from "../lib/native-workbook-import.js";
+import { extractPerformanceSummaryCampaigns, inferClientName, sheetPriority } from "../lib/native-workbook-import.js";
 import { validateCampaignCsv } from "../lib/importer.js";
 
 test("rowsToCsv preserves commas, quotes, line breaks, dates, and blanks", () => {
@@ -82,4 +82,10 @@ test("uses report goals as CTR targets and filename fallbacks for client names",
   assert.equal(campaign.kpi, "CTR");
   assert.equal(campaign.kpi_target, "0.11%");
   assert.equal(inferClientName("Zeta Global Nature's Sunshine Display Report 09.28.26.xlsx"), "Nature's Sunshine");
+});
+
+test("never scans raw-data, pixel, or mapping worksheets", () => {
+  for (const name of ["DSP Raw Data", "Pixel Data", "Mapping"]) assert.equal(sheetPriority(name), 3);
+  assert.equal(sheetPriority("Performance Summary"), 0);
+  assert.equal(sheetPriority("May"), 2);
 });
