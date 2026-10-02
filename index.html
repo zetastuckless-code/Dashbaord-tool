@@ -231,7 +231,7 @@
       <form method="dialog" class="dialog-card">
         <div class="dialog-header"><div><p class="eyebrow">DATA IMPORT</p><h2 id="upload-title">Import a performance report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Select an Excel or CSV report to validate before any data is added to the dashboard. Your existing data remains unchanged until validation succeeds.</p>
-        <label class="dropzone" for="file-input"><span class="upload-symbol">⇧</span><strong>Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
+        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong>Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
         <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
         <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
         <div class="validation-result" id="validation-result" hidden role="status"></div>

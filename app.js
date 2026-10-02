@@ -51,6 +51,7 @@ let currentVisibleAlerts = [];
 let currentValidationIssues = [];
 let pendingWorkspaceBackup = null;
 let pendingValidatedImport = null;
+let selectedFile = null;
 let savedViews = readSavedViews(localStorage);
 
 function loadCampaigns() {
@@ -350,6 +351,7 @@ document.querySelector("#reset-workspace").addEventListener("click", () => {
   window.location.reload();
 });
 document.querySelectorAll("#upload-button, #upload-nav").forEach(button => button.addEventListener("click", () => {
+  resetImportForm();
   renderImportHistory();
   dialog.showModal();
 }));
@@ -359,13 +361,17 @@ const validateButton = document.querySelector("#validate-button");
 const confirmImportButton = document.querySelector("#confirm-import-button");
 const validationResult = document.querySelector("#validation-result");
 fileInput.addEventListener("change", () => {
-  if (!fileInput.files.length) return;
+  if (!fileInput.files.length) {
+    resetImportForm();
+    return;
+  }
   pendingValidatedImport = null;
   confirmImportButton.disabled = true;
   document.querySelector("#import-preview").hidden = true;
   document.querySelector("#mapping-review").hidden = true;
   validationResult.hidden = true;
   const file = fileInput.files[0];
+  selectedFile = file;
   document.querySelector("#file-name").textContent = file.name;
   filePreview.hidden = false;
   if (!/\.(csv|xlsx)$/i.test(file.name)) {
@@ -381,15 +387,10 @@ fileInput.addEventListener("change", () => {
   validateButton.disabled = false;
 });
 document.querySelector("#remove-file").addEventListener("click", () => {
-  fileInput.value = "";
-  filePreview.hidden = true;
-  validationResult.hidden = true;
-  validateButton.disabled = true;
-  confirmImportButton.disabled = true;
-  pendingValidatedImport = null;
-  document.querySelector("#import-preview").hidden = true;
-  document.querySelector("#mapping-review").hidden = true;
+  resetImportForm();
+  document.querySelector(".dropzone").focus();
 });
+dialog.addEventListener("close", resetImportForm);
 document.querySelectorAll('input[name="import-mode"]').forEach(input => input.addEventListener("change", () => {
   if (pendingValidatedImport) renderImportPreview(pendingValidatedImport.result.campaigns);
 }));
@@ -835,7 +836,10 @@ document.querySelector("#export-validation-issues").addEventListener("click", ()
 });
 
 function resetImportForm() {
+  fileInput.form?.reset();
   fileInput.value = "";
+  selectedFile = null;
+  document.querySelector("#file-name").textContent = "";
   filePreview.hidden = true;
   validationResult.hidden = true;
   document.querySelector("#import-preview").hidden = true;
@@ -843,6 +847,7 @@ function resetImportForm() {
   currentValidationIssues = [];
   document.querySelector("#export-validation-issues").hidden = true;
   validateButton.disabled = true;
+  validateButton.textContent = "Validate report";
   confirmImportButton.disabled = true;
   pendingValidatedImport = null;
   document.querySelector('input[name="import-mode"][value="merge"]').checked = true;
