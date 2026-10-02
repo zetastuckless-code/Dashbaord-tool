@@ -30,6 +30,7 @@ import { buildMappingReview, exportMappingReviewCsv } from "./lib/mapping-review
 import { filterImportAudit, summarizeImportAudit } from "./lib/import-audit.js";
 import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from "./lib/saved-views.js";
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
+import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 
 const sampleCampaigns = [
   { client: "Apex Athletics", owner: "Jordan Davis", channel: "Display", short: "AA", className: "apex", name: "Always On · Retargeting", spend: 184200, firstPartySpend: 184200, thirdPartySpend: 179600, billingSource: "1st party", budget: 240000, pacing: 112, kpi: "CPA", value: "$48.20", target: "Target $36.50", source: "1st party", updated: "8 min ago" },
@@ -392,7 +393,7 @@ document.querySelector("#remove-file").addEventListener("click", () => {
 });
 dialog.addEventListener("close", resetImportForm);
 document.querySelectorAll('input[name="import-mode"]').forEach(input => input.addEventListener("change", () => {
-  if (pendingValidatedImport) renderImportPreview(pendingValidatedImport.result.campaigns);
+  if (pendingValidatedImport?.result) renderImportPreview(pendingValidatedImport.result.campaigns);
 }));
 validateButton.addEventListener("click", async () => {
   const file = fileInput.files[0];
@@ -420,6 +421,11 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
+  if (report.kind === "daily-delivery") {
+    validateButton.textContent = "Validate report";
+    handleDailyReport(file, fingerprint, report);
+    return;
+  }
   const result = validateCampaignCsv(report.csvText);
   validateButton.textContent = "Validate report";
   if (!result.valid) {
@@ -438,6 +444,7 @@ validateButton.addEventListener("click", async () => {
 });
 confirmImportButton.addEventListener("click", () => {
   if (!pendingValidatedImport) return;
+  if (pendingValidatedImport.kind === "daily") { confirmDailyImport(); return; }
   const { fileName, fingerprint, result } = pendingValidatedImport;
   const importMode = document.querySelector('input[name="import-mode"]:checked').value;
   const mergeResult = previewCampaignImport(campaigns, result.campaigns, importMode);
@@ -459,7 +466,72 @@ confirmImportButton.addEventListener("click", () => {
   }, 550);
 });
 
+function handleDailyReport(file, fingerprint, report) {
+  const parsed = report.parsed;
+  if (!parsed.valid) {
+    recordImport(file.name, fingerprint, "Rejected", 0, parsed.errors);
+    showValidationResult(parsed.errors, "error");
+    validateButton.disabled = false;
+    return;
+  }
+  pendingValidatedImport = { kind: "daily", fileName: file.name, fingerprint, report, parsed, links: {} };
+  document.querySelector(".import-mode").hidden = true;
+  document.querySelector("#mapping-review").hidden = true;
+  renderDailyPreview();
+}
+
+function renderDailyPreview() {
+  const { parsed, links, report } = pendingValidatedImport;
+  const result = applyDailyDelivery(campaigns, parsed, links);
+  pendingValidatedImport.dailyResult = result;
+  const days = result.matched.reduce((sum, item) => sum + item.days, 0);
+  const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
+  document.querySelector("#import-preview").hidden = false;
+  document.querySelector("#import-preview-title").textContent = `${parsed.source} daily delivery preview`;
+  document.querySelector("#import-preview-mode").textContent = "Daily rows never create campaigns";
+  document.querySelector("#import-preview-summary").innerHTML = `<div><strong>${result.matched.length}</strong><small>Matched</small></div><div><strong>${days}</strong><small>Days applied</small></div><div class="${result.unmatched.length ? "destructive" : ""}"><strong>${result.unmatched.length}</strong><small>Unmatched</small></div><div><strong>${parsed.records.length}</strong><small>Daily rows</small></div>`;
+  const options = `<option value="">Skip this campaign</option>${campaigns.map((campaign, index) => `<option value="${index}">${escapeHtml(campaign.client)} · ${escapeHtml(campaign.name)}</option>`).join("")}`;
+  document.querySelector("#import-preview-list").innerHTML = result.matched.map(item => `<div><span><strong>${escapeHtml(item.campaign)}</strong><small>${escapeHtml(item.client)} · ${escapeHtml(parsed.source)} · ${item.days} day${item.days === 1 ? "" : "s"}</small></span><em class="preview-action update">update</em></div>`).join("")
+    + result.unmatched.map(entry => `<div><span><strong>${escapeHtml(entry.sourceCampaignName || entry.sourceCampaignId)}</strong><small>${escapeHtml(parsed.source)}${entry.sourceCampaignId ? ` · ${escapeHtml(entry.sourceCampaignId)}` : ""} · ${entry.days} day${entry.days === 1 ? "" : "s"} · not matched</small></span><select class="daily-link-select" data-key="${escapeHtml(entry.key)}" aria-label="Link ${escapeHtml(entry.sourceCampaignName || entry.sourceCampaignId)} to a dashboard campaign">${options}</select></div>`).join("");
+  document.querySelectorAll(".daily-link-select").forEach(select => select.addEventListener("change", () => {
+    const entry = parsed.campaigns.find(item => item.key === select.dataset.key);
+    const keys = [entry.sourceCampaignId, entry.sourceCampaignName].map(value => String(value ?? "").trim().toLowerCase()).filter(Boolean);
+    keys.forEach(key => {
+      if (select.value === "") delete pendingValidatedImport.links[`${parsed.source}::${key}`];
+      else pendingValidatedImport.links[`${parsed.source}::${key}`] = Number(select.value);
+    });
+    renderDailyPreview();
+  }));
+  confirmImportButton.disabled = result.matched.length === 0;
+  const messages = [`${parsed.records.length} daily row${parsed.records.length === 1 ? "" : "s"} for ${parsed.campaigns.length} source campaign${parsed.campaigns.length === 1 ? "" : "s"} read from ${location}.`, ...(result.unmatched.length ? [`${result.unmatched.length} campaign${result.unmatched.length === 1 ? "" : "s"} not matched; link each below or it will be skipped.`] : []), ...result.warnings];
+  if (!result.matched.length) messages.unshift("No source campaign matched an existing dashboard campaign. Create the campaign first or link it below.");
+  showValidationResult(messages, result.matched.length ? "success" : "error", result.unmatched.length || result.warnings.length ? messages.slice(1) : []);
+  validateButton.disabled = false;
+}
+
+function confirmDailyImport() {
+  const { fileName, fingerprint, parsed, dailyResult } = pendingValidatedImport;
+  const keys = dailyResult.matched.map(item => [item.client, item.campaignId || item.campaign, parsed.source].map(value => String(value ?? "").trim().toLowerCase()).join("::"));
+  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: dailyResult.matched.length, campaignKeys: keys }));
+  campaigns = dailyResult.campaigns;
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  const warnings = [...dailyResult.warnings, ...dailyResult.unmatched.map(entry => `Skipped unmatched ${parsed.source} campaign: ${entry.sourceCampaignName || entry.sourceCampaignId}.`)];
+  recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", dailyResult.matched.length, [], keys, warnings);
+  refreshClientFilter();
+  renderCampaigns();
+  document.querySelector("#toast-message").textContent = `${parsed.source} daily delivery applied to ${dailyResult.matched.length} campaign${dailyResult.matched.length === 1 ? "" : "s"}.`;
+  document.querySelector("#toast-title").textContent = "Daily report imported";
+  setTimeout(() => {
+    dialog.close();
+    const toast = document.querySelector("#toast");
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 3200);
+    resetImportForm();
+  }, 550);
+}
+
 function renderImportPreview(importedCampaigns) {
+  document.querySelector("#import-preview-title").textContent = "Import impact preview";
   const mode = document.querySelector('input[name="import-mode"]:checked').value;
   const preview = previewCampaignImport(campaigns, importedCampaigns, mode);
   const container = document.querySelector("#import-preview");
@@ -669,6 +741,7 @@ document.querySelector("#campaign-settings-form").addEventListener("submit", eve
     channel: document.querySelector("#campaign-channel-input").value,
     billingSource: document.querySelector("#billing-source-input").value,
     reportCadence: document.querySelector("#report-cadence-input").value,
+    billingCpm: document.querySelector("#billing-cpm-input").value,
     kpi: document.querySelector("#campaign-kpi-input").value,
     value: document.querySelector("#campaign-kpi-value-input").value,
     target: document.querySelector("#campaign-kpi-target-input").value
@@ -734,6 +807,7 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#campaign-channel-input").value = campaign.channel || "";
   document.querySelector("#billing-source-input").value = ["first", "third", "reported"].includes(campaign.billingSource) ? campaign.billingSource : campaign.source.toLowerCase().includes("party") && campaign.source.startsWith("1") ? "first" : campaign.source.toLowerCase().includes("cm") ? "third" : "reported";
   document.querySelector("#report-cadence-input").value = campaign.reportCadence || "none";
+  document.querySelector("#billing-cpm-input").value = Number.isFinite(campaign.billingCpm) ? campaign.billingCpm : "";
   document.querySelector("#campaign-kpi-input").value = campaign.kpi;
   document.querySelector("#campaign-kpi-value-input").value = campaign.value;
   document.querySelector("#campaign-kpi-target-input").value = campaign.target.replace(/^Target\s*/i, "");
@@ -762,6 +836,7 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#snapshot-period-select").value = "previous";
   renderSnapshotComparison(campaign);
   renderSnapshotHistory(campaign);
+  renderDailyDelivery(campaign);
   const latestRevision = latestBudgetRevision(campaign);
   const revisions = campaign.budgetRevisions?.length || 0;
   document.querySelector("#current-budget-value").textContent = formatMoney(campaign.budget);
@@ -809,6 +884,21 @@ function renderSnapshotComparison(campaign) {
   document.querySelector("#snapshot-comparison-metrics").innerHTML = comparisonMetrics.map(([label, value, formatter]) => `<div><span>${label}</span><strong>${value >= 0 ? "+" : ""}${formatter(value)}</strong></div>`).join("");
 }
 
+function renderDailyDelivery(campaign) {
+  const rows = Object.entries(campaign.dailyDelivery || {}).flatMap(([source, days]) => Object.entries(days).map(([date, metrics]) => ({ source, date, ...metrics }))).sort((a, b) => b.date.localeCompare(a.date) || a.source.localeCompare(b.source));
+  document.querySelector("#daily-delivery-section").hidden = rows.length === 0;
+  document.querySelector("#daily-delivery-list").innerHTML = rows.slice(0, 14).map(row => `<div><span><strong>${escapeHtml(row.date)}</strong><small>${escapeHtml(row.source)}</small></span><span><strong>${Number.isFinite(row.spend) ? formatExactMoney(row.spend) : "—"}</strong><small>${Number.isFinite(row.impressions) ? `${formatCount(row.impressions)} impressions` : "No impressions"}${Number.isFinite(row.clicks) ? ` · ${formatCount(row.clicks)} clicks` : ""}</small></span></div>`).join("");
+}
+
+document.querySelector("#export-daily-delivery").addEventListener("click", () => {
+  const campaign = campaigns[activeCampaignIndex];
+  if (!campaign) return;
+  const url = URL.createObjectURL(new Blob([exportDailyDeliveryCsv(campaign)], { type: "text/csv;charset=utf-8" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: `${campaign.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-daily-delivery.csv` });
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
 function renderSnapshotHistory(campaign) {
   const snapshots = campaignSnapshotHistory(campaign);
   document.querySelector("#export-snapshot-history").disabled = snapshots.length === 0;
@@ -844,6 +934,7 @@ function resetImportForm() {
   validationResult.hidden = true;
   document.querySelector("#import-preview").hidden = true;
   document.querySelector("#mapping-review").hidden = true;
+  document.querySelector(".import-mode").hidden = false;
   currentValidationIssues = [];
   document.querySelector("#export-validation-issues").hidden = true;
   validateButton.disabled = true;

@@ -7,7 +7,7 @@ const campaign = { client: "Apex", name: "Old name", kpi: "CTR", value: "1%", ta
 test("applies normalized editable campaign settings without losing source data", () => {
   const result = applyCampaignSettings(campaign, { name: "  New name  ", kpi: "vcr", value: "74%", target: "70%", billingSource: "third" });
   assert.equal(result.valid, true);
-  assert.deepEqual(result.campaign, { client: "Apex", name: "New name", kpi: "VCR", value: "74%", target: "Target 70%", billingSource: "third", reportCadence: "none", owner: null, channel: null });
+  assert.deepEqual(result.campaign, { client: "Apex", name: "New name", kpi: "VCR", value: "74%", target: "Target 70%", billingSource: "third", reportCadence: "none", billingCpm: null, owner: null, channel: null });
 });
 
 test("preserves an explicitly labelled target", () => {
@@ -33,4 +33,12 @@ test("resolves an imported campaign mapping with a stable source ID", () => {
   const result = applyCampaignSettings({ name: "Campaign", requiresMapping: true }, { name: "Campaign", campaignId: " CMP-42 ", billingSource: "reported", kpi: "CTR", value: "1%", target: "1%" });
   assert.equal(result.campaign.campaignId, "CMP-42");
   assert.equal(result.campaign.requiresMapping, false);
+});
+
+test("stores an optional billing CPM and rejects invalid values", () => {
+  const base = { name: "Name", kpi: "CTR", value: "1%", target: "1%", billingSource: "third" };
+  assert.equal(applyCampaignSettings(campaign, { ...base, billingCpm: "4.5" }).campaign.billingCpm, 4.5);
+  assert.equal(applyCampaignSettings(campaign, { ...base, billingCpm: "" }).campaign.billingCpm, null);
+  assert.equal(applyCampaignSettings(campaign, { ...base, billingCpm: "-1" }).valid, false);
+  assert.equal(applyCampaignSettings(campaign, { ...base, billingCpm: "abc" }).valid, false);
 });

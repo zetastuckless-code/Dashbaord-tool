@@ -346,11 +346,16 @@
           <div class="detail-section-heading"><span>Report snapshot history</span><button class="text-button" id="export-snapshot-history" type="button">Export CSV</button></div>
           <div id="snapshot-history-list" class="snapshot-history-list"></div>
         </section>
+        <section class="snapshot-history-section" id="daily-delivery-section">
+          <div class="detail-section-heading"><span>Daily delivery (CM360 / Flashtalking)</span><button class="text-button" id="export-daily-delivery" type="button">Export CSV</button></div>
+          <div id="daily-delivery-list" class="snapshot-history-list"></div>
+        </section>
         <div class="settings-grid">
           <label class="wide">Campaign display name<input id="campaign-name-input" autocomplete="off" required /></label>
           <label class="wide">Stable source campaign ID<input id="campaign-id-input" autocomplete="off" placeholder="CM360 or DSP campaign ID" /></label>
           <label class="wide">Campaign owner<input id="campaign-owner-input" autocomplete="off" placeholder="Campaign manager" /></label>
           <label class="wide">Channel<input id="campaign-channel-input" autocomplete="off" placeholder="Display, video, paid social…" /></label>
+          <label>Billing CPM ($, optional)<input id="billing-cpm-input" type="number" min="0" step="0.01" placeholder="Used when daily reports have no cost" /></label>
           <label>Billing source<select id="billing-source-input"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
           <label>Expected report<select id="report-cadence-input"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
           <label>Primary KPI<input id="campaign-kpi-input" required /></label>
