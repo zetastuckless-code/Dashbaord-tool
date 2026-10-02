@@ -32,6 +32,7 @@ import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from 
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
+import { addLedgerEntries, clearFolderHandle, folderSyncSupported, isProcessed, ledgerKey, listReportFiles, loadFolderHandle, planAutoImport, readLedger, resolveFileHandle, reviewItems, saveFolderHandle, SYNC_INTERVAL_MS, writeLedger } from "./lib/folder-sync.js";
 
 const sampleCampaigns = [
   { client: "Apex Athletics", owner: "Jordan Davis", channel: "Display", short: "AA", className: "apex", name: "Always On · Retargeting", spend: 184200, firstPartySpend: 184200, thirdPartySpend: 179600, billingSource: "1st party", budget: 240000, pacing: 112, kpi: "CPA", value: "$48.20", target: "Target $36.50", source: "1st party", updated: "8 min ago" },
@@ -1116,3 +1117,171 @@ refreshClientFilter();
 applyDashboardView(dashboardView);
 renderDataHealth();
 renderCampaigns();
+
+// --- Report folder auto-pull (File System Access API; Chrome and Edge) ---
+let folderRoot = null;
+let folderTimer = null;
+let folderSyncRunning = false;
+const folderStatus = document.querySelector("#folder-sync-status");
+
+function setFolderStatus(message) {
+  folderStatus.textContent = message;
+}
+
+function renderFolderReview() {
+  const items = reviewItems(readLedger(localStorage));
+  document.querySelector("#folder-review-list").innerHTML = items.map(item => `<div class="folder-review-item"><span><strong>${escapeHtml(item.path)}</strong><small>${escapeHtml(item.reason || "Needs review")}</small></span><button class="text-button" type="button" data-review-path="${escapeHtml(item.path)}">Review</button></div>`).join("");
+}
+
+document.querySelector("#folder-review-list").addEventListener("click", async event => {
+  const button = event.target.closest("[data-review-path]");
+  if (!button || !folderRoot) return;
+  try {
+    const handle = await resolveFileHandle(folderRoot, button.dataset.reviewPath);
+    const transfer = new DataTransfer();
+    transfer.items.add(await handle.getFile());
+    fileInput.files = transfer.files;
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    validateButton.click();
+  } catch (error) {
+    setFolderStatus(`Could not open ${button.dataset.reviewPath}: ${error.message}`);
+  }
+});
+
+async function folderPermission(request = false) {
+  if (!folderRoot) return false;
+  if (await folderRoot.queryPermission({ mode: "read" }) === "granted") return true;
+  return request && await folderRoot.requestPermission({ mode: "read" }) === "granted";
+}
+
+function showFolderControls() {
+  const connected = Boolean(folderRoot);
+  document.querySelector("#folder-connect").hidden = connected;
+  document.querySelector("#folder-sync-now").hidden = !connected;
+  document.querySelector("#folder-disconnect").hidden = !connected;
+}
+
+async function runFolderSync({ interactive = false } = {}) {
+  if (folderSyncRunning || !folderRoot) return;
+  if (!await folderPermission(interactive)) {
+    setFolderStatus(`Allow access to “${folderRoot.name}” to resume syncing.`);
+    document.querySelector("#folder-sync-now").textContent = "Allow access & sync";
+    return;
+  }
+  document.querySelector("#folder-sync-now").textContent = "Sync now";
+  folderSyncRunning = true;
+  setFolderStatus(`Scanning “${folderRoot.name}”…`);
+  const originalCampaigns = campaigns;
+  const originalHistory = importHistory;
+  let working = campaigns;
+  let ledger = readLedger(localStorage);
+  const counts = { imported: 0, review: 0, skipped: 0 };
+  const appliedKeys = [];
+  let appliedRows = 0;
+  try {
+    const listed = await listReportFiles(folderRoot);
+    const files = await Promise.all(listed.map(async item => ({ ...item, file: await item.handle.getFile() })));
+    files.sort((a, b) => a.file.lastModified - b.file.lastModified);
+    for (const { path, file } of files) {
+      const key = ledgerKey(path, file);
+      if (isProcessed(ledger, key)) continue;
+      const entry = { key, path, status: "skipped", reason: "", fingerprint: "", at: new Date().toISOString() };
+      if (file.size > 25 * 1024 * 1024) {
+        entry.reason = "Larger than the 25 MB import limit.";
+      } else {
+        const bytes = await file.arrayBuffer();
+        entry.fingerprint = await fingerprintBytes(bytes);
+        if (ledger.some(item => item.fingerprint === entry.fingerprint && item.status === "imported") || hasSuccessfulFingerprint(importHistory, entry.fingerprint)) {
+          entry.status = "duplicate";
+          entry.reason = "Identical to a report that was already imported.";
+        } else {
+          try {
+            const plan = planAutoImport(await readReportFile(file, bytes), working);
+            if (plan.status === "apply") {
+              working = plan.campaigns;
+              appliedKeys.push(...plan.campaignKeys);
+              appliedRows += plan.rowCount;
+              entry.status = "imported";
+              recordImport(path, entry.fingerprint, plan.warnings.length ? "Imported with warnings" : "Imported", plan.rowCount, [], plan.campaignKeys, plan.warnings);
+            } else {
+              entry.status = plan.status;
+              entry.reason = plan.reason;
+            }
+          } catch (error) {
+            entry.status = "skipped";
+            entry.reason = error.message;
+          }
+        }
+      }
+      if (entry.status === "imported") counts.imported += 1;
+      else if (entry.status === "review") counts.review += 1;
+      else counts.skipped += 1;
+      ledger = addLedgerEntries(ledger, [entry]);
+    }
+    if (counts.imported) {
+      writeImportRollback(localStorage, createImportRollback({ campaigns: originalCampaigns, importHistory: originalHistory, fileName: `${counts.imported} report${counts.imported === 1 ? "" : "s"} from ${folderRoot.name}`, fingerprint: `folder-sync-${Date.now().toString(16)}`, rowCount: appliedRows, campaignKeys: appliedKeys }));
+      campaigns = working;
+      localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+      refreshClientFilter();
+      renderCampaigns(document.querySelector("#client-filter").value);
+      renderImportHistory();
+      document.querySelector("#toast-title").textContent = "Folder sync complete";
+      document.querySelector("#toast-message").textContent = `${counts.imported} report${counts.imported === 1 ? "" : "s"} imported${counts.review ? `, ${counts.review} need review` : ""}.`;
+      const toast = document.querySelector("#toast");
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 3200);
+    }
+    writeLedger(localStorage, ledger);
+    renderFolderReview();
+    setFolderStatus(`Last sync ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · ${counts.imported} imported · ${counts.review} need review · ${counts.skipped} skipped or already imported.`);
+  } catch (error) {
+    setFolderStatus(`Sync failed: ${error.message}`);
+  } finally {
+    folderSyncRunning = false;
+  }
+}
+
+document.querySelector("#folder-connect").addEventListener("click", async () => {
+  try {
+    folderRoot = await window.showDirectoryPicker({ id: "northstar-reports", mode: "read" });
+    await saveFolderHandle(folderRoot);
+    showFolderControls();
+    startFolderTimer();
+    await runFolderSync({ interactive: true });
+  } catch (error) {
+    if (error.name !== "AbortError") setFolderStatus(`Could not connect the folder: ${error.message}`);
+  }
+});
+document.querySelector("#folder-sync-now").addEventListener("click", () => runFolderSync({ interactive: true }));
+document.querySelector("#folder-disconnect").addEventListener("click", async () => {
+  clearInterval(folderTimer);
+  folderRoot = null;
+  await clearFolderHandle();
+  showFolderControls();
+  setFolderStatus("Folder disconnected. Reports already imported stay in the dashboard.");
+});
+
+function startFolderTimer() {
+  clearInterval(folderTimer);
+  folderTimer = setInterval(() => runFolderSync(), SYNC_INTERVAL_MS);
+}
+
+async function initFolderSync() {
+  if (!folderSyncSupported()) {
+    document.querySelector("#folder-connect").hidden = true;
+    setFolderStatus("Folder auto-pull needs Chrome or Edge. Manual import still works in every browser.");
+    return;
+  }
+  renderFolderReview();
+  try {
+    folderRoot = await loadFolderHandle() || null;
+  } catch {
+    folderRoot = null;
+  }
+  showFolderControls();
+  if (!folderRoot) return;
+  startFolderTimer();
+  await runFolderSync();
+}
+
+initFolderSync();

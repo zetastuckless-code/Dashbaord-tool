@@ -245,6 +245,11 @@
         <section class="import-preview" id="import-preview" hidden aria-labelledby="import-preview-title"><div class="detail-section-heading"><h3 id="import-preview-title">Import impact preview</h3><small id="import-preview-mode"></small></div><div class="import-preview-summary" id="import-preview-summary"></div><div class="import-preview-list" id="import-preview-list"></div></section>
         <section class="mapping-review" id="mapping-review" hidden aria-labelledby="mapping-review-title"><div class="detail-section-heading"><h3 id="mapping-review-title">Source column mapping</h3><button class="text-button" id="export-mapping-review" type="button">Download mapping</button></div><div class="mapping-review-summary" id="mapping-review-summary"></div><div class="mapping-review-list" id="mapping-review-list"></div></section>
         <a class="template-link" href="templates/import/campaign-performance.csv" download>↓ Download CSV template</a>
+        <section class="folder-sync-section" id="folder-sync" aria-labelledby="folder-sync-title">
+          <div class="detail-section-heading"><h3 id="folder-sync-title">Report folder (auto-pull)</h3><div class="panel-actions"><button class="text-button" id="folder-connect" type="button">Connect folder</button><button class="text-button" id="folder-sync-now" type="button" hidden>Sync now</button><button class="text-button" id="folder-disconnect" type="button" hidden>Disconnect</button></div></div>
+          <p class="history-empty" id="folder-sync-status">Connect a OneDrive or SharePoint-synced folder and new reports are imported automatically.</p>
+          <div id="folder-review-list"></div>
+        </section>
         <section class="import-history-section" aria-labelledby="import-history-title">
           <div class="detail-section-heading"><h3 id="import-history-title">Recent import activity</h3><div class="panel-actions"><button class="text-button" id="view-import-audit" type="button">View all</button><button class="text-button" id="undo-last-import" type="button">Undo last import</button><button class="text-button" id="export-import-history" type="button">Export audit</button></div></div>
           <div id="import-history"></div>
