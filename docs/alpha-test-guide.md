@@ -22,6 +22,10 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 8 | Import `04-invalid-negative-spend.csv`. | Validation rejects the negative spend and enables validation-error CSV download. |
 | 9 | Save a named view, change filters, then reopen it. | The saved filters, spend source, KPI, period, search, and sort are restored. |
 | 10 | Download a workspace backup, reset to demo data, and restore the backup. | Imported campaigns, audit history, preferences, acknowledgments, and saved views return. |
+| 11 | With Alpha campaigns present, import `templates/alpha/05-cm360-daily.csv`. | Alpha Retargeting matches and receives three days of CM360 data; "Unknown Brand Display" is listed as unmatched with a link dropdown; confirming sets 3rd-party spend to $1,510. |
+| 12 | Import `06-flashtalking-daily.csv`, then re-import `05-cm360-daily.csv`. | Flashtalking days are stored separately; the CM360 file is rejected as an exact duplicate. |
+| 13 | Select a client card in the **Clients** section. | The dashboard filters to that client; selecting the card again clears the filter. |
+| 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture
 

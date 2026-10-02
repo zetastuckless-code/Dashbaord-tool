@@ -6,6 +6,8 @@ A responsive, dependency-free dashboard prototype for monitoring client campaign
 
 ## Run locally
 
+On Windows, run the same commands in PowerShell from the project folder (`npm install`, then `npm start`); `npm run verify` is cross-platform.
+
 ### Prerequisites
 
 - Git
@@ -159,6 +161,13 @@ Common source headings are mapped automatically—for example, `Advertiser Name`
 When component metrics are available, the importer calculates primary KPI values centrally: CTR is clicks ÷ impressions, VCR is video completions ÷ video starts, CPA is spend ÷ conversions, and ROAS is revenue ÷ spend. The source-provided KPI value is retained as `reportedValue` for traceability and remains the fallback when the required components are absent.
 
 The optional `billing_source`, `first_party_spend`, and `third_party_spend` columns power source-specific totals. When both source spend values are available, differences over 10% are flagged in the campaign table; campaign details and exports show both the absolute and percentage variance. Reports without those optional columns continue to use the required `spend` value in every view.
+
+## Client view, daily delivery, and folder auto-pull
+
+- **Clients** cards sit under the headline KPIs: each live client shows spend vs. budget (using the selected billing / 1st-party / 3rd-party view and reporting period), pacing against plan, primary KPI, open alerts, data freshness, and its live campaigns. Select a card to filter the whole dashboard to that client; select it again to clear. The greeting uses a display name you set from the profile chip.
+- **Daily CM360 / Flashtalking reports** (one row per date with Date, Campaign, and Impressions columns; CM360 report CSVs with the metadata block and `Report Fields` marker are handled) are imported as third-party delivery history on campaigns that already exist. Placements and creatives are summed per day, re-importing a day replaces it, and cumulative totals feed 3rd-party spend, snapshots, trends, and source-discrepancy alerts. Campaigns match by saved link, stable ID, then unambiguous name; unmatched ones can be linked from the preview or are skipped, and daily files never create campaigns. If a report has no cost column, set a **Billing CPM** in campaign settings and spend is derived from impressions. When more than one third-party source reports on a campaign, CM360 totals take precedence. Samples: `templates/alpha/05-cm360-daily.csv` and `06-flashtalking-daily.csv`.
+- **Report folder (auto-pull)** in the import dialog connects a OneDrive/SharePoint-synced folder (Chrome or Edge). New `.csv`/`.xlsx` reports are imported automatically every 15 minutes while the dashboard is open; anything ambiguous waits in a review list, and each sync batch can be undone. Setup with Power Automate is in [`docs/automation-setup.md`](docs/automation-setup.md).
+- Worksheets named raw data, pixel data, or mapping are never scanned, so very large analyst workbooks import quickly.
 
 ## Test
 
