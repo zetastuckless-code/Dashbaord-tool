@@ -56,6 +56,7 @@
             <p class="subtitle">Here’s how your campaigns are tracking today.</p>
           </div>
           <div class="top-actions">
+            <button class="secondary-button" id="undo-action" type="button" hidden>↶ Undo</button>
             <button class="icon-button" aria-label="Search">⌕</button>
             <button class="icon-button notification" aria-label="Notifications">♢<span></span></button>
             <button class="secondary-button" id="workspace-backup-button">Backup</button>
@@ -399,7 +400,7 @@
           <div id="snapshot-history-list" class="snapshot-history-list"></div>
         </section>
         <section class="snapshot-history-section" id="daily-delivery-section">
-          <div class="detail-section-heading"><span>Daily delivery (CM360 / Flashtalking)</span><button class="text-button" id="export-daily-delivery" type="button">Export CSV</button></div>
+          <div class="detail-section-heading"><span>Daily delivery (CM360 / Flashtalking)</span><div class="panel-actions"><span id="daily-delivery-remove"></span><button class="text-button" id="export-daily-delivery" type="button">Export CSV</button></div></div>
           <div id="daily-delivery-list" class="snapshot-history-list"></div>
         </section>
         <div class="settings-grid">

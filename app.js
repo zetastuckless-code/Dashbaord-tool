@@ -25,7 +25,8 @@ import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
-import { applyImportRollback, clearImportRollback, createImportRollback, readImportRollback, writeImportRollback } from "./lib/import-rollback.js";
+import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
+import { removeDailySource, removeGroupRecords, removeLineItem, removeRecordAt, removeSnapshot } from "./lib/campaign-removal.js";
 import { buildMappingReview, exportMappingReviewCsv } from "./lib/mapping-review.js";
 import { filterImportAudit, summarizeImportAudit } from "./lib/import-audit.js";
 import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from "./lib/saved-views.js";
@@ -250,7 +251,7 @@ function renderCampaignList(rows, activeAlerts) {
       const index = campaigns.indexOf(line.record);
       const dates = line.startDate && line.endDate ? `${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}` : "";
       const meta = [dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
-      return `<div class="campaign-line"><span></span><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${dashboardFlightStatus(line.record)}">${lineStatusLabel(dashboardFlightStatus(line.record))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong>${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button></div>`;
+      return `<div class="campaign-line"><span></span><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${dashboardFlightStatus(line.record)}">${lineStatusLabel(dashboardFlightStatus(line.record))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong>${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>`;
     }).join("");
     return `<article class="campaign-card${open ? " open" : ""}" data-group-key="${escapeHtml(group.key)}" style="--metric-count:${keys.length}">
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
@@ -260,7 +261,7 @@ function renderCampaignList(rows, activeAlerts) {
         ${cells}
         <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines"><div class="campaign-lines-labels"><span></span><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}</div>` : ""}
+      ${open ? `<div class="campaign-lines"><div class="campaign-lines-labels"><span></span><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
@@ -1424,6 +1425,7 @@ function renderSnapshotComparison(campaign) {
 function renderDailyDelivery(campaign) {
   const rows = Object.entries(campaign.dailyDelivery || {}).flatMap(([source, days]) => Object.entries(days).map(([date, metrics]) => ({ source, date, ...metrics }))).sort((a, b) => b.date.localeCompare(a.date) || a.source.localeCompare(b.source));
   document.querySelector("#daily-delivery-section").hidden = rows.length === 0;
+  document.querySelector("#daily-delivery-remove").innerHTML = Object.keys(campaign.dailyDelivery || {}).map(source => `<button class="text-button" type="button" data-remove-daily="${escapeHtml(source)}">Remove ${escapeHtml(source)} data</button>`).join("");
   document.querySelector("#daily-delivery-list").innerHTML = rows.slice(0, 14).map(row => `<div><span><strong>${escapeHtml(row.date)}</strong><small>${escapeHtml(row.source)}</small></span><span><strong>${Number.isFinite(row.spend) ? formatExactMoney(row.spend) : "—"}</strong><small>${Number.isFinite(row.impressions) ? `${formatCount(row.impressions)} impressions` : "No impressions"}${Number.isFinite(row.clicks) ? ` · ${formatCount(row.clicks)} clicks` : ""}</small></span></div>`).join("");
 }
 
@@ -1439,7 +1441,7 @@ document.querySelector("#export-daily-delivery").addEventListener("click", () =>
 function renderSnapshotHistory(campaign) {
   const snapshots = campaignSnapshotHistory(campaign);
   document.querySelector("#export-snapshot-history").disabled = snapshots.length === 0;
-  document.querySelector("#snapshot-history-list").innerHTML = snapshots.length ? snapshots.slice(0, 10).map(snapshot => `<div><span><strong>${escapeHtml(snapshot.date)}</strong><small>${escapeHtml(snapshot.source)}</small></span><span><strong>${Number.isFinite(snapshot.spend) ? formatExactMoney(snapshot.spend) : "—"}</strong><small>${Number.isFinite(snapshot.impressions) ? `${formatCount(snapshot.impressions)} impressions` : "Spend snapshot"}</small></span></div>`).join("") : '<p class="history-empty">No dated report snapshots are available yet.</p>';
+  document.querySelector("#snapshot-history-list").innerHTML = snapshots.length ? snapshots.slice(0, 10).map(snapshot => `<div><span><strong>${escapeHtml(snapshot.date)}</strong><small>${escapeHtml(snapshot.source)}</small></span><span><strong>${Number.isFinite(snapshot.spend) ? formatExactMoney(snapshot.spend) : "—"}</strong><small>${Number.isFinite(snapshot.impressions) ? `${formatCount(snapshot.impressions)} impressions` : "Spend snapshot"}</small></span><button class="campaign-line-remove" type="button" data-remove-snapshot="${escapeHtml(snapshot.date)}|${escapeHtml(snapshot.source)}" aria-label="Remove ${escapeHtml(snapshot.date)} ${escapeHtml(snapshot.source)} report" title="Remove this report">✕</button></div>`).join("") : '<p class="history-empty">No dated report snapshots are available yet.</p>';
 }
 
 function showValidationResult(messages, type, exportIssues = messages) {
@@ -1498,6 +1500,7 @@ function renderImportHistory() {
   const container = document.querySelector("#import-history");
   document.querySelector("#export-import-history").disabled = importHistory.length === 0;
   document.querySelector("#undo-last-import").disabled = !readImportRollback(localStorage);
+  renderUndoButton();
   if (!importHistory.length) {
     container.innerHTML = '<p class="history-empty">No reports have been processed in this browser.</p>';
     return;
@@ -1511,23 +1514,117 @@ function renderImportHistory() {
   }).join("");
 }
 
-document.querySelector("#undo-last-import").addEventListener("click", () => {
+// --- Undo (multi-step) and removals ---
+function showToast(title, message) {
+  document.querySelector("#toast-title").textContent = title;
+  document.querySelector("#toast-message").textContent = message;
+  const toast = document.querySelector("#toast");
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 3600);
+}
+
+function renderUndoButton() {
+  const stack = readUndoStack(localStorage);
+  const button = document.querySelector("#undo-action");
+  button.hidden = stack.length === 0;
+  if (stack.length) {
+    const label = undoLabel(stack[0]);
+    button.textContent = `↶ Undo${stack.length > 1 ? ` (${stack.length})` : ""}`;
+    button.title = `Undo ${label}`;
+    button.setAttribute("aria-label", `Undo ${label}`);
+  }
+}
+
+function refreshAfterDataChange() {
+  refreshClientFilter();
+  renderCampaigns(document.querySelector("#client-filter").value);
+  renderImportHistory();
+  renderDataHealth();
+  renderUndoButton();
+}
+
+function performUndo() {
   const rollback = readImportRollback(localStorage);
-  if (!rollback || !window.confirm(`Undo the import of ${rollback.fileName} and restore the previous campaign data?`)) return;
+  if (!rollback || !window.confirm(`Undo ${undoLabel(rollback)} and restore the previous campaign data?`)) return;
   const restored = applyImportRollback(rollback);
   campaigns = restored.campaigns;
   importHistory = restored.importHistory;
+  if (restored.campaignTotals) campaignTotals = writeCampaignTotals(localStorage, restored.campaignTotals);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   writeImportHistory(localStorage, importHistory);
   clearImportRollback(localStorage);
-  refreshClientFilter();
-  renderCampaigns();
-  renderImportHistory();
-  renderDataHealth();
-  document.querySelector("#toast-title").textContent = "Import undone";
-  document.querySelector("#toast-message").textContent = "Campaign data was restored to its pre-import state.";
-  const toast = document.querySelector("#toast"); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3200);
+  refreshAfterDataChange();
+  if (activeCampaignIndex !== null && campaignDialog.open && !campaigns[activeCampaignIndex]) campaignDialog.close();
+  showToast(rollback.kind === "removal" ? "Removal undone" : "Import undone", rollback.kind === "removal" ? "The removed data was restored." : "Campaign data was restored to its pre-import state.");
+}
+
+document.querySelector("#undo-last-import").addEventListener("click", performUndo);
+document.querySelector("#undo-action").addEventListener("click", performUndo);
+
+/** Takes a restore point, applies the removal, saves, and refreshes. Everything removed here can be undone. */
+function applyRemoval(label, confirmText, mutate) {
+  if (!window.confirm(`${confirmText}\n\nYou can undo this from the Undo button.`)) return false;
+  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label }));
+  mutate();
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  refreshAfterDataChange();
+  showToast("Removed", `${label.charAt(0).toUpperCase()}${label.slice(1)}. Use Undo to bring it back.`);
+  return true;
+}
+
+function dropOrphanTotals(key) {
+  if (campaignTotals[key] && !campaigns.some(campaign => groupKey(campaign) === key)) campaignTotals = writeCampaignTotals(localStorage, removeCampaignTotals(campaignTotals, key));
+}
+
+document.querySelector("#campaign-list-rows").addEventListener("click", event => {
+  const removeCampaign = event.target.closest("[data-remove-campaign]");
+  if (removeCampaign) {
+    const key = removeCampaign.dataset.removeCampaign;
+    const group = lastCampaignGroups.find(item => item.key === key);
+    if (!group) return;
+    applyRemoval(`removing the ${group.name} campaign`, `Remove the campaign “${group.name}” (${group.records.length} line${group.records.length === 1 ? "" : "s"}) and all of its imported data and report history?`, () => {
+      campaigns = removeGroupRecords(campaigns, key);
+      dropOrphanTotals(key);
+    });
+    return;
+  }
+  const removeLine = event.target.closest("[data-remove-line]");
+  if (!removeLine) return;
+  const index = Number(removeLine.dataset.removeLine);
+  const record = campaigns[index];
+  if (!record) return;
+  const { lineKind, lineId, lineName } = removeLine.dataset;
+  if (lineKind === "record") {
+    applyRemoval(`removing ${lineName}`, `Remove the line “${lineName}” and its imported data and report history from this campaign?`, () => {
+      const key = groupKey(record);
+      campaigns = removeRecordAt(campaigns, index);
+      dropOrphanTotals(key);
+    });
+  } else {
+    applyRemoval(`removing ${lineName}`, `Remove “${lineName}” from this campaign?`, () => { campaigns[index] = removeLineItem(record, lineId); });
+  }
 });
+
+// Removing individual reports (dated snapshots) and daily-delivery sources from a campaign's details.
+document.querySelector("#snapshot-history-list").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-snapshot]");
+  if (!button || activeCampaignIndex === null) return;
+  const [date, source] = button.dataset.removeSnapshot.split("|");
+  const record = campaigns[activeCampaignIndex];
+  const done = applyRemoval(`removing the ${date} ${source} report from ${record.name}`, `Remove the ${date} ${source} report from “${record.name}”?${record.dataAsOf === date ? " This is the newest report, so the campaign goes back to the previous report's numbers." : ""}`, () => { campaigns[activeCampaignIndex] = removeSnapshot(record, date, source); });
+  if (done) { renderSnapshotHistory(campaigns[activeCampaignIndex]); renderDailyDelivery(campaigns[activeCampaignIndex]); }
+});
+
+document.querySelector("#daily-delivery-remove").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-daily]");
+  if (!button || activeCampaignIndex === null) return;
+  const source = button.dataset.removeDaily;
+  const record = campaigns[activeCampaignIndex];
+  const done = applyRemoval(`removing ${source} daily data from ${record.name}`, `Remove all ${source} daily delivery data (and its report history) from “${record.name}”?`, () => { campaigns[activeCampaignIndex] = removeDailySource(record, source); });
+  if (done) { renderSnapshotHistory(campaigns[activeCampaignIndex]); renderDailyDelivery(campaigns[activeCampaignIndex]); }
+});
+
+
 
 function renderImportAudit() {
   const summary = summarizeImportAudit(importHistory);
