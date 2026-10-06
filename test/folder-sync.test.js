@@ -75,3 +75,15 @@ test("lists candidate files up to two folders deep and resolves them by path", a
   assert.deepEqual(found.map(item => item.path).sort(), ["a.csv", "inbox/b.xlsx", "inbox/deep/c.csv"]);
   assert.equal(await resolveFileHandle(root, "inbox/b.xlsx"), file);
 });
+
+test("auto-applies a DSP line-item export only when every campaign matches", () => {
+  const lineReport = campaigns => ({ kind: "line-items", parsed: { valid: true, lineItemCount: campaigns.reduce((sum, entry) => sum + entry.lineItems.length, 0), campaigns } });
+  const entry = (key, sourceName) => ({ key, sourceName, lineItems: [{ id: "1", name: "A", spend: 1 }] });
+  const plan = planAutoImport(lineReport([entry("alpha retargeting", "ZCA-1_Alpha Retargeting")]), [campaign]);
+  assert.equal(plan.status, "apply");
+  assert.equal(plan.campaigns[0].lineItems.length, 1);
+  const review = planAutoImport(lineReport([entry("alpha retargeting", "Alpha Retargeting"), entry("mystery", "Mystery")]), [campaign]);
+  assert.equal(review.status, "review");
+  assert.match(review.reason, /needs linking: Mystery/);
+  assert.equal(planAutoImport(lineReport([entry("mystery", "Mystery")]), [campaign]).status, "review");
+});

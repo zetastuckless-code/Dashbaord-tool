@@ -32,6 +32,7 @@ import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from 
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
+import { applyLineItems } from "./lib/line-item-import.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
@@ -608,6 +609,11 @@ validateButton.addEventListener("click", async () => {
     handleDailyReport(file, fingerprint, report);
     return;
   }
+  if (report.kind === "line-items") {
+    validateButton.textContent = "Validate report";
+    handleLineItemReport(file, fingerprint, report);
+    return;
+  }
   const result = validateCampaignCsv(report.csvText);
   validateButton.textContent = "Validate report";
   if (!result.valid) {
@@ -627,6 +633,7 @@ validateButton.addEventListener("click", async () => {
 confirmImportButton.addEventListener("click", () => {
   if (!pendingValidatedImport) return;
   if (pendingValidatedImport.kind === "daily") { confirmDailyImport(); return; }
+  if (pendingValidatedImport.kind === "line-items") { confirmLineItemImport(); return; }
   const { fileName, fingerprint, result } = pendingValidatedImport;
   const importMode = document.querySelector('input[name="import-mode"]:checked').value;
   const mergeResult = previewCampaignImport(campaigns, result.campaigns, importMode);
@@ -647,6 +654,65 @@ confirmImportButton.addEventListener("click", () => {
     resetImportForm();
   }, 550);
 });
+
+function handleLineItemReport(file, fingerprint, report) {
+  const parsed = report.parsed;
+  if (!parsed.valid) {
+    recordImport(file.name, fingerprint, "Rejected", 0, parsed.errors);
+    showValidationResult(parsed.errors, "error");
+    validateButton.disabled = false;
+    return;
+  }
+  pendingValidatedImport = { kind: "line-items", fileName: file.name, fingerprint, report, parsed, links: {} };
+  document.querySelector(".import-mode").hidden = true;
+  document.querySelector("#mapping-review").hidden = true;
+  renderLineItemPreview();
+}
+
+function renderLineItemPreview() {
+  const { parsed, links, report } = pendingValidatedImport;
+  const result = applyLineItems(campaigns, parsed, links);
+  pendingValidatedImport.lineResult = result;
+  const attached = result.matched.reduce((sum, item) => sum + item.count, 0);
+  const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
+  document.querySelector("#import-preview").hidden = false;
+  document.querySelector("#import-preview-title").textContent = "DSP line-item preview";
+  document.querySelector("#import-preview-mode").textContent = "Line items attach to existing campaigns";
+  document.querySelector("#import-preview-summary").innerHTML = `<div><strong>${result.matched.length}</strong><small>Campaigns</small></div><div><strong>${attached}</strong><small>Line items</small></div><div class="${result.unmatched.length ? "destructive" : ""}"><strong>${result.unmatched.length}</strong><small>Unmatched</small></div><div><strong>${parsed.lineItemCount}</strong><small>In file</small></div>`;
+  const options = `<option value="">Skip this campaign</option>${campaigns.map((campaign, index) => `<option value="${index}">${escapeHtml(campaign.client)} · ${escapeHtml(campaign.name)}</option>`).join("")}`;
+  document.querySelector("#import-preview-list").innerHTML = result.matched.map(item => `<div><span><strong>${escapeHtml(item.campaign)}</strong><small>${escapeHtml(item.client)} · ${item.count} line item${item.count === 1 ? "" : "s"}</small></span><em class="preview-action update">attach</em></div>`).join("")
+    + result.unmatched.map(entry => `<div><span><strong>${escapeHtml(entry.sourceName)}</strong><small>${entry.lineItems.length} line item${entry.lineItems.length === 1 ? "" : "s"} · not matched</small></span><select class="daily-link-select" data-line-key="${escapeHtml(entry.key)}" aria-label="Link ${escapeHtml(entry.sourceName)} to a dashboard campaign">${options}</select></div>`).join("");
+  document.querySelectorAll("[data-line-key]").forEach(select => select.addEventListener("change", () => {
+    if (select.value === "") delete pendingValidatedImport.links[select.dataset.lineKey]; else pendingValidatedImport.links[select.dataset.lineKey] = Number(select.value);
+    renderLineItemPreview();
+  }));
+  confirmImportButton.disabled = result.matched.length === 0;
+  const messages = [`${parsed.lineItemCount} line item${parsed.lineItemCount === 1 ? "" : "s"} in ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"} read from ${location}.`, ...(result.unmatched.length ? [`${result.unmatched.length} campaign${result.unmatched.length === 1 ? "" : "s"} not matched; link each below or it will be skipped.`] : [])];
+  if (!result.matched.length) messages.unshift("No campaign in the file matched a dashboard campaign. Import the campaign's weekly report first or link it below.");
+  showValidationResult(messages, result.matched.length ? "success" : "error", result.unmatched.length ? messages.slice(1) : []);
+  validateButton.disabled = false;
+}
+
+function confirmLineItemImport() {
+  const { fileName, fingerprint, lineResult } = pendingValidatedImport;
+  const keys = lineResult.matched.map(item => [item.client, item.campaignId || item.campaign, "dsp line items"].map(value => String(value ?? "").trim().toLowerCase()).join("::"));
+  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: lineResult.matched.length, campaignKeys: keys }));
+  campaigns = lineResult.campaigns;
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  const warnings = lineResult.unmatched.map(entry => `Skipped unmatched campaign: ${entry.sourceName}.`);
+  recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", lineResult.matched.length, [], keys, warnings);
+  refreshClientFilter();
+  renderCampaigns();
+  document.querySelector("#toast-title").textContent = "Line items imported";
+  document.querySelector("#toast-message").textContent = `Line-item performance attached to ${lineResult.matched.length} campaign${lineResult.matched.length === 1 ? "" : "s"}.`;
+  setTimeout(() => {
+    dialog.close();
+    const toast = document.querySelector("#toast");
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 3200);
+    resetImportForm();
+  }, 550);
+}
 
 function handleDailyReport(file, fingerprint, report) {
   const parsed = report.parsed;
