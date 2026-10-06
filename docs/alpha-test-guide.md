@@ -32,7 +32,7 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 19 | Import a canonical CSV containing a YouTube row for an existing client, assign it to that campaign, and skip a duplicate row. | The row joins the campaign as a line; the next import from the same source pre-selects your choices. |
 | 20 | Upload an IO and choose **Campaign totals only**. | The campaign's budget and pacing use the order total; its report lines keep their own values and no flights are added. |
 | 21 | Import a CSV report for a client that does not exist yet. | The row is labelled **New campaign**; **Review new campaign setup** is pre-filled from the report, accepts edits (an invalid budget disables the import), and the created campaign reflects them. |
-| 22 | In **New campaign**, use **Pull details from a report** with a two-campaign CSV. | A campaign picker appears, the form fills from the chosen row, and creating the campaign also imports its numbers. **Undo** removes it. |
+| 22 | In **New campaign**, use **Pull details from a report** with a two-campaign CSV. | A campaign picker appears and the form fills from the chosen row. Creating the campaign imports nothing and adds no import-history entry; the same file's lines are pre-selected for it in **Import report**. |
 | 23 | Remove one line and one whole campaign, then press **Undo** twice. | Both removals are reversed in order; the Undo button shows how many steps remain. |
 | 24 | Select a client card, then use browser Back. | The client page shows only that client's data; Back returns to the overview. |
 | 25 | Expand a campaign, tick two lines, choose **Edit selected…** and set an owner; then select all and **Remove selected**. | Only the ticked lines change; the removal is reversed by two presses of **Undo**. |
@@ -42,7 +42,8 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 29 | Choose **Upload / revise IO** and select two IO PDFs. | A dialog lists each order with its matched campaign; assigning both to one campaign is refused; applying adds a single Undo step. |
 | 30 | Apply an IO as totals to a campaign whose report lines are named Flight 1, Flight 2, … | Each line shows its flight dates marked *from IO* and a Completed / Live / Scheduled status. |
 | 31 | Press **Audit data**. | Each line gets a source/fields panel; missing fields are red and the campaign header counts lines with missing data. |
-| 32 | In **New campaign**, pull details from a report with several campaigns, create one, then import the same file. | All lines of the chosen campaign come in; the file shows as *Partially imported*; the full import afterwards updates that campaign and adds the rest, with no duplicates. |
+| 32 | In **New campaign**, pull details from a report with several campaigns, create one, then import the same file. | The campaign is created empty; importing that file afterwards puts its lines into the campaign (inheriting the setup), removes the empty placeholder, and adds the rest, with no duplicates. |
+| 33 | Validate a report with two lines for one campaign, untick one line, import, then import the next week's report. | Only the ticked line is added; the unticked line is remembered as skipped and starts unticked next time. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture

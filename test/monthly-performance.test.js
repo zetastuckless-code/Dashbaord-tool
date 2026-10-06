@@ -27,13 +27,13 @@ test("detects a monthly performance tab, including a conversions header split ov
   assert.equal(detectMonthlyPerformance([["Line", "Impressions", "Spend"]]), null);
 });
 
-test("builds one full-flight campaign row from the Total row, with the flight range and budget to date", () => {
+test("builds one full-flight campaign row from the Total row, with budget to date and the data-through date (not a flight end)", () => {
   const rows = extractMonthlyPerformance(monthlyRows, detectMonthlyPerformance(monthlyRows), { fileName: "Acme Foods Report.xlsx" });
   assert.equal(rows.length, 1);
   const [row] = rows;
   assert.equal(row.client, "Acme Foods");
   assert.equal(row.campaign, "Acme Foods 2026 — YouTube");
-  assert.deepEqual([row.start_date, row.end_date, row.data_as_of], ["2026-01-01", "2026-10-04", "2026-10-04"]);
+  assert.deepEqual([row.start_date, row.end_date, row.data_as_of], ["", "", "2026-10-04"]);
   assert.deepEqual([row.spend, row.budget, row.impressions, row.clicks, row.conversions], [115_000, 115_000, 13_800_000, 8_180, 2_570]);
   assert.equal(row.pacing, 100);
   assert.equal(row.kpi, "CPA");

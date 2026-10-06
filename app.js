@@ -35,7 +35,7 @@ import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
-import { budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey } from "./lib/campaign-groups.js";
@@ -43,9 +43,8 @@ import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
 import { pacingBand } from "./lib/client-rollup.js";
-import { applyAssignments, assignmentKey, initialChoices, KEEP, lineLabel, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
-import { applySetupEdits, rowsForCreatedGroup, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
-import { mergeCampaignImports } from "./lib/import-merge.js";
+import { applyAssignments, assignmentKey, initialChoices, KEEP, lineLabel, readAssignments, rememberAssignments, removeFilledShells, SKIP } from "./lib/import-assignment.js";
+import { applySetupEdits, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
 import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
@@ -150,7 +149,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
       <td><button class="row-button" aria-label="Options for ${escapeHtml(campaign.name)}">•••</button></td>
     </tr>`;
   }).join("");
-  const activeRows = rows.filter(campaign => dashboardFlightStatus(campaign) === "live");
+  const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
   const selectedKpiView = document.querySelector("#kpi-view")?.value || "primary";
   const portfolioKpi = aggregateKpiView(activeRows, selectedKpiView);
   document.querySelector("#campaign-kpi-heading").textContent = selectedKpiView === "primary" ? "Primary KPI" : selectedKpiView;
@@ -987,7 +986,8 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
-  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)), groupEdits: {}, groupIo: {}, unmatchedIos: [] };
+  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)), groupEdits: {}, groupIo: {}, unmatchedIos: [], skippedLines: new Set() };
+  normalizeLineSkips();
   renderImportAssignments();
   const effectiveRows = effectiveImport().campaigns;
   confirmImportButton.disabled = effectiveRows.length === 0;
@@ -1004,11 +1004,11 @@ confirmImportButton.addEventListener("click", () => {
   const { fileName, fingerprint, result } = pendingValidatedImport;
   const importMode = document.querySelector('input[name="import-mode"]:checked').value;
   const effectiveRows = effectiveImport().campaigns;
-  rememberAssignments(localStorage, result.campaigns, pendingValidatedImport.choices);
+  rememberAssignments(localStorage, result.campaigns, { ...pendingValidatedImport.choices, ...Object.fromEntries([...pendingValidatedImport.skippedLines].map(key => [key, SKIP])) });
   if (setupErrors().length) return;
   const mergeResult = previewCampaignImport(campaigns, effectiveRows.map(row => ({ ...row, sourceFile: fileName })), importMode);
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
-  campaigns = mergeResult.campaigns;
+  campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows);
   const appliedOrders = applyAttachedImportIos(fileName);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   const importStatus = result.warnings.length ? "Imported with warnings" : "Imported";
@@ -1175,12 +1175,23 @@ function rowWithGroupEdits(row, edits, groupSize) {
   return next;
 }
 
+/** Lines remembered as skipped (e.g. a stale summary row) stay individual skips unless every line of the campaign is skipped. */
+function normalizeLineSkips() {
+  const pending = pendingValidatedImport;
+  for (const group of importGroups()) {
+    const skipped = group.rows.filter(row => pending.choices[assignmentKey(row)] === SKIP);
+    if (skipped.length && skipped.length < group.rows.length) skipped.forEach(row => { pending.skippedLines.add(assignmentKey(row)); delete pending.choices[assignmentKey(row)]; });
+  }
+}
+
 function effectiveImport() {
-  const { result, choices, groupEdits } = pendingValidatedImport;
+  const { result, choices, groupEdits, skippedLines } = pendingValidatedImport;
+  // Individually skipped lines never reach the import; the campaign's other lines are unaffected.
+  const kept = result.campaigns.filter(row => !skippedLines.has(assignmentKey(row)));
   const sizes = new Map();
-  result.campaigns.forEach(row => sizes.set(groupKey(row), (sizes.get(groupKey(row)) || 0) + 1));
+  kept.forEach(row => sizes.set(groupKey(row), (sizes.get(groupKey(row)) || 0) + 1));
   // Setup edits only apply to rows that stay their own campaign; rows added elsewhere or skipped ignore them.
-  const rows = result.campaigns.map(row => choices[assignmentKey(row)] ? row : rowWithGroupEdits(row, groupEdits[groupKey(row)], sizes.get(groupKey(row))));
+  const rows = kept.map(row => choices[assignmentKey(row)] ? row : rowWithGroupEdits(row, groupEdits[groupKey(row)], sizes.get(groupKey(row))));
   return applyAssignments(rows, choices, groupCampaigns(campaigns));
 }
 
@@ -1249,7 +1260,8 @@ function renderImportAssignments() {
     const ioRow = choice === SKIP ? "" : `<div class="import-group-io"><span>Insertion order</span>${attached
       ? `<span class="import-io-summary"><strong>${escapeHtml([attached.io.orderNumber, attached.io.revision].filter(Boolean).join(" ") || attached.fileName)}</strong> · ${escapeHtml(formatExactMoney(attached.io.budget))} · ${attached.io.lineItems.length} placements</span><select data-group-io-mode="${escapeHtml(group.key)}" aria-label="How to use the order for ${escapeHtml(group.name)}"><option value="totals"${attached.mode === "totals" ? " selected" : ""}>Use order totals</option><option value="flights"${attached.mode === "flights" ? " selected" : ""}>Save placements as flights</option></select><button type="button" class="text-button" data-group-io-remove="${escapeHtml(group.key)}">Remove</button>`
       : `<label class="text-button import-io-attach">Attach IO (PDF)<input type="file" accept=".pdf,application/pdf" data-group-io-file="${escapeHtml(group.key)}" hidden /></label>`}</div>`;
-    const lines = `<details class="import-group-lines"><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} in this report</summary>${group.rows.map(row => `<div><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></div>`).join("")}</details>`;
+    const skippedHere = group.rows.filter(row => pending.skippedLines.has(assignmentKey(row))).length;
+    const lines = `<details class="import-group-lines"${skippedHere ? " open" : ""}><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} in this report${skippedHere ? ` · ${skippedHere} skipped` : ""} <small>(untick a line to leave it out)</small></summary>${group.rows.map(row => `<label class="import-line-include"><input type="checkbox" data-line-include="${escapeHtml(assignmentKey(row))}"${pending.skippedLines.has(assignmentKey(row)) ? "" : " checked"} /><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></label>`).join("")}</details>`;
     return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}${ioRow}${lines}</div>`;
   }).join("");
   const unmatched = pending.unmatchedIos || [];
@@ -1277,6 +1289,13 @@ async function readIoFiles(files) {
 document.querySelector("#import-assignment-list").addEventListener("change", async event => {
   const pending = pendingValidatedImport;
   if (!pending?.result) return;
+  const include = event.target.closest("[data-line-include]");
+  if (include) {
+    if (include.checked) pending.skippedLines.delete(include.dataset.lineInclude); else pending.skippedLines.add(include.dataset.lineInclude);
+    renderImportAssignments();
+    refreshImportAfterAssignment();
+    return;
+  }
   const choice = event.target.closest("[data-group-choice]");
   if (choice) {
     const group = importGroups().find(item => item.key === choice.dataset.groupChoice);
@@ -1494,7 +1513,7 @@ function renderCreateReportNote(group, undated) {
   const others = pending.groups.length - 1;
   const parts = [];
   if (pending.groups.length > 1) parts.push(`This report holds ${pending.groups.length} campaigns. <button type="button" class="text-button" id="new-campaign-report-multi">Set up all ${pending.groups.length} campaigns from this report</button> (each with its own setup and insertion order), or create just the one selected below.`);
-  parts.push(`${group.rows.length === 1 ? "The 1 line" : `All ${group.rows.length} lines`} of “${escapeHtml(group.name)}” will be imported with it${others ? `; the other ${others} campaign${others === 1 ? "" : "s"} in this report stay available to import afterwards` : ""}.`);
+  parts.push(`Only the setup is taken from this report; its numbers are not imported here. Afterwards, use <strong>Import report</strong> with the same file and ${group.rows.length === 1 ? "its line goes" : `its ${group.rows.length} lines go`} into this campaign${others ? ` (the other ${others} campaign${others === 1 ? "" : "s"} can be set up or imported then too)` : ""}.`);
   if (undated) parts.push("This report has no flight dates, so they are optional here; apply an insertion order later to add them.");
   note.innerHTML = parts.join(" ");
   note.hidden = false;
@@ -1615,18 +1634,13 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
   pendingIoForCreate = null;
   if (pendingReportForCreate) {
     // The report's numbers join the campaign as if it had been imported, with the same restore point and history entry.
-    const { fileName, fingerprint, groups, warnings } = pendingReportForCreate;
+    // The report only supplied the setup. Its numbers are not imported here, and the file is not marked as imported;
+    // instead its lines are set to go into this campaign when Import report is used.
+    const { fileName, groups } = pendingReportForCreate;
     const group = groups[Number(document.querySelector("#new-campaign-report-row").value) || 0];
-    const built = rowsForCreatedGroup(group.rows, { ...withIo, source: group.rows[0].source, sources: [group.rows[0].source] }, document.querySelector("#new-campaign-name").value);
-    const keys = built.rows.map(campaignImportKey);
-    writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: built.rows.length, campaignKeys: keys }));
-    campaigns.push(built.created);
-    campaigns = mergeCampaignImports(campaigns, built.rows).campaigns;
-    // Only the chosen campaign was imported. If the report holds others, the file must stay importable.
-    const remaining = groups.length - 1;
-    if (remaining > 0) recordImport(fileName, fingerprint, "Partially imported", built.rows.length, [], keys, [`${built.rows.length} line${built.rows.length === 1 ? "" : "s"} of “${group.name}” imported; ${remaining} other campaign${remaining === 1 ? "" : "s"} in this report not imported yet.`, ...warnings]);
-    else recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", built.rows.length, [], keys, warnings);
-    importedFromReport = { lines: built.rows.length, remaining, fileName };
+    campaigns.push(withIo);
+    rememberAssignments(localStorage, group.rows, Object.fromEntries(group.rows.map(row => [assignmentKey(row), groupKey(withIo)])));
+    importedFromReport = { lines: group.rows.length, fileName };
     pendingReportForCreate = null;
   } else {
     campaigns.push(withIo);
@@ -1635,8 +1649,8 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
   refreshClientFilter();
   renderCampaigns();
   createCampaignDialog.close();
-  document.querySelector("#toast-title").textContent = "Campaign created";
-  document.querySelector("#toast-message").textContent = importedFromReport ? `${result.campaign.name} was created with ${importedFromReport.lines} line${importedFromReport.lines === 1 ? "" : "s"} from ${importedFromReport.fileName}${importedFromReport.remaining ? `. The other ${importedFromReport.remaining} campaign${importedFromReport.remaining === 1 ? "" : "s"} in that report can still be imported.` : "."}` : `${result.campaign.name} is ready for report imports.`;
+  document.querySelector("#toast-title").textContent = importedFromReport ? "Campaign set up" : "Campaign created";
+  document.querySelector("#toast-message").textContent = importedFromReport ? `${result.campaign.name} was set up from ${importedFromReport.fileName}. Use Import report with that file to add its ${importedFromReport.lines} line${importedFromReport.lines === 1 ? "" : "s"}; it is already set to go into this campaign.` : `${result.campaign.name} is ready for report imports.`;
   const toast = document.querySelector("#toast"); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3200);
 });
 document.querySelector("#alert-settings-button").addEventListener("click", () => {

@@ -63,13 +63,13 @@ test("lists every placement of every order earliest first", () => {
   assert.deepEqual(campaignPlacements(undefined), []);
 });
 
-test("pairs 'Flight N' lines with the N-th flight, and pairs unnumbered lines one for one", () => {
+test("pairs 'Flight N' lines with the N-th flight and never guesses at unnumbered lines", () => {
   const placements = campaignPlacements({ orders: [{ order: "O-1", placements: [placement("A", "2026-04-26", "2026-05-30", 1), placement("B", "2026-05-31", "2026-06-27", 2), placement("C", "2026-06-28", "2026-07-25", 3)] }] });
   const lines = [recordLine("Flight 2"), recordLine("Flight 1 — Display"), recordLine("Flight 3")];
   const matched = matchLinesToPlacements(lines, placements);
   assert.deepEqual(lines.map(line => matched.get(line)?.id), ["B", "A", "C"]);
   const unnumbered = [recordLine("Alpha"), recordLine("Beta"), recordLine("Gamma")];
-  assert.deepEqual(unnumbered.map(line => matchLinesToPlacements(unnumbered, placements).get(line)?.id), ["A", "B", "C"]);
+  assert.equal(matchLinesToPlacements(unnumbered, placements).size, 0);
   const mismatched = [recordLine("Alpha"), recordLine("Beta")];
   assert.equal(matchLinesToPlacements(mismatched, placements).size, 0);
   assert.equal(matchLinesToPlacements([recordLine("Flight 9")], placements).size, 0);
