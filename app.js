@@ -37,7 +37,7 @@ import { readIoPdf } from "./lib/io-reader.js";
 import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
-import { metricsForCampaign, readMetricPrefs, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
+import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { addLedgerEntries, clearFolderHandle, folderSyncSupported, isProcessed, ledgerKey, listReportFiles, loadFolderHandle, planAutoImport, readLedger, resolveFileHandle, reviewItems, saveFolderHandle, SYNC_INTERVAL_MS, writeLedger } from "./lib/folder-sync.js";
 
 const sampleCampaigns = [
@@ -236,7 +236,7 @@ function renderCampaignList(rows, activeAlerts) {
     const totals = computeMetrics(group.records, options);
     const groupAlerts = activeAlerts.filter(alert => group.records.includes(alert.campaign));
     const critical = groupAlerts.some(alert => alert.severity === "critical");
-    const cells = keys.map(key => `<span class="metric-cell"><small>${escapeHtml(metricLabel(key))}</small><strong>${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
+    const cells = keys.map(key => `<span class="metric-cell" draggable="true" data-metric="${key}" title="Drag to reorder"><small>${escapeHtml(metricLabel(key))}</small><strong>${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
     const labels = keys.map(key => `<span>${escapeHtml(metricLabel(key))}</span>`).join("");
     const lineRows = group.lines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
@@ -258,6 +258,38 @@ function renderCampaignList(rows, activeAlerts) {
     </article>`;
   }).join("");
 }
+
+// Drag a metric on a campaign row to reorder that campaign's metrics.
+let draggedMetric = null;
+const campaignListRows = document.querySelector("#campaign-list-rows");
+const clearDropMarks = () => campaignListRows.querySelectorAll(".drop-before, .drop-after").forEach(cell => cell.classList.remove("drop-before", "drop-after"));
+campaignListRows.addEventListener("dragstart", event => {
+  const cell = event.target.closest?.(".metric-cell[data-metric]");
+  if (!cell) return;
+  draggedMetric = { group: cell.closest("[data-group-key]").dataset.groupKey, metric: cell.dataset.metric };
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", draggedMetric.metric);
+  cell.classList.add("dragging");
+});
+campaignListRows.addEventListener("dragover", event => {
+  const cell = event.target.closest?.(".metric-cell[data-metric]");
+  if (!draggedMetric || !cell || cell.closest("[data-group-key]").dataset.groupKey !== draggedMetric.group || cell.dataset.metric === draggedMetric.metric) return;
+  event.preventDefault();
+  clearDropMarks();
+  const box = cell.getBoundingClientRect();
+  cell.classList.add(event.clientX > box.left + box.width / 2 ? "drop-after" : "drop-before");
+});
+campaignListRows.addEventListener("drop", event => {
+  const cell = event.target.closest?.(".metric-cell[data-metric]");
+  if (!draggedMetric || !cell || cell.closest("[data-group-key]").dataset.groupKey !== draggedMetric.group) return;
+  event.preventDefault();
+  const after = cell.classList.contains("drop-after");
+  const reordered = reorderMetrics(metricsForCampaign(metricPrefs, draggedMetric.group), draggedMetric.metric, cell.dataset.metric, after);
+  metricPrefs = writeMetricPrefs(localStorage, setCampaignMetrics(metricPrefs, draggedMetric.group, reordered));
+  draggedMetric = null;
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+campaignListRows.addEventListener("dragend", () => { draggedMetric = null; clearDropMarks(); campaignListRows.querySelectorAll(".dragging").forEach(cell => cell.classList.remove("dragging")); });
 
 document.querySelector("#campaign-list-rows").addEventListener("click", event => {
   const edit = event.target.closest("[data-edit-metrics]");
@@ -286,7 +318,8 @@ function openMetricPicker(key) {
   document.querySelector("#metric-picker-title").textContent = key === null ? "Metrics for all campaigns" : "Choose metrics";
   document.querySelector("#metric-picker-subtitle").textContent = key === null ? "Replaces every campaign's metrics and the default for new campaigns." : `${group?.name || "Campaign"} · ${group?.client || ""}`;
   document.querySelector("#metric-picker-reset").hidden = key === null;
-  document.querySelector("#metric-picker-grid").innerHTML = METRIC_CATALOG.map(metric => `<label><input type="checkbox" name="row-metric" value="${metric.key}"${selected.has(metric.key) ? " checked" : ""} />${escapeHtml(metric.label)}</label>`).join("");
+  const ordered = [...(key === null ? metricPrefs.defaults : metricsForCampaign(metricPrefs, key)), ...METRIC_CATALOG.map(metric => metric.key).filter(metricKey => !selected.has(metricKey))];
+  document.querySelector("#metric-picker-grid").innerHTML = ordered.map(metricKey => `<div class="metric-pick" draggable="true" data-key="${metricKey}"><span class="metric-pick-handle" aria-hidden="true">⋮⋮</span><label><input type="checkbox" name="row-metric" value="${metricKey}"${selected.has(metricKey) ? " checked" : ""} />${escapeHtml(metricLabel(metricKey))}</label><span class="metric-pick-moves"><button type="button" data-move="up" aria-label="Move ${escapeHtml(metricLabel(metricKey))} up">↑</button><button type="button" data-move="down" aria-label="Move ${escapeHtml(metricLabel(metricKey))} down">↓</button></span></div>`).join("");
   updateMetricPickerCount();
   document.querySelector("#metric-picker-error").hidden = true;
   metricPickerDialog.showModal();
@@ -297,6 +330,33 @@ function updateMetricPickerCount() {
   document.querySelector("#metric-picker-count").textContent = `${count} of ${MAX_ROW_METRICS} selected · shown in the order listed`;
 }
 
+document.querySelector("#metric-picker-grid").addEventListener("click", event => {
+  const button = event.target.closest("[data-move]");
+  if (!button) return;
+  const item = button.closest(".metric-pick");
+  const sibling = button.dataset.move === "up" ? item.previousElementSibling : item.nextElementSibling;
+  if (!sibling) return;
+  if (button.dataset.move === "up") sibling.before(item); else sibling.after(item);
+  button.focus();
+});
+let draggedPick = null;
+const metricPickerGrid = document.querySelector("#metric-picker-grid");
+metricPickerGrid.addEventListener("dragstart", event => {
+  const item = event.target.closest?.(".metric-pick");
+  if (!item) return;
+  draggedPick = item;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", item.dataset.key);
+  item.classList.add("dragging");
+});
+metricPickerGrid.addEventListener("dragover", event => {
+  const target = event.target.closest?.(".metric-pick");
+  if (!draggedPick || !target || target === draggedPick) return;
+  event.preventDefault();
+  const box = target.getBoundingClientRect();
+  if (event.clientY > box.top + box.height / 2) target.after(draggedPick); else target.before(draggedPick);
+});
+metricPickerGrid.addEventListener("dragend", () => { draggedPick?.classList.remove("dragging"); draggedPick = null; });
 document.querySelector("#metric-picker-grid").addEventListener("change", event => {
   const checked = document.querySelectorAll('input[name="row-metric"]:checked');
   if (checked.length > MAX_ROW_METRICS) { event.target.checked = false; }

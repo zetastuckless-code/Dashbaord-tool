@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { campaignGroupName, groupCampaigns, groupKey, linesForRecord } from "../lib/campaign-groups.js";
-import { metricsForCampaign, normalizeMetricPrefs, readMetricPrefs, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "../lib/campaign-metric-prefs.js";
+import { metricsForCampaign, normalizeMetricPrefs, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "../lib/campaign-metric-prefs.js";
 
 const asOf = new Date("2026-09-16T12:00:00Z");
 const rec = (name, extra = {}) => ({ client: "Highmark", name, spend: 1, budget: 2, startDate: "2026-09-01", endDate: "2026-09-30", ...extra });
@@ -59,4 +59,14 @@ test("preferences persist and survive corrupt storage", () => {
   assert.deepEqual(readMetricPrefs(storage).byCampaign.a, ["spend", "vcr"]);
   storage.setItem("northstar-campaign-metrics", "{nope");
   assert.deepEqual(readMetricPrefs(storage).byCampaign, {});
+});
+
+test("reorders a metric before or after another and ignores unknown keys", () => {
+  const list = ["spend", "impressions", "clicks", "roas"];
+  assert.deepEqual(reorderMetrics(list, "roas", "spend"), ["roas", "spend", "impressions", "clicks"]);
+  assert.deepEqual(reorderMetrics(list, "spend", "clicks", true), ["impressions", "clicks", "spend", "roas"]);
+  assert.deepEqual(reorderMetrics(list, "spend", "impressions", false), list);
+  assert.deepEqual(reorderMetrics(list, "ctr", "spend"), list);
+  assert.deepEqual(reorderMetrics(list, "spend", "spend"), list);
+  assert.deepEqual(list, ["spend", "impressions", "clicks", "roas"]);
 });
