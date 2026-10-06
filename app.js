@@ -41,7 +41,7 @@ import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
 import { pacingBand } from "./lib/client-rollup.js";
-import { applyAssignments, assignmentKey, initialChoices, KEEP, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
+import { applyAssignments, assignmentKey, initialChoices, KEEP, lineLabel, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
 import { applySetupEdits, rowForCreatedCampaign, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
 import { mergeCampaignImports } from "./lib/import-merge.js";
 import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
@@ -223,7 +223,6 @@ function applyClientScopeChrome() {
   document.querySelector("#clients").hidden = scoped;
   document.querySelector("#client-filter").closest(".filter-group").hidden = scoped;
   document.querySelector("#client-back").hidden = !scoped;
-  document.querySelector("#client-io-button").hidden = !scoped;
   const eyebrow = document.querySelector("#page-eyebrow");
   const heading = document.querySelector("#greeting");
   const subtitle = document.querySelector("#page-subtitle");
@@ -943,7 +942,7 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
-  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)), edits: {} };
+  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)), groupEdits: {}, groupIo: {}, unmatchedIos: [] };
   renderImportAssignments();
   const effectiveRows = effectiveImport().campaigns;
   confirmImportButton.disabled = effectiveRows.length === 0;
@@ -963,14 +962,15 @@ confirmImportButton.addEventListener("click", () => {
   rememberAssignments(localStorage, result.campaigns, pendingValidatedImport.choices);
   if (setupErrors().length) return;
   const mergeResult = previewCampaignImport(campaigns, effectiveRows, importMode);
-  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey) }));
+  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
   campaigns = mergeResult.campaigns;
+  const appliedOrders = applyAttachedImportIos(fileName);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   const importStatus = result.warnings.length ? "Imported with warnings" : "Imported";
   recordImport(fileName, fingerprint, importStatus, effectiveRows.length, [], effectiveRows.map(campaignImportKey), result.warnings);
   refreshClientFilter();
   renderCampaigns();
-  document.querySelector("#toast-message").textContent = `${effectiveRows.length} campaign row${effectiveRows.length === 1 ? "" : "s"} imported successfully.`;
+  document.querySelector("#toast-message").textContent = `${effectiveRows.length} campaign row${effectiveRows.length === 1 ? "" : "s"} imported successfully${appliedOrders.length ? `, with ${appliedOrders.length} insertion order${appliedOrders.length === 1 ? "" : "s"} applied` : ""}.`;
   document.querySelector("#toast-title").textContent = "Report imported";
   setTimeout(() => {
     dialog.close();
@@ -1104,23 +1104,54 @@ function confirmDailyImport() {
   }, 550);
 }
 
-// --- For each imported row: new campaign (with editable setup), update a match, add to a campaign, or skip ---
+// --- Import preview, one block per campaign: what it becomes, its setup, and its insertion order ---
+// One report can hold several campaigns (e.g. Hyperlocal and OLA); each gets its own choice, setup, and IO.
 const SETUP_FIELDS = [
-  ["client", "Client", "text"], ["name", "Campaign name", "text"], ["campaignId", "Stable campaign ID", "text"], ["owner", "Owner", "text"],
-  ["channel", "Channel", "text"], ["startDate", "Start date", "date"], ["endDate", "End date", "date"], ["budget", "Approved budget", "text"],
+  ["client", "Client", "text"], ["name", "Campaign name", "text"], ["owner", "Owner", "text"], ["channel", "Channel", "text"],
   ["kpi", "Primary KPI", "text"], ["target", "KPI target", "text"]
 ];
+const SINGLE_LINE_FIELDS = [["campaignId", "Stable campaign ID", "text"], ["startDate", "Start date", "date"], ["endDate", "End date", "date"], ["budget", "Approved budget", "text"]];
+
+function importGroups() {
+  const groups = new Map();
+  for (const row of pendingValidatedImport.result.campaigns) {
+    const key = groupKey(row);
+    if (!groups.has(key)) groups.set(key, { key, name: campaignGroupName(row), client: row.client, rows: [] });
+    groups.get(key).rows.push(row);
+  }
+  return [...groups.values()];
+}
+
+/** Applies a campaign-level setup edit to one of its rows: shared fields everywhere, and a rename keeps each line's label. */
+function rowWithGroupEdits(row, edits, groupSize) {
+  if (!edits || !Object.keys(edits).length) return row;
+  const { name: groupName, ...shared } = edits;
+  const fields = groupSize === 1 ? shared : Object.fromEntries(Object.entries(shared).filter(([field]) => !["campaignId", "startDate", "endDate", "budget"].includes(field)));
+  let next = applySetupEdits(row, fields);
+  const renamed = String(groupName ?? "").trim();
+  if (renamed) {
+    const hasLabel = String(row.name).includes(" — ");
+    next = { ...next, campaignGroup: renamed, name: groupSize === 1 && !hasLabel ? renamed : `${renamed} — ${lineLabel(row)}` };
+  }
+  return next;
+}
 
 function effectiveImport() {
-  const { result, choices, edits } = pendingValidatedImport;
+  const { result, choices, groupEdits } = pendingValidatedImport;
+  const sizes = new Map();
+  result.campaigns.forEach(row => sizes.set(groupKey(row), (sizes.get(groupKey(row)) || 0) + 1));
   // Setup edits only apply to rows that stay their own campaign; rows added elsewhere or skipped ignore them.
-  const rows = result.campaigns.map(row => choices[assignmentKey(row)] ? row : applySetupEdits(row, edits[assignmentKey(row)]));
+  const rows = result.campaigns.map(row => choices[assignmentKey(row)] ? row : rowWithGroupEdits(row, groupEdits[groupKey(row)], sizes.get(groupKey(row))));
   return applyAssignments(rows, choices, groupCampaigns(campaigns));
 }
 
 function setupErrors() {
-  const { result, choices, edits } = pendingValidatedImport;
-  return result.campaigns.filter(row => !choices[assignmentKey(row)] && edits[assignmentKey(row)]).flatMap(row => validateSetupEdits({ ...setupFieldsFromRow(row), ...edits[assignmentKey(row)] }).map(message => `${row.name}: ${message}`));
+  const { choices, groupEdits } = pendingValidatedImport;
+  return importGroups().filter(group => groupEdits[group.key] && !choices[assignmentKey(group.rows[0])]).flatMap(group => {
+    const base = setupFieldsFromRow(group.rows[0]);
+    const edits = group.rows.length === 1 ? groupEdits[group.key] : Object.fromEntries(Object.entries(groupEdits[group.key]).filter(([field]) => !["campaignId", "startDate", "endDate", "budget"].includes(field)));
+    return validateSetupEdits({ ...base, ...edits }).map(message => `${group.name}: ${message}`);
+  });
 }
 
 function refreshImportAfterAssignment() {
@@ -1133,47 +1164,138 @@ function refreshImportAfterAssignment() {
   confirmImportButton.disabled = effective.campaigns.length === 0 || errors.length > 0;
 }
 
-function renderImportAssignments() {
-  const section = document.querySelector("#import-assignments");
-  const { result, choices, edits } = pendingValidatedImport;
-  const rows = result.campaigns;
-  const groups = groupCampaigns(campaigns);
-  section.hidden = !rows.length;
-  if (!rows.length) return;
-  pendingValidatedImport.openSetup ??= new Set(rows.length === 1 ? [assignmentKey(rows[0])] : []);
-  const targetOptions = selected => `<option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this row</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`).join("")}`;
-  document.querySelector("#import-assign-all").innerHTML = `<option value="__mixed" selected disabled>Choose…</option><option value="${KEEP}">New or matching campaign</option>${targetOptions("")}`;
-  document.querySelector("#import-assignment-list").innerHTML = rows.slice(0, 40).map(row => {
-    const key = assignmentKey(row);
-    const choice = choices[key] || "";
-    const edited = applySetupEdits(row, edits[key]);
-    const action = choice ? null : previewCampaignImport(campaigns, [edited]).actions[0]?.action;
-    const keepLabel = action === "update" ? "Update the matching campaign" : "New campaign from this report";
-    const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice ? '<em class="preview-action update">added to campaign</em>' : action === "update" ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
-    let setup = "";
-    if (!choice && action !== "update") {
-      const values = { ...setupFieldsFromRow(row), ...(edits[key] || {}) };
-      const open = pendingValidatedImport.openSetup.has(key) ? " open" : "";
-      setup = `<details class="import-setup" data-setup-details="${escapeHtml(key)}"${open}><summary>Review new campaign setup</summary><div class="settings-grid import-setup-grid">${SETUP_FIELDS.map(([field, label, type]) => `<label>${label}<input type="${type}" data-setup-key="${escapeHtml(key)}" data-setup-field="${field}" value="${escapeHtml(values[field] ?? "")}" autocomplete="off" /></label>`).join("")}<label>Billing source<select data-setup-key="${escapeHtml(key)}" data-setup-field="billingSource">${[["first", "1st party"], ["third", "3rd party"], ["reported", "Reported spend"]].map(([value, label]) => `<option value="${value}"${values.billingSource === value ? " selected" : ""}>${label}</option>`).join("")}</select></label><label>Expected report<select data-setup-key="${escapeHtml(key)}" data-setup-field="reportCadence">${[["none", "Not monitored"], ["daily", "Daily"], ["weekly", "Weekly"]].map(([value, label]) => `<option value="${value}"${values.reportCadence === value ? " selected" : ""}>${label}</option>`).join("")}</select></label></div><small class="field-hint">Pulled from the report. Change anything that is wrong or missing; the numbers still come from the report.</small></details>`;
-    }
-    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)}${row.channel ? ` · ${escapeHtml(row.channel)}` : ""} ${chip}</small></span><select data-assignment-key="${escapeHtml(key)}" aria-label="What to do with ${escapeHtml(row.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}</div>`;
-  }).join("") + (rows.length > 40 ? `<p class="history-empty">${rows.length - 40} more rows are imported as their own campaigns unless you use “All rows”.</p>` : "");
+const groupChoice = group => {
+  const choices = group.rows.map(row => pendingValidatedImport.choices[assignmentKey(row)] || "");
+  return choices.every(choice => choice === choices[0]) ? choices[0] : "";
+};
+
+function setGroupChoice(group, value) {
+  group.rows.forEach(row => {
+    if (value === KEEP) delete pendingValidatedImport.choices[assignmentKey(row)];
+    else pendingValidatedImport.choices[assignmentKey(row)] = value;
+  });
 }
 
-document.querySelector("#import-assignment-list").addEventListener("change", event => {
-  const select = event.target.closest("[data-assignment-key]");
-  if (!select || !pendingValidatedImport?.result) return;
-  if (select.value === KEEP) delete pendingValidatedImport.choices[select.dataset.assignmentKey];
-  else pendingValidatedImport.choices[select.dataset.assignmentKey] = select.value;
+function renderImportAssignments() {
+  const section = document.querySelector("#import-assignments");
+  const pending = pendingValidatedImport;
+  const groups = importGroups();
+  const existing = groupCampaigns(campaigns);
+  section.hidden = !groups.length;
+  if (!groups.length) return;
+  pending.openSetup ??= new Set(groups.length === 1 ? [groups[0].key] : []);
+  pending.groupIo ??= {};
+  const sizes = new Map(groups.map(group => [group.key, group.rows.length]));
+  const targetOptions = selected => `<option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this campaign</option>${existing.map(group => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`).join("")}`;
+  document.querySelector("#import-assign-all").innerHTML = `<option value="__mixed" selected disabled>Choose…</option><option value="${KEEP}">New or matching campaigns</option>${targetOptions("")}`;
+  document.querySelector("#import-assign-all").closest("label").hidden = groups.length < 2;
+  document.querySelector("#import-assignment-list").innerHTML = groups.map(group => {
+    const choice = groupChoice(group);
+    const edits = pending.groupEdits[group.key] || {};
+    const editedRows = group.rows.map(row => rowWithGroupEdits(row, edits, sizes.get(group.key)));
+    const actions = choice ? [] : previewCampaignImport(campaigns, editedRows).actions.map(item => item.action);
+    const updates = actions.includes("update");
+    const keepLabel = updates ? "Update the matching campaign" : "New campaign from this report";
+    const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice ? '<em class="preview-action update">added to campaign</em>' : updates ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
+    const budgetTotal = group.rows.reduce((sum, row) => sum + (Number.isFinite(row.budget) ? row.budget : 0), 0);
+    const meta = [group.client, `${group.rows.length} line${group.rows.length === 1 ? "" : "s"}`, budgetTotal ? `${formatMoney(budgetTotal)} budget in report` : ""].filter(Boolean).map(escapeHtml).join(" · ");
+    let setup = "";
+    if (!choice) {
+      const values = { ...setupFieldsFromRow(group.rows[0]), name: group.name, ...edits };
+      const fields = [...SETUP_FIELDS, ...(group.rows.length === 1 ? SINGLE_LINE_FIELDS : [])];
+      const open = pending.openSetup.has(group.key) ? " open" : "";
+      setup = `<details class="import-setup" data-setup-details="${escapeHtml(group.key)}"${open}><summary>Review campaign setup</summary><div class="settings-grid import-setup-grid">${fields.map(([field, label, type]) => `<label>${label}<input type="${type}" data-setup-key="${escapeHtml(group.key)}" data-setup-field="${field}" value="${escapeHtml(values[field] ?? "")}" autocomplete="off" /></label>`).join("")}<label>Billing source<select data-setup-key="${escapeHtml(group.key)}" data-setup-field="billingSource">${[["first", "1st party"], ["third", "3rd party"], ["reported", "Reported spend"]].map(([value, label]) => `<option value="${value}"${values.billingSource === value ? " selected" : ""}>${label}</option>`).join("")}</select></label><label>Expected report<select data-setup-key="${escapeHtml(group.key)}" data-setup-field="reportCadence">${[["none", "Not monitored"], ["daily", "Daily"], ["weekly", "Weekly"]].map(([value, label]) => `<option value="${value}"${values.reportCadence === value ? " selected" : ""}>${label}</option>`).join("")}</select></label></div><small class="field-hint">Pulled from the report; correct anything that is wrong. ${group.rows.length > 1 ? "Budgets and dates stay per line, as reported." : ""}</small></details>`;
+    }
+    const attached = pending.groupIo[group.key];
+    const ioRow = choice === SKIP ? "" : `<div class="import-group-io"><span>Insertion order</span>${attached
+      ? `<span class="import-io-summary"><strong>${escapeHtml([attached.io.orderNumber, attached.io.revision].filter(Boolean).join(" ") || attached.fileName)}</strong> · ${escapeHtml(formatExactMoney(attached.io.budget))} · ${attached.io.lineItems.length} placements</span><select data-group-io-mode="${escapeHtml(group.key)}" aria-label="How to use the order for ${escapeHtml(group.name)}"><option value="totals"${attached.mode === "totals" ? " selected" : ""}>Use order totals</option><option value="flights"${attached.mode === "flights" ? " selected" : ""}>Save placements as flights</option></select><button type="button" class="text-button" data-group-io-remove="${escapeHtml(group.key)}">Remove</button>`
+      : `<label class="text-button import-io-attach">Attach IO (PDF)<input type="file" accept=".pdf,application/pdf" data-group-io-file="${escapeHtml(group.key)}" hidden /></label>`}</div>`;
+    const lines = `<details class="import-group-lines"><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} in this report</summary>${group.rows.map(row => `<div><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></div>`).join("")}</details>`;
+    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}${ioRow}${lines}</div>`;
+  }).join("");
+  const unmatched = pending.unmatchedIos || [];
+  document.querySelector("#import-unmatched-ios").innerHTML = unmatched.map((entry, index) => `<div class="import-assignment-row"><span><strong>${escapeHtml(entry.fileName)}</strong><small>${escapeHtml(entry.io.campaign)} · no matching campaign — choose one</small></span><select data-unmatched-io="${index}"><option value="">Choose a campaign…</option>${groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join("")}</select></div>`).join("");
+}
+
+function attachImportIo(groupKeyValue, io, fileName) {
+  pendingValidatedImport.groupIo[groupKeyValue] = { io, fileName, mode: "totals" };
+}
+
+async function readIoFiles(files) {
+  const read = [];
+  for (const file of files) {
+    try {
+      if (!/\.pdf$/i.test(file.name)) { read.push({ file, error: "Not a PDF." }); continue; }
+      const io = await readIoPdf(file);
+      read.push(io.valid ? { file, io } : { file, error: io.errors.join(" ") });
+    } catch (error) {
+      read.push({ file, error: `Could not read this PDF: ${error.message}` });
+    }
+  }
+  return read;
+}
+
+document.querySelector("#import-assignment-list").addEventListener("change", async event => {
+  const pending = pendingValidatedImport;
+  if (!pending?.result) return;
+  const choice = event.target.closest("[data-group-choice]");
+  if (choice) {
+    const group = importGroups().find(item => item.key === choice.dataset.groupChoice);
+    if (group) setGroupChoice(group, choice.value);
+    renderImportAssignments();
+    refreshImportAfterAssignment();
+    return;
+  }
+  const mode = event.target.closest("[data-group-io-mode]");
+  if (mode) { pending.groupIo[mode.dataset.groupIoMode].mode = mode.value; return; }
+  const file = event.target.closest("[data-group-io-file]");
+  if (file) {
+    const [entry] = await readIoFiles([...file.files]);
+    if (!entry) return;
+    if (entry.error) { showToast("Insertion order", `${entry.file.name}: ${entry.error}`); return; }
+    attachImportIo(file.dataset.groupIoFile, entry.io, entry.file.name);
+    renderImportAssignments();
+    return;
+  }
+  const unmatched = event.target.closest("[data-unmatched-io]");
+  if (unmatched && unmatched.value) {
+    const [entry] = pending.unmatchedIos.splice(Number(unmatched.dataset.unmatchedIo), 1);
+    attachImportIo(unmatched.value, entry.io, entry.fileName);
+    renderImportAssignments();
+  }
+});
+
+document.querySelector("#import-assignment-list").addEventListener("click", event => {
+  const remove = event.target.closest("[data-group-io-remove]");
+  if (!remove || !pendingValidatedImport?.result) return;
+  delete pendingValidatedImport.groupIo[remove.dataset.groupIoRemove];
   renderImportAssignments();
-  refreshImportAfterAssignment();
+});
+
+// Several IOs at once: each is matched to the campaign it names; the rest can be assigned by hand.
+document.querySelector("#import-io-multi").addEventListener("change", async event => {
+  const pending = pendingValidatedImport;
+  const files = [...event.target.files];
+  event.target.value = "";
+  if (!pending?.result || !files.length) return;
+  const groups = groupCampaigns(pending.result.campaigns);
+  pending.unmatchedIos = pending.unmatchedIos || [];
+  let matched = 0;
+  for (const entry of await readIoFiles(files)) {
+    if (entry.error) { showToast("Insertion order", `${entry.file.name}: ${entry.error}`); continue; }
+    const match = findCampaignForIo(groups, {}, entry.io);
+    if (match) { attachImportIo(match.key, entry.io, entry.file.name); matched += 1; }
+    else pending.unmatchedIos.push({ io: entry.io, fileName: entry.file.name });
+  }
+  renderImportAssignments();
+  showToast("Insertion orders read", `${matched} of ${files.length} matched to a campaign${pending.unmatchedIos.length ? "; choose a campaign for the rest below" : ""}.`);
 });
 
 document.querySelector("#import-assignment-list").addEventListener("input", event => {
   const field = event.target.closest("[data-setup-field]");
   if (!field || !pendingValidatedImport?.result) return;
   const key = field.dataset.setupKey;
-  pendingValidatedImport.edits[key] = { ...(pendingValidatedImport.edits[key] || {}), [field.dataset.setupField]: field.value };
+  pendingValidatedImport.groupEdits[key] = { ...(pendingValidatedImport.groupEdits[key] || {}), [field.dataset.setupField]: field.value };
   refreshImportAfterAssignment();
 });
 
@@ -1185,12 +1307,106 @@ document.querySelector("#import-assignment-list").addEventListener("toggle", eve
 
 document.querySelector("#import-assign-all").addEventListener("change", event => {
   if (!pendingValidatedImport?.result) return;
-  pendingValidatedImport.result.campaigns.forEach(row => {
-    if (event.target.value === KEEP) delete pendingValidatedImport.choices[assignmentKey(row)];
-    else pendingValidatedImport.choices[assignmentKey(row)] = event.target.value;
-  });
+  importGroups().forEach(group => setGroupChoice(group, event.target.value));
   renderImportAssignments();
   refreshImportAfterAssignment();
+});
+
+/** After the report's rows are merged, apply each attached order to the campaign its lines ended up in. */
+function applyAttachedImportIos(fileName) {
+  const pending = pendingValidatedImport;
+  const sizes = new Map();
+  pending.result.campaigns.forEach(row => sizes.set(groupKey(row), (sizes.get(groupKey(row)) || 0) + 1));
+  const applied = [];
+  for (const group of importGroups()) {
+    const attached = pending.groupIo?.[group.key];
+    if (!attached) continue;
+    const choice = groupChoice(group);
+    if (choice === SKIP) continue;
+    const target = choice || groupKey(rowWithGroupEdits(group.rows[0], pending.groupEdits[group.key], sizes.get(group.key)));
+    const placementIds = attached.io.lineItems.filter(item => !item.addedValue).map(item => item.id);
+    const result = applyIoToGroup(attached.io, attached.fileName, target, attached.mode, { selectedIds: placementIds });
+    if (result) applied.push(`${result.name} (${[attached.io.orderNumber, attached.io.revision].filter(Boolean).join(" ") || attached.fileName})`);
+  }
+  return applied;
+}
+
+/** Applies a parsed order to a campaign, with no dialog and no restore point of its own (callers take one). */
+function applyIoToGroup(io, fileName, key, mode, { selectedIds = null, setBudget = true } = {}) {
+  const group = groupCampaigns(campaigns).find(item => item.key === key);
+  if (!group) return null;
+  const record = group.records.find(item => (item.lineItemFlights || []).length) || group.records[0];
+  const index = campaigns.indexOf(record);
+  if (mode === "flights") {
+    const applied = applyIoToCampaign(record, io, { fileName, selectedIds, setBudget });
+    campaigns[index] = applied.campaign;
+    return { mode, name: group.name, applied: applied.applied };
+  }
+  campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, key, io, fileName));
+  campaigns[index] = { ...record, ioFileName: fileName || record.ioFileName || null, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || record.ioOrder || null };
+  return { mode, name: group.name };
+}
+
+// --- Several insertion orders at once: each is matched to a campaign, then all are applied together ---
+const multiIoDialog = document.querySelector("#multi-io-dialog");
+let pendingMultiIo = [];
+
+const multiIoGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign) && (!clientScope || campaign.client === clientScope)));
+
+async function startMultiIo(files) {
+  const entries = await readIoFiles(files);
+  const groups = multiIoGroups();
+  pendingMultiIo = entries.map(entry => ({ ...entry, target: entry.io ? findCampaignForIo(groups, campaignTotals, entry.io)?.key || "" : "" }));
+  renderMultiIo();
+  multiIoDialog.showModal();
+}
+
+function renderMultiIo() {
+  const groups = multiIoGroups();
+  const groupLabel = group => clientScope ? group.name : `${group.client} · ${group.name}`;
+  document.querySelector("#multi-io-error").hidden = true;
+  document.querySelector("#multi-io-list").innerHTML = pendingMultiIo.map((entry, index) => {
+    if (entry.error) return `<div class="multi-io-row error"><span><strong>${escapeHtml(entry.file.name)}</strong><small>${escapeHtml(entry.error)}</small></span><em class="preview-action replace">not read</em></div>`;
+    const { io } = entry;
+    const facts = [[io.orderNumber, io.revision].filter(Boolean).join(" "), io.budget ? formatExactMoney(io.budget) : "", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "", `${io.lineItems.length} placement${io.lineItems.length === 1 ? "" : "s"}`].filter(Boolean).map(escapeHtml).join(" · ");
+    return `<div class="multi-io-row"><span><strong>${escapeHtml(io.campaign || entry.file.name)}</strong><small>${escapeHtml(entry.file.name)} · ${facts}</small></span><select data-multi-io-target="${index}" aria-label="Campaign for ${escapeHtml(entry.file.name)}"><option value="">Choose a campaign…</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${entry.target === group.key ? " selected" : ""}>${escapeHtml(groupLabel(group))}</option>`).join("")}<option value="__skip"${entry.target === "__skip" ? " selected" : ""}>Skip this order</option></select></div>`;
+  }).join("");
+}
+
+document.querySelector("#multi-io-list").addEventListener("change", event => {
+  const select = event.target.closest("[data-multi-io-target]");
+  if (select) pendingMultiIo[Number(select.dataset.multiIoTarget)].target = select.value;
+});
+document.querySelectorAll(".close-multi-io").forEach(button => button.addEventListener("click", () => multiIoDialog.close()));
+
+document.querySelector("#multi-io-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const error = document.querySelector("#multi-io-error");
+  const chosen = pendingMultiIo.filter(entry => entry.io && entry.target && entry.target !== "__skip");
+  const duplicates = chosen.filter((entry, index) => chosen.findIndex(other => other.target === entry.target) !== index);
+  const problems = [];
+  if (!chosen.length) problems.push("Choose a campaign for at least one order.");
+  if (duplicates.length) problems.push(`Two orders are assigned to the same campaign (${duplicates.map(entry => entry.file.name).join(", ")}). Each campaign takes one order.`);
+  if (problems.length) { error.textContent = problems.join(" "); error.hidden = false; return; }
+  const mode = document.querySelector('input[name="multi-io-mode"]:checked')?.value || "totals";
+  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `applying ${chosen.length} insertion order${chosen.length === 1 ? "" : "s"}` }));
+  const applied = chosen.map(entry => applyIoToGroup(entry.io, entry.file.name, entry.target, mode, { selectedIds: entry.io.lineItems.filter(item => !item.addedValue).map(item => item.id) })).filter(Boolean);
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  multiIoDialog.close();
+  refreshAfterDataChange();
+  showToast("Insertion orders applied", `${applied.length} order${applied.length === 1 ? "" : "s"} applied (${applied.map(item => item.name).join(", ")}). Use Undo to revert them together.`);
+});
+
+document.querySelector("#new-campaign-report-multi-note").addEventListener("click", event => {
+  if (!event.target.closest("#new-campaign-report-multi") || !pendingReportForCreate) return;
+  const { file } = pendingReportForCreate;
+  createCampaignDialog.close();
+  document.querySelector("#upload-button").click();
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  fileInput.files = transfer.files;
+  fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+  validateButton.click();
 });
 
 // --- Create a campaign from a performance report (fills the setup form, then imports the report's numbers) ---
@@ -1221,6 +1437,7 @@ document.querySelector("#new-campaign-report").addEventListener("change", async 
   const file = event.target.files[0];
   pendingReportForCreate = null;
   rowLabel.hidden = true;
+  document.querySelector("#new-campaign-report-multi-note").hidden = true;
   error.hidden = true;
   if (!file) return;
   const fail = message => { error.textContent = message; error.hidden = false; event.target.value = ""; };
@@ -1233,7 +1450,11 @@ document.querySelector("#new-campaign-report").addEventListener("change", async 
     if (report.kind) return fail("That file is a daily-delivery or line-item report, which adds data to a campaign that already exists. Create the campaign first, or use a campaign summary report here.");
     const result = validateCampaignCsv(report.csvText);
     if (!result.valid) return fail(result.errors.join(" "));
-    pendingReportForCreate = { fileName: file.name, fingerprint, rows: result.campaigns, warnings: result.warnings };
+    pendingReportForCreate = { file, fileName: file.name, fingerprint, rows: result.campaigns, warnings: result.warnings };
+    const campaignCount = new Set(result.campaigns.map(groupKey)).size;
+    const multiNote = document.querySelector("#new-campaign-report-multi-note");
+    multiNote.hidden = campaignCount < 2;
+    multiNote.innerHTML = `This report holds ${campaignCount} campaigns. <button type="button" class="text-button" id="new-campaign-report-multi">Set up all ${campaignCount} campaigns from this report</button> (each with its own setup and insertion order), or pick one below to create it here.`;
     document.querySelector("#new-campaign-report-row").innerHTML = result.campaigns.map((row, index) => `<option value="${index}">${escapeHtml(row.client)} · ${escapeHtml(row.name)}</option>`).join("");
     rowLabel.hidden = result.campaigns.length < 2;
     fillCreateFormFromRow(result.campaigns[0]);
@@ -1297,6 +1518,7 @@ document.querySelector("#create-campaign-button").addEventListener("click", () =
   document.querySelector("#create-campaign-error").hidden = true;
   pendingReportForCreate = null;
   document.querySelector("#new-campaign-report-row-label").hidden = true;
+  document.querySelector("#new-campaign-report-multi-note").hidden = true;
   if (clientScope) document.querySelector("#new-campaign-client").value = clientScope;
   createCampaignDialog.showModal();
 });
@@ -1626,7 +1848,7 @@ async function startIoReview(file, mode) {
   }
 }
 
-const ioTargetGroups = () => groupCampaigns(campaigns.filter(campaign => campaign.client === clientScope && !isCampaignArchived(campaign)));
+const ioTargetGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign) && (!clientScope || campaign.client === clientScope)));
 
 /** The campaign group the order will be applied to, or null when it will start a new campaign. */
 function ioTargetGroupKey() {
@@ -1667,9 +1889,9 @@ function renderIoReview() {
   if (mode === "client") {
     const groups = ioTargetGroups();
     const match = findCampaignForIo(groups, campaignTotals, io);
-    document.querySelector("#io-review-target").innerHTML = `${groups.map(group => `<option value="${escapeHtml(group.key)}"${match?.key === group.key ? " selected" : ""}>${escapeHtml(group.name)}</option>`).join("")}<option value="__new"${match ? "" : " selected"}>＋ Create a new campaign from this order</option>`;
+    document.querySelector("#io-review-target").innerHTML = `${groups.map(group => `<option value="${escapeHtml(group.key)}"${match?.key === group.key ? " selected" : ""}>${escapeHtml(clientScope ? group.name : `${group.client} · ${group.name}`)}</option>`).join("")}<option value="__new"${match ? "" : " selected"}>＋ Create a new campaign from this order</option>`;
     note.hidden = false;
-    note.textContent = !match ? `No ${clientScope} campaign matches this order, so a new campaign is selected. Choose an existing campaign if it belongs to one.`
+    note.textContent = !match ? `No ${clientScope ? `${clientScope} ` : ""}campaign matches this order, so a new campaign is selected. Choose an existing campaign if it belongs to one.`
       : match.reason === "order" ? (match.isRevision ? `This looks like a revision of order ${match.appliedOrder}, already applied to this campaign. Applying it updates the campaign.` : `Order ${match.appliedOrder} was already applied to this campaign; applying it again refreshes the same values.`)
         : "Matched to this campaign by name. Change it below if that is wrong.";
   }
@@ -1778,9 +2000,10 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
 
 document.querySelector("#client-io-button").addEventListener("click", () => document.querySelector("#client-io-input").click());
 document.querySelector("#client-io-input").addEventListener("change", async event => {
-  const file = event.target.files[0];
+  const files = [...event.target.files];
   event.target.value = "";
-  if (file && clientScope) await startIoReview(file, "client");
+  if (files.length === 1) await startIoReview(files[0], "client");
+  else if (files.length > 1) await startMultiIo(files);
 });
 
 function renderIoTotalsNote(campaign) {

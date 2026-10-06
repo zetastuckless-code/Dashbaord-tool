@@ -66,8 +66,8 @@
             <button class="secondary-button" id="workspace-backup-button">Backup</button>
             <button class="secondary-button" id="export-dashboard-button">Export CSV</button>
             <button class="secondary-button" id="create-campaign-button">New campaign</button>
-            <button class="secondary-button" id="client-io-button" type="button" hidden>Upload / revise IO</button>
-            <input id="client-io-input" type="file" accept=".pdf,application/pdf" hidden />
+            <button class="secondary-button" id="client-io-button" type="button">Upload / revise IO</button>
+            <input id="client-io-input" type="file" accept=".pdf,application/pdf" multiple hidden />
             <button class="primary-button" id="upload-button"><span>＋</span> Import report</button>
           </div>
         </header>
@@ -262,9 +262,11 @@
         <fieldset class="import-mode"><legend>Import behavior</legend><label><input type="radio" name="import-mode" value="merge" checked /><span><strong>Merge with dashboard</strong><small>Add campaigns and reconcile matching source reports.</small></span></label><label><input type="radio" name="import-mode" value="replace" /><span><strong>Replace dashboard data</strong><small>Remove current campaign rows before importing this report.</small></span></label></fieldset>
         <section class="import-preview" id="import-preview" hidden aria-labelledby="import-preview-title"><div class="detail-section-heading"><h3 id="import-preview-title">Import impact preview</h3><small id="import-preview-mode"></small></div><div class="import-preview-summary" id="import-preview-summary"></div><div class="import-preview-list" id="import-preview-list"></div></section>
         <section class="import-assignments" id="import-assignments" hidden aria-labelledby="import-assignments-title">
-          <div class="detail-section-heading"><h3 id="import-assignments-title">What should each row become?</h3><small>New campaign, update a match, add to a campaign you track, or skip</small></div>
-          <label class="import-assign-all"><span>All rows</span><select id="import-assign-all" aria-label="Apply one choice to every row"></select></label>
+          <div class="detail-section-heading"><h3 id="import-assignments-title">What should each campaign become?</h3><small>One block per campaign in the report: new, update a match, add to one you track, or skip</small></div>
+          <div class="import-io-bar"><span>Insertion orders</span><label class="text-button">Attach IOs (PDF)…<input id="import-io-multi" type="file" accept=".pdf,application/pdf" multiple hidden /></label><small>Add several at once; each is matched to the campaign it names.</small></div>
+          <label class="import-assign-all"><span>All campaigns</span><select id="import-assign-all" aria-label="Apply one choice to every row"></select></label>
           <div id="import-assignment-list"></div>
+          <div id="import-unmatched-ios"></div>
           <p class="settings-error" id="import-setup-error" hidden></p>
         </section>
         <section class="mapping-review" id="mapping-review" hidden aria-labelledby="mapping-review-title"><div class="detail-section-heading"><h3 id="mapping-review-title">Source column mapping</h3><button class="text-button" id="export-mapping-review" type="button">Download mapping</button></div><div class="mapping-review-summary" id="mapping-review-summary"></div><div class="mapping-review-list" id="mapping-review-list"></div></section>
@@ -326,6 +328,7 @@
           <label>Primary KPI<input id="new-campaign-kpi" placeholder="VCR" required /></label><label>KPI target<input id="new-campaign-target" placeholder="70%" required /></label>
           <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
           <label class="wide" id="new-campaign-report-label">Pull details from a report (optional)<input id="new-campaign-report" type="file" accept=".xlsx,.csv,text/csv" /><small class="field-hint">Fills this form from a performance report and imports its numbers into the new campaign.</small></label>
+          <p class="field-hint wide" id="new-campaign-report-multi-note" hidden></p>
           <label class="wide" id="new-campaign-report-row-label" hidden>Campaign in this report<select id="new-campaign-report-row"></select></label>
           <label class="wide" id="new-campaign-io-label">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
         </div>
@@ -350,6 +353,19 @@
         </div>
         <p class="settings-error" id="column-settings-error" hidden></p>
         <div class="dialog-actions"><button class="secondary-button close-column-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Apply columns</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="multi-io-dialog" aria-labelledby="multi-io-title">
+      <form class="dialog-card" id="multi-io-form" method="dialog">
+        <div class="dialog-header"><div><p class="eyebrow">INSERTION ORDERS</p><h2 id="multi-io-title">Apply several orders</h2><p>Each order is matched to the campaign it names. Change a match, or skip an order.</p></div><button class="close-button close-multi-io" type="button" aria-label="Close">×</button></div>
+        <fieldset class="io-review-mode" id="multi-io-mode"><legend>Use each order as</legend>
+          <label><input type="radio" name="multi-io-mode" value="totals" checked /><span><strong>Campaign totals only</strong><small>Pace each campaign on its order's total budget and flight dates; report lines stay as imported.</small></span></label>
+          <label><input type="radio" name="multi-io-mode" value="flights" /><span><strong>Save placements as line-item flights</strong><small>Add each order's placements to its campaign as planned flights.</small></span></label>
+        </fieldset>
+        <div class="multi-io-list" id="multi-io-list"></div>
+        <p class="settings-error" id="multi-io-error" hidden></p>
+        <div class="dialog-actions"><button class="secondary-button close-multi-io" type="button">Cancel</button><button class="primary-button" type="submit">Apply orders</button></div>
       </form>
     </dialog>
 
