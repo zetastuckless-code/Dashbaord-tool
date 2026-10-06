@@ -146,3 +146,40 @@ test("rebuilds visual lines from pdf.js text items by baseline and column order"
   const lines = itemsToLines([item("$4.00", 200, 700), item("CPM", 100, 700.5), item("Budget:", 10, 720), item("$1.00", 70, 720), item("", 0, 0)]);
   assert.deepEqual(lines, ["Budget: $1.00", "CPM $4.00"]);
 });
+
+// Synthetic Slingshot-style internet order: numbered lines, placement name on following lines, repeating page headers.
+const pageHeader = ["Slingshot, LLC - 1 Example St", "INTERNET ORDER", "Publication : Zeta Global Corp Order No. : 004999 Date : 10/1/2026", "Client : Acme Tools Page : 2 of 3 Ven/Rep : z1", "Division : Acme Tools Buyer : A Buyer", "Product : Acme Tools Description : Acme-", "ToolsTest2026 - Zeta", "Campaign :", "Start End Net", "Line Date Date Creative Size Type Amount"];
+const internetOrder = [[
+  "Slingshot, LLC - 1 Example St", "INTERNET ORDER", "Zeta Global Corp",
+  "Publication : Zeta Global Corp Order No. : 004999 Date : 10/1/2026", "Client : Acme Tools Page : 1 of 3 Ven/Rep : z1", "Division : Acme Tools Buyer : A Buyer",
+  "Product : Acme Tools Description : Acme-", "ToolsTest2026 - Zeta", "Campaign :", "Start End Net", "Line Date Date Creative Size Type Amount",
+  "001 7/6/2026 9/30/2026 728x90, 300x250, 1,000,000 Impressions @ 5,000.00", "160x600, 300x600, 5.0000 CPM", "Projected : 1,000,000 Impressions",
+  "Placement : Cross-Device_Chicago DMA_Standard Display", "Instructions : Site Served",
+  "002 7/6/2026 9/30/2026 728x90, 300x250, 2,000,000 Impressions @ 10,000.00", "160x600, 300x600, 5.0000 CPM", "Projected : 2,000,000 Impressions"
+], [
+  ...pageHeader,
+  "Placement : Cross-DeviceAustin DMA_Standard Display", "Instructions : Site Served",
+  "003 7/6/2026 9/30/2026 .00", "Placement : Added Value_Ad Serving Fee Coverage",
+  "004 9/8/2026 9/30/2026 728x90, 300x250, .00", "Projected : 18,670", "Placement : Cross-Device_Chicago DMA_Prospecting_Standard Display_Added", "Value", "Instructions : Site Served", "Estimated Impressions: 18,670"
+], [
+  ...pageHeader,
+  "Sub-Total : 15,000.00", "Order Total $15,000.00", "Agency Authorization: Date: 10/01/26"
+]];
+
+test("parses a Slingshot internet order across page breaks, with rates, added-value lines, and the revision from the file name", () => {
+  const io = parseInsertionOrder(internetOrder, { fileName: "Acme IO #4999 Rev2 - signed.pdf" });
+  assert.equal(io.valid, true);
+  assert.equal(io.format, "internet-order");
+  assert.deepEqual([io.agency, io.advertiser, io.campaign, io.orderNumber, io.revision], ["Slingshot, LLC", "Acme Tools", "Acme-ToolsTest2026 - Zeta", "4999", "Rev2"]);
+  assert.deepEqual([io.startDate, io.endDate, io.budget, io.lineTotal], ["2026-07-06", "2026-09-30", 15000, 15000]);
+  assert.deepEqual(io.lineItems.map(item => [item.id, item.name, item.budget]), [
+    ["001", "Chicago DMA Standard Display", 5000],
+    ["002", "Austin DMA Standard Display", 10000],
+    ["003", "Added Value Ad Serving Fee Coverage", 0],
+    ["004", "Chicago DMA Prospecting Standard Display Added Value", 0]
+  ]);
+  assert.deepEqual([io.lineItems[0].rateType, io.lineItems[0].rate, io.lineItems[0].units, io.lineItems[0].unit], ["CPM", 5, 1_000_000, "Impressions"]);
+  assert.equal(io.lineItems[3].units, 18670);
+  assert.deepEqual(io.lineItems.map(item => Boolean(item.addedValue)), [false, false, true, true]);
+  assert.match(io.warnings.join(" "), /2 added-value placements have no budget/);
+});
