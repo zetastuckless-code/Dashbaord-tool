@@ -25,6 +25,9 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 11 | With Alpha campaigns present, import `templates/alpha/05-cm360-daily.csv`. | Alpha Retargeting matches and receives three days of CM360 data; "Unknown Brand Display" is listed as unmatched with a link dropdown; confirming sets 3rd-party spend to $1,510. |
 | 12 | Import `06-flashtalking-daily.csv`, then re-import `05-cm360-daily.csv`. | Flashtalking days are stored separately; the CM360 file is rejected as an exact duplicate. |
 | 13 | Select a client card in the **Clients** section. | The dashboard filters to that client; selecting the card again clears the filter. |
+| 15 | Import `07-dsp-line-items.csv`. | "Alpha Retargeting" matches and receives three line items (the two same-named "Dallas" lines are distinguished by ID); the unmatched campaign offers a link dropdown. |
+| 16 | Expand the Alpha campaign in the **Campaigns** list and use the gear to pick different metrics for two campaigns. | Each campaign keeps its own metric set after a refresh; the line items show their individual values. |
+| 17 | In a campaign's details choose **Upload IO (PDF)** with a real insertion order. | The review dialog lists placements, flight dates, rates, and budgets; applying saves line-item flights and offers to set the budget. Use a non-client IO unless your employer has approved local testing with client files. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture

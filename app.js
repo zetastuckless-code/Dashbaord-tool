@@ -33,6 +33,8 @@ import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
+import { readIoPdf } from "./lib/io-reader.js";
+import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
@@ -237,7 +239,8 @@ function renderCampaignList(rows, activeAlerts) {
     const cells = keys.map(key => `<span class="metric-cell"><small>${escapeHtml(metricLabel(key))}</small><strong>${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
     const labels = keys.map(key => `<span>${escapeHtml(metricLabel(key))}</span>`).join("");
     const lineRows = group.lines.map(line => {
-      const lineMetrics = computeMetrics(line.kind === "record" ? line.record : line, { ...options, period: line.kind === "record" ? period : "current" });
+      // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
+      const lineMetrics = line.kind === "flight" ? { budget: line.budget } : computeMetrics(line.kind === "record" ? line.record : line, { ...options, period: line.kind === "record" ? period : "current" });
       const index = campaigns.indexOf(line.record);
       const dates = line.startDate && line.endDate ? `${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}` : "";
       const meta = [dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
@@ -843,7 +846,9 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
   });
   const error = document.querySelector("#create-campaign-error");
   if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
-  campaigns.push(result.campaign);
+  const withIo = pendingIoForCreate ? applyIoToCampaign(result.campaign, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign : result.campaign;
+  pendingIoForCreate = null;
+  campaigns.push(withIo);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   refreshClientFilter();
   renderCampaigns();
@@ -1103,6 +1108,122 @@ function openCampaignDialog(index, alertId = null) {
   renderLineItemFlights(campaign);
   campaignDialog.showModal();
 }
+
+// --- Insertion order (PDF) review: parse in the browser, confirm, then apply ---
+const ioReviewDialog = document.querySelector("#io-review-dialog");
+let pendingIo = null;
+let pendingIoForCreate = null;
+
+async function startIoReview(file, mode) {
+  const status = document.querySelector(mode === "create" ? "#create-campaign-error" : "#campaign-settings-error");
+  status.hidden = true;
+  if (!/\.pdf$/i.test(file.name)) {
+    if (mode === "create") pendingIoForCreate = null;
+    return;
+  }
+  if (file.size > 25 * 1024 * 1024) { status.textContent = "The insertion order is larger than the 25 MB limit."; status.hidden = false; return; }
+  try {
+    const io = await readIoPdf(file);
+    if (!io.valid) { status.textContent = io.errors.join(" "); status.hidden = false; if (mode === "create") pendingIoForCreate = null; return; }
+    pendingIo = { io, fileName: file.name, mode };
+    renderIoReview();
+    ioReviewDialog.showModal();
+  } catch (error) {
+    status.textContent = `Could not read this PDF: ${error.message}`;
+    status.hidden = false;
+  }
+}
+
+function renderIoReview() {
+  const { io, mode } = pendingIo;
+  const money = value => formatExactMoney(value);
+  document.querySelector("#io-review-subtitle").textContent = [io.advertiser, io.campaign].filter(Boolean).join(" · ");
+  const facts = [["Agency", io.agency], ["Order", [io.orderNumber, io.revision].filter(Boolean).join(" ") || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? money(io.budget) : "—"], ["Placements", String(io.lineItems.length)]];
+  document.querySelector("#io-review-facts").innerHTML = facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
+  const warnings = document.querySelector("#io-review-warnings");
+  warnings.hidden = io.warnings.length === 0;
+  warnings.innerHTML = io.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join("");
+  document.querySelector("#io-review-lines").innerHTML = io.lineItems.map(item => `<label class="io-review-line"><input type="checkbox" name="io-line" value="${escapeHtml(item.id)}" checked /><span class="io-line-name"><strong>${escapeHtml(item.name)}</strong><small>${item.startDate ? escapeHtml(item.startDate) : "—"} → ${item.endDate ? escapeHtml(item.endDate) : "—"}${item.rate ? ` · ${escapeHtml(item.rateType || "")} $${Number(item.rate).toFixed(2)}` : ""}${item.units ? ` · ${formatCount(item.units)} ${escapeHtml(item.unit || "units").toLowerCase()}` : ""}${item.kpi ? ` · ${escapeHtml(item.kpi)}` : ""}</small></span><b>${money(item.budget)}</b></label>`).join("");
+  const budgetToggle = document.querySelector("#io-review-set-budget");
+  budgetToggle.closest("label").hidden = mode === "create" || !(io.budget > 0);
+  budgetToggle.checked = true;
+  document.querySelector("#io-review-budget-label").textContent = io.budget ? `Set the campaign budget to ${money(io.budget)} (recorded as a budget revision)` : "";
+  document.querySelector("#io-review-apply").textContent = mode === "create" ? "Use these details" : "Apply to campaign";
+  document.querySelector("#io-review-error").hidden = true;
+  updateIoSelection();
+}
+
+function updateIoSelection() {
+  const boxes = [...document.querySelectorAll('input[name="io-line"]')];
+  const checked = boxes.filter(box => box.checked);
+  const total = pendingIo.io.lineItems.filter(item => checked.some(box => box.value === item.id)).reduce((sum, item) => sum + item.budget, 0);
+  document.querySelector("#io-review-selection").textContent = `${checked.length} of ${boxes.length} placements selected · ${formatExactMoney(total)}`;
+  document.querySelector("#io-review-select-all").checked = checked.length === boxes.length;
+}
+
+document.querySelector("#io-review-lines").addEventListener("change", updateIoSelection);
+document.querySelector("#io-review-select-all").addEventListener("change", event => {
+  document.querySelectorAll('input[name="io-line"]').forEach(box => { box.checked = event.target.checked; });
+  updateIoSelection();
+});
+document.querySelectorAll(".close-io-review").forEach(button => button.addEventListener("click", () => { ioReviewDialog.close(); if (pendingIo?.mode === "create") pendingIoForCreate = null; }));
+
+document.querySelector("#io-review-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const selectedIds = [...document.querySelectorAll('input[name="io-line"]:checked')].map(box => box.value);
+  if (!selectedIds.length) {
+    const error = document.querySelector("#io-review-error");
+    error.textContent = "Select at least one placement.";
+    error.hidden = false;
+    return;
+  }
+  const { io, fileName, mode } = pendingIo;
+  if (mode === "create") {
+    const fields = campaignFieldsFromIo(io, fileName);
+    const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
+    set("#new-campaign-client", fields.client);
+    set("#new-campaign-name", fields.name);
+    set("#new-campaign-start", fields.startDate);
+    set("#new-campaign-end", fields.endDate);
+    set("#new-campaign-budget", fields.budget);
+    set("#new-campaign-budget-source", "io");
+    syncBudgetSourceFields();
+    pendingIoForCreate = { io, fileName, selectedIds };
+    ioReviewDialog.close();
+    return;
+  }
+  const applied = applyIoToCampaign(campaigns[activeCampaignIndex], io, { fileName, selectedIds, setBudget: document.querySelector("#io-review-set-budget").checked });
+  campaigns[activeCampaignIndex] = applied.campaign;
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  ioReviewDialog.close();
+  refreshBudgetAndFlights(applied.campaign);
+  renderCampaigns(document.querySelector("#client-filter").value);
+  document.querySelector("#toast-title").textContent = "Insertion order applied";
+  document.querySelector("#toast-message").textContent = `${applied.applied} placement${applied.applied === 1 ? "" : "s"} saved as line-item flights${applied.revised ? " and the budget was updated" : ""}.`;
+  const toast = document.querySelector("#toast");
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 3200);
+});
+
+function refreshBudgetAndFlights(campaign) {
+  const latestRevision = latestBudgetRevision(campaign);
+  const revisions = campaign.budgetRevisions?.length || 0;
+  document.querySelector("#current-budget-value").textContent = hasBudget(campaign) ? formatMoney(campaign.budget) : "Not set";
+  document.querySelector("#budget-revision-meta").textContent = latestRevision ? `${revisions} revision${revisions === 1 ? "" : "s"} · Latest effective ${latestRevision.effectiveDate}` : "No budget revisions recorded";
+  renderBudgetRevisionHistory(campaign);
+  renderLineItemFlights(campaign);
+}
+
+document.querySelector("#io-pdf-input").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (file) await startIoReview(file, "details");
+});
+document.querySelector("#new-campaign-io").addEventListener("change", async event => {
+  pendingIoForCreate = null;
+  const file = event.target.files[0];
+  if (file) await startIoReview(file, "create");
+});
 
 function renderBudgetRevisionHistory(campaign) {
   const revisions = budgetRevisionHistory(campaign);

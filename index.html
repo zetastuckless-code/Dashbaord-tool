@@ -335,6 +335,19 @@
       </form>
     </dialog>
 
+    <dialog id="io-review-dialog" aria-labelledby="io-review-title">
+      <form class="dialog-card io-review-card" id="io-review-form" method="dialog">
+        <div class="dialog-header"><div><p class="eyebrow">INSERTION ORDER</p><h2 id="io-review-title">Review insertion order</h2><p id="io-review-subtitle"></p></div><button class="close-button close-io-review" type="button" aria-label="Close">×</button></div>
+        <div class="source-summary component-summary io-review-facts" id="io-review-facts"></div>
+        <ul class="io-review-warnings" id="io-review-warnings" hidden></ul>
+        <div class="io-review-toolbar"><label><input type="checkbox" id="io-review-select-all" checked /> Select all</label><small id="io-review-selection"></small></div>
+        <div class="io-review-lines" id="io-review-lines"></div>
+        <label class="io-review-budget"><input type="checkbox" id="io-review-set-budget" checked /> <span id="io-review-budget-label"></span></label>
+        <p class="settings-error" id="io-review-error" hidden></p>
+        <div class="dialog-actions"><button class="secondary-button close-io-review" type="button">Cancel</button><button class="primary-button" id="io-review-apply" type="submit">Apply to campaign</button></div>
+      </form>
+    </dialog>
+
     <dialog id="metric-picker-dialog" aria-labelledby="metric-picker-title">
       <form class="dialog-card" id="metric-picker-form" method="dialog">
         <div class="dialog-header"><div><p class="eyebrow">CUSTOMIZE VIEW</p><h2 id="metric-picker-title">Choose metrics</h2><p id="metric-picker-subtitle"></p></div><button class="close-button close-metric-picker" type="button" aria-label="Close">×</button></div>
@@ -394,7 +407,7 @@
         <section class="line-item-section">
           <div class="budget-revision-heading"><div><span>Line item flights</span><strong id="line-item-flight-count">No flights</strong><small id="line-item-budget-summary">One flight and total budget per line item</small></div><button type="button" class="text-button" id="export-line-items" disabled>Export CSV</button></div>
           <div id="line-item-flight-list" class="line-item-flight-list"></div>
-          <div class="line-item-import-row"><label class="text-button" for="line-item-import-input">Import CSV</label><input id="line-item-import-input" type="file" accept=".csv,text/csv" /><small>Use a previously exported line-item plan.</small></div>
+          <div class="line-item-import-row"><label class="text-button" for="io-pdf-input">Upload IO (PDF)</label><input id="io-pdf-input" type="file" accept=".pdf,application/pdf" /><label class="text-button" for="line-item-import-input">Import CSV</label><input id="line-item-import-input" type="file" accept=".csv,text/csv" /><small>Use a previously exported line-item plan.</small></div>
           <div class="settings-grid revision-fields">
             <label>Line item ID<input id="line-item-id-input" autocomplete="off" /></label>
             <label>Line item name<input id="line-item-name-input" autocomplete="off" /></label>
