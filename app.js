@@ -38,6 +38,8 @@ import { readIoPdf } from "./lib/io-reader.js";
 import { budgetUnits, readCampaignTotals, removeCampaignTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { groupKey } from "./lib/campaign-groups.js";
 import { applyAssignments, assignmentKey, initialChoices, KEEP, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
+import { applySetupEdits, rowForCreatedCampaign, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
+import { mergeCampaignImports } from "./lib/import-merge.js";
 import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
@@ -751,7 +753,7 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
-  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)) };
+  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)), edits: {} };
   renderImportAssignments();
   const effectiveRows = effectiveImport().campaigns;
   confirmImportButton.disabled = effectiveRows.length === 0;
@@ -769,6 +771,7 @@ confirmImportButton.addEventListener("click", () => {
   const importMode = document.querySelector('input[name="import-mode"]:checked').value;
   const effectiveRows = effectiveImport().campaigns;
   rememberAssignments(localStorage, result.campaigns, pendingValidatedImport.choices);
+  if (setupErrors().length) return;
   const mergeResult = previewCampaignImport(campaigns, effectiveRows, importMode);
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey) }));
   campaigns = mergeResult.campaigns;
@@ -911,30 +914,60 @@ function confirmDailyImport() {
   }, 550);
 }
 
-// --- Assign imported rows to an existing campaign (or skip them) before importing ---
+// --- For each imported row: new campaign (with editable setup), update a match, add to a campaign, or skip ---
+const SETUP_FIELDS = [
+  ["client", "Client", "text"], ["name", "Campaign name", "text"], ["campaignId", "Stable campaign ID", "text"], ["owner", "Owner", "text"],
+  ["channel", "Channel", "text"], ["startDate", "Start date", "date"], ["endDate", "End date", "date"], ["budget", "Approved budget", "text"],
+  ["kpi", "Primary KPI", "text"], ["target", "KPI target", "text"]
+];
+
 function effectiveImport() {
-  const { result, choices } = pendingValidatedImport;
-  return applyAssignments(result.campaigns, choices, groupCampaigns(campaigns));
+  const { result, choices, edits } = pendingValidatedImport;
+  // Setup edits only apply to rows that stay their own campaign; rows added elsewhere or skipped ignore them.
+  const rows = result.campaigns.map(row => choices[assignmentKey(row)] ? row : applySetupEdits(row, edits[assignmentKey(row)]));
+  return applyAssignments(rows, choices, groupCampaigns(campaigns));
+}
+
+function setupErrors() {
+  const { result, choices, edits } = pendingValidatedImport;
+  return result.campaigns.filter(row => !choices[assignmentKey(row)] && edits[assignmentKey(row)]).flatMap(row => validateSetupEdits({ ...setupFieldsFromRow(row), ...edits[assignmentKey(row)] }).map(message => `${row.name}: ${message}`));
 }
 
 function refreshImportAfterAssignment() {
   const effective = effectiveImport();
+  const errors = setupErrors();
+  const errorBox = document.querySelector("#import-setup-error");
+  errorBox.hidden = errors.length === 0;
+  errorBox.textContent = errors.join(" ");
   renderImportPreview(effective.campaigns);
-  confirmImportButton.disabled = effective.campaigns.length === 0;
+  confirmImportButton.disabled = effective.campaigns.length === 0 || errors.length > 0;
 }
 
 function renderImportAssignments() {
   const section = document.querySelector("#import-assignments");
-  const rows = pendingValidatedImport.result.campaigns;
+  const { result, choices, edits } = pendingValidatedImport;
+  const rows = result.campaigns;
   const groups = groupCampaigns(campaigns);
   section.hidden = !rows.length;
   if (!rows.length) return;
-  const options = selected => `<option value="${KEEP}"${!selected ? " selected" : ""}>Keep as imported</option><option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this row</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`).join("")}`;
-  document.querySelector("#import-assign-all").innerHTML = `<option value="__mixed" selected disabled>Choose…</option>${options("").replace(" selected", "")}`;
+  pendingValidatedImport.openSetup ??= new Set(rows.length === 1 ? [assignmentKey(rows[0])] : []);
+  const targetOptions = selected => `<option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this row</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`).join("")}`;
+  document.querySelector("#import-assign-all").innerHTML = `<option value="__mixed" selected disabled>Choose…</option><option value="${KEEP}">New or matching campaign</option>${targetOptions("")}`;
   document.querySelector("#import-assignment-list").innerHTML = rows.slice(0, 40).map(row => {
     const key = assignmentKey(row);
-    return `<div class="import-assignment-row"><span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)}${row.channel ? ` · ${escapeHtml(row.channel)}` : ""}</small></span><select data-assignment-key="${escapeHtml(key)}" aria-label="Campaign for ${escapeHtml(row.name)}">${options(pendingValidatedImport.choices[key] || "")}</select></div>`;
-  }).join("") + (rows.length > 40 ? `<p class="history-empty">${rows.length - 40} more rows keep their imported campaign unless you use “All rows”.</p>` : "");
+    const choice = choices[key] || "";
+    const edited = applySetupEdits(row, edits[key]);
+    const action = choice ? null : previewCampaignImport(campaigns, [edited]).actions[0]?.action;
+    const keepLabel = action === "update" ? "Update the matching campaign" : "New campaign from this report";
+    const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice ? '<em class="preview-action update">added to campaign</em>' : action === "update" ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
+    let setup = "";
+    if (!choice && action !== "update") {
+      const values = { ...setupFieldsFromRow(row), ...(edits[key] || {}) };
+      const open = pendingValidatedImport.openSetup.has(key) ? " open" : "";
+      setup = `<details class="import-setup" data-setup-details="${escapeHtml(key)}"${open}><summary>Review new campaign setup</summary><div class="settings-grid import-setup-grid">${SETUP_FIELDS.map(([field, label, type]) => `<label>${label}<input type="${type}" data-setup-key="${escapeHtml(key)}" data-setup-field="${field}" value="${escapeHtml(values[field] ?? "")}" autocomplete="off" /></label>`).join("")}<label>Billing source<select data-setup-key="${escapeHtml(key)}" data-setup-field="billingSource">${[["first", "1st party"], ["third", "3rd party"], ["reported", "Reported spend"]].map(([value, label]) => `<option value="${value}"${values.billingSource === value ? " selected" : ""}>${label}</option>`).join("")}</select></label><label>Expected report<select data-setup-key="${escapeHtml(key)}" data-setup-field="reportCadence">${[["none", "Not monitored"], ["daily", "Daily"], ["weekly", "Weekly"]].map(([value, label]) => `<option value="${value}"${values.reportCadence === value ? " selected" : ""}>${label}</option>`).join("")}</select></label></div><small class="field-hint">Pulled from the report. Change anything that is wrong or missing; the numbers still come from the report.</small></details>`;
+    }
+    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)}${row.channel ? ` · ${escapeHtml(row.channel)}` : ""} ${chip}</small></span><select data-assignment-key="${escapeHtml(key)}" aria-label="What to do with ${escapeHtml(row.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}</div>`;
+  }).join("") + (rows.length > 40 ? `<p class="history-empty">${rows.length - 40} more rows are imported as their own campaigns unless you use “All rows”.</p>` : "");
 }
 
 document.querySelector("#import-assignment-list").addEventListener("change", event => {
@@ -942,8 +975,23 @@ document.querySelector("#import-assignment-list").addEventListener("change", eve
   if (!select || !pendingValidatedImport?.result) return;
   if (select.value === KEEP) delete pendingValidatedImport.choices[select.dataset.assignmentKey];
   else pendingValidatedImport.choices[select.dataset.assignmentKey] = select.value;
+  renderImportAssignments();
   refreshImportAfterAssignment();
 });
+
+document.querySelector("#import-assignment-list").addEventListener("input", event => {
+  const field = event.target.closest("[data-setup-field]");
+  if (!field || !pendingValidatedImport?.result) return;
+  const key = field.dataset.setupKey;
+  pendingValidatedImport.edits[key] = { ...(pendingValidatedImport.edits[key] || {}), [field.dataset.setupField]: field.value };
+  refreshImportAfterAssignment();
+});
+
+document.querySelector("#import-assignment-list").addEventListener("toggle", event => {
+  const details = event.target.closest?.("[data-setup-details]");
+  if (!details || !pendingValidatedImport?.openSetup) return;
+  if (details.open) pendingValidatedImport.openSetup.add(details.dataset.setupDetails); else pendingValidatedImport.openSetup.delete(details.dataset.setupDetails);
+}, true);
 
 document.querySelector("#import-assign-all").addEventListener("change", event => {
   if (!pendingValidatedImport?.result) return;
@@ -953,6 +1001,59 @@ document.querySelector("#import-assign-all").addEventListener("change", event =>
   });
   renderImportAssignments();
   refreshImportAfterAssignment();
+});
+
+// --- Create a campaign from a performance report (fills the setup form, then imports the report's numbers) ---
+let pendingReportForCreate = null;
+
+function fillCreateFormFromRow(row) {
+  const fields = setupFieldsFromRow(row);
+  const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
+  set("#new-campaign-client", fields.client);
+  set("#new-campaign-name", fields.name);
+  set("#new-campaign-id", fields.campaignId);
+  set("#new-campaign-owner", fields.owner);
+  set("#new-campaign-channel", fields.channel);
+  set("#new-campaign-start", fields.startDate);
+  set("#new-campaign-end", fields.endDate);
+  set("#new-campaign-budget", fields.budget);
+  set("#new-campaign-budget-source", "report");
+  set("#new-campaign-billing-source", fields.billingSource);
+  set("#new-campaign-kpi", fields.kpi);
+  set("#new-campaign-target", fields.target);
+  set("#new-campaign-report-cadence", fields.reportCadence);
+  syncBudgetSourceFields();
+}
+
+document.querySelector("#new-campaign-report").addEventListener("change", async event => {
+  const error = document.querySelector("#create-campaign-error");
+  const rowLabel = document.querySelector("#new-campaign-report-row-label");
+  const file = event.target.files[0];
+  pendingReportForCreate = null;
+  rowLabel.hidden = true;
+  error.hidden = true;
+  if (!file) return;
+  const fail = message => { error.textContent = message; error.hidden = false; event.target.value = ""; };
+  try {
+    if (file.size > 25 * 1024 * 1024) return fail("The selected file is larger than the 25 MB import limit.");
+    const bytes = await file.arrayBuffer();
+    const fingerprint = await fingerprintBytes(bytes);
+    if (hasSuccessfulFingerprint(importHistory, fingerprint)) return fail("This exact report has already been imported. Its campaigns are already in the dashboard.");
+    const report = await readReportFile(file, bytes);
+    if (report.kind) return fail("That file is a daily-delivery or line-item report, which adds data to a campaign that already exists. Create the campaign first, or use a campaign summary report here.");
+    const result = validateCampaignCsv(report.csvText);
+    if (!result.valid) return fail(result.errors.join(" "));
+    pendingReportForCreate = { fileName: file.name, fingerprint, rows: result.campaigns, warnings: result.warnings };
+    document.querySelector("#new-campaign-report-row").innerHTML = result.campaigns.map((row, index) => `<option value="${index}">${escapeHtml(row.client)} · ${escapeHtml(row.name)}</option>`).join("");
+    rowLabel.hidden = result.campaigns.length < 2;
+    fillCreateFormFromRow(result.campaigns[0]);
+  } catch (caught) {
+    fail(`Could not read this report: ${caught.message}`);
+  }
+});
+
+document.querySelector("#new-campaign-report-row").addEventListener("change", event => {
+  if (pendingReportForCreate) fillCreateFormFromRow(pendingReportForCreate.rows[Number(event.target.value)]);
 });
 
 function renderImportPreview(importedCampaigns) {
@@ -1004,6 +1105,8 @@ document.querySelector("#column-settings-form").addEventListener("submit", event
 document.querySelector("#create-campaign-button").addEventListener("click", () => {
   document.querySelector("#create-campaign-form").reset();
   document.querySelector("#create-campaign-error").hidden = true;
+  pendingReportForCreate = null;
+  document.querySelector("#new-campaign-report-row-label").hidden = true;
   if (clientScope) document.querySelector("#new-campaign-client").value = clientScope;
   createCampaignDialog.showModal();
 });
@@ -1028,7 +1131,19 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
     withIo = applyIoToCampaign(result.campaign, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign;
   }
   pendingIoForCreate = null;
-  campaigns.push(withIo);
+  if (pendingReportForCreate) {
+    // The report's numbers join the campaign as if it had been imported, with the same restore point and history entry.
+    const { fileName, fingerprint, rows, warnings } = pendingReportForCreate;
+    const row = rows[Number(document.querySelector("#new-campaign-report-row").value) || 0];
+    const key = campaignImportKey({ ...withIo, source: row.source });
+    writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: 1, campaignKeys: [key] }));
+    campaigns.push({ ...withIo, source: row.source, sources: [row.source] });
+    campaigns = mergeCampaignImports(campaigns, [rowForCreatedCampaign(row, withIo)]).campaigns;
+    recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", 1, [], [key], warnings);
+    pendingReportForCreate = null;
+  } else {
+    campaigns.push(withIo);
+  }
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   refreshClientFilter();
   renderCampaigns();

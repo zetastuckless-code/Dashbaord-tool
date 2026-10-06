@@ -31,6 +31,10 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 18 | Drag a metric on a campaign row to a new position, then open the gear and use the ↑↓ buttons. | The order changes on the row, persists after a refresh, and is independent for each campaign. |
 | 19 | Import a canonical CSV containing a YouTube row for an existing client, assign it to that campaign, and skip a duplicate row. | The row joins the campaign as a line; the next import from the same source pre-selects your choices. |
 | 20 | Upload an IO and choose **Campaign totals only**. | The campaign's budget and pacing use the order total; its report lines keep their own values and no flights are added. |
+| 21 | Import a CSV report for a client that does not exist yet. | The row is labelled **New campaign**; **Review new campaign setup** is pre-filled from the report, accepts edits (an invalid budget disables the import), and the created campaign reflects them. |
+| 22 | In **New campaign**, use **Pull details from a report** with a two-campaign CSV. | A campaign picker appears, the form fills from the chosen row, and creating the campaign also imports its numbers. **Undo** removes it. |
+| 23 | Remove one line and one whole campaign, then press **Undo** twice. | Both removals are reversed in order; the Undo button shows how many steps remain. |
+| 24 | Select a client card, then use browser Back. | The client page shows only that client's data; Back returns to the overview. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture

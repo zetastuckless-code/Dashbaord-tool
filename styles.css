@@ -74,3 +74,6 @@
 .client-back{display:inline-block;margin-bottom:8px;color:#6156da;font:600 11px "DM Sans";text-decoration:none}.client-back:hover{text-decoration:underline}
 .client-nav{margin-bottom:6px}.sidebar{overflow-y:auto}.client-nav-item{height:36px!important;gap:10px!important}.client-nav-mark{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:#fff;font-size:9px;font-weight:800;background:#6658e8;flex:none}.client-nav-mark.lumon{background:#268a77}.client-nav-mark.nova{background:#d77b49}.client-nav-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 body.client-view .topbar h1{max-width:60vw}
+
+.import-assignment-block{border-top:1px solid #eceef3}.import-assignment-block .import-assignment-row{border-top:0}.import-assignment-row small .preview-action{margin-left:6px;vertical-align:1px}
+.import-setup{margin:0 0 8px;border:1px solid var(--line);border-radius:8px;background:#fafbfc;padding:8px 10px}.import-setup summary{cursor:pointer;font:600 10px "DM Sans";color:#5f54d8}.import-setup-grid{margin-top:10px;gap:9px}.import-setup-grid label{font-size:8px}.import-setup-grid input,.import-setup-grid select{height:32px;font-size:11px}.import-setup .field-hint{margin-top:8px}

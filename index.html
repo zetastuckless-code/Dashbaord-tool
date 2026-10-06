@@ -257,9 +257,10 @@
         <fieldset class="import-mode"><legend>Import behavior</legend><label><input type="radio" name="import-mode" value="merge" checked /><span><strong>Merge with dashboard</strong><small>Add campaigns and reconcile matching source reports.</small></span></label><label><input type="radio" name="import-mode" value="replace" /><span><strong>Replace dashboard data</strong><small>Remove current campaign rows before importing this report.</small></span></label></fieldset>
         <section class="import-preview" id="import-preview" hidden aria-labelledby="import-preview-title"><div class="detail-section-heading"><h3 id="import-preview-title">Import impact preview</h3><small id="import-preview-mode"></small></div><div class="import-preview-summary" id="import-preview-summary"></div><div class="import-preview-list" id="import-preview-list"></div></section>
         <section class="import-assignments" id="import-assignments" hidden aria-labelledby="import-assignments-title">
-          <div class="detail-section-heading"><h3 id="import-assignments-title">Add to a campaign</h3><small>Optional — file rows under a campaign you already track, or skip them</small></div>
+          <div class="detail-section-heading"><h3 id="import-assignments-title">What should each row become?</h3><small>New campaign, update a match, add to a campaign you track, or skip</small></div>
           <label class="import-assign-all"><span>All rows</span><select id="import-assign-all" aria-label="Apply one choice to every row"></select></label>
           <div id="import-assignment-list"></div>
+          <p class="settings-error" id="import-setup-error" hidden></p>
         </section>
         <section class="mapping-review" id="mapping-review" hidden aria-labelledby="mapping-review-title"><div class="detail-section-heading"><h3 id="mapping-review-title">Source column mapping</h3><button class="text-button" id="export-mapping-review" type="button">Download mapping</button></div><div class="mapping-review-summary" id="mapping-review-summary"></div><div class="mapping-review-list" id="mapping-review-list"></div></section>
         <a class="template-link" href="templates/import/campaign-performance.csv" download>↓ Download CSV template</a>
@@ -319,6 +320,8 @@
           <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
           <label>Primary KPI<input id="new-campaign-kpi" placeholder="VCR" required /></label><label>KPI target<input id="new-campaign-target" placeholder="70%" required /></label>
           <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+          <label class="wide" id="new-campaign-report-label">Pull details from a report (optional)<input id="new-campaign-report" type="file" accept=".xlsx,.csv,text/csv" /><small class="field-hint">Fills this form from a performance report and imports its numbers into the new campaign.</small></label>
+          <label class="wide" id="new-campaign-report-row-label" hidden>Campaign in this report<select id="new-campaign-report-row"></select></label>
           <label class="wide" id="new-campaign-io-label">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
         </div>
         <p class="revision-disclaimer">The prototype retains the IO filename and setup metadata locally; production will store the document securely.</p>
