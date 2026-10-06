@@ -38,3 +38,12 @@ test("carries per-campaign metric choices and still accepts older backups withou
   assert.equal(legacy.valid, true);
   assert.equal(validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base, metricPrefs: [] })).valid, false);
 });
+
+test("carries insertion-order campaign totals through a backup and rejects malformed ones", () => {
+  const totals = { "a::b": { budget: 600, startDate: "2026-09-01", endDate: "2026-09-30" } };
+  const base = { campaigns: [], importHistory: [], alertRules: {}, visibleColumns: [], acknowledgedAlerts: [], dashboardView: {} };
+  const values = new Map();
+  restoreWorkspaceBackup({ setItem: (key, value) => values.set(key, value) }, validateWorkspaceBackup(createWorkspaceBackup({ ...base, campaignTotals: totals })).backup);
+  assert.deepEqual(JSON.parse(values.get("northstar-campaign-totals")), totals);
+  assert.equal(validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base, campaignTotals: [] })).valid, false);
+});

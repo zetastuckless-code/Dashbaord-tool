@@ -28,6 +28,9 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 15 | Import `07-dsp-line-items.csv`. | "Alpha Retargeting" matches and receives three line items (the two same-named "Dallas" lines are distinguished by ID); the unmatched campaign offers a link dropdown. |
 | 16 | Expand the Alpha campaign in the **Campaigns** list and use the gear to pick different metrics for two campaigns. | Each campaign keeps its own metric set after a refresh; the line items show their individual values. |
 | 17 | In a campaign's details choose **Upload IO (PDF)** with a real insertion order. | The review dialog lists placements, flight dates, rates, and budgets; applying saves line-item flights and offers to set the budget. Use a non-client IO unless your employer has approved local testing with client files. |
+| 18 | Drag a metric on a campaign row to a new position, then open the gear and use the ↑↓ buttons. | The order changes on the row, persists after a refresh, and is independent for each campaign. |
+| 19 | Import a canonical CSV containing a YouTube row for an existing client, assign it to that campaign, and skip a duplicate row. | The row joins the campaign as a line; the next import from the same source pre-selects your choices. |
+| 20 | Upload an IO and choose **Campaign totals only**. | The campaign's budget and pacing use the order total; its report lines keep their own values and no flights are added. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture

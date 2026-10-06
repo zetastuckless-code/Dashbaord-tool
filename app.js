@@ -34,6 +34,8 @@ import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
+import { budgetUnits, readCampaignTotals, removeCampaignTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { groupKey } from "./lib/campaign-groups.js";
 import { applyAssignments, assignmentKey, initialChoices, KEEP, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
 import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
@@ -105,7 +107,7 @@ const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDig
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
   const matchingRows = filterCampaigns(campaigns, { client: filter, status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
-  const activeAlerts = unacknowledgedAlerts(evaluateCampaignAlerts(matchingRows, alertRules), acknowledgedAlertIds);
+  const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matchingRows), acknowledgedAlertIds);
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
   const rows = sortCampaigns(filteredRows, { mode: document.querySelector("#campaign-sort")?.value, spendView: selectedSource });
   const period = document.querySelector("#period-filter")?.value || "current";
@@ -142,7 +144,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
   renderSpendChart(activeRows);
   document.querySelector("#campaign-count").textContent = `Showing ${rows.length} campaign${rows.length === 1 ? "" : "s"} · ${activeRows.length} live`;
-  const budget = activeRows.reduce((sum, item) => sum + (hasBudget(item) ? item.budget : 0), 0);
+  const activeUnits = budgetUnits(activeRows, campaignTotals);
+  const budget = unitsBudget(activeUnits);
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
@@ -152,7 +155,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   document.querySelector("#spend-progress").style.width = period === "current" ? `${Math.min(utilization, 100)}%` : "0%";
   document.querySelector("#utilization-value").textContent = period === "current" ? `${utilization.toFixed(1)}% utilized` : `${comparablePeriodRows.length} campaign${comparablePeriodRows.length === 1 ? "" : "s"} with history`;
   document.querySelector("#remaining-value").textContent = period === "current" ? `${formatMoney(Math.max(budget - spend, 0))} remaining` : "Reported-source change";
-  const portfolio = calculatePortfolioPacing(activeRows.map(campaign => ({ ...campaign, spend: resolveSpend(campaign, "billing") })));
+  const portfolio = { pacing: unitsPacing(activeUnits) };
   const portfolioValue = document.querySelector("#portfolio-pacing-value");
   const portfolioStatus = document.querySelector("#portfolio-pacing-status");
   portfolioValue.textContent = portfolio.pacing === null ? "—" : `${portfolio.pacing.toFixed(1)}%`;
@@ -162,14 +165,14 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   applyColumnVisibility();
   renderAlerts(rows);
   const portfolioRows = filterCampaigns(campaigns, { client: "all", status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
-  renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateCampaignAlerts(portfolioRows, alertRules), acknowledgedAlertIds), filter);
+  renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateAlerts(portfolioRows), acknowledgedAlertIds), filter);
   renderCampaignList(matchingRows, activeAlerts);
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
   const period = document.querySelector("#period-filter")?.value || "current";
   const kpiView = document.querySelector("#kpi-view")?.value || "primary";
-  const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules });
+  const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules, totals: campaignTotals });
   const grid = document.querySelector("#client-grid");
   document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to filter the dashboard` : "No clients have live campaigns for the current filters";
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
@@ -213,6 +216,8 @@ renderProfile();
 
 // --- Campaign list: one expandable row per campaign with per-campaign metrics ---
 let metricPrefs = readMetricPrefs(localStorage);
+let campaignTotals = readCampaignTotals(localStorage);
+const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
 let lastCampaignGroups = [];
 let metricPickerTarget = null;
@@ -234,7 +239,7 @@ function renderCampaignList(rows, activeAlerts) {
   container.innerHTML = groups.map(group => {
     const keys = metricsForCampaign(metricPrefs, group.key);
     const open = expandedCampaigns.has(group.key);
-    const totals = computeMetrics(group.records, options);
+    const totals = computeMetrics(group.records, { ...options, totals: campaignTotals[group.key] || null });
     const groupAlerts = activeAlerts.filter(alert => group.records.includes(alert.campaign));
     const critical = groupAlerts.some(alert => alert.severity === "critical");
     const cells = keys.map(key => `<span class="metric-cell" draggable="true" data-metric="${key}" title="Drag to reorder"><small>${escapeHtml(metricLabel(key))}</small><strong>${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
@@ -251,7 +256,7 @@ function renderCampaignList(rows, activeAlerts) {
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
         <button class="campaign-toggle" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}">›</button>
         <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
-        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${group.lines.length} line${group.lines.length === 1 ? "" : "s"}</small></span>
+        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${group.lines.length} line${group.lines.length === 1 ? "" : "s"}${campaignTotals[group.key] ? " · budget from IO" : ""}</small></span>
         ${cells}
         <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
@@ -538,7 +543,7 @@ document.querySelector("#saved-view-list").addEventListener("click", event => {
 });
 document.querySelector("#export-dashboard-button").addEventListener("click", () => {
   const matching = filterCampaigns(campaigns, { client: document.querySelector("#client-filter").value, status: document.querySelector("#status-filter").value, owner: document.querySelector("#owner-filter").value, channel: document.querySelector("#channel-filter").value, query: document.querySelector("#campaign-search").value });
-  const activeAlerts = unacknowledgedAlerts(evaluateCampaignAlerts(matching, alertRules), acknowledgedAlertIds);
+  const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matching), acknowledgedAlertIds);
   const exportRows = filterCampaignsByAttention(matching, activeAlerts, document.querySelector("#attention-filter").value);
   const csv = exportCampaignsCsv(exportRows, { sort: document.querySelector("#campaign-sort").value, spendView: selectedSource, period: document.querySelector("#period-filter").value, kpiView: document.querySelector("#kpi-view").value });
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -573,7 +578,7 @@ document.querySelector("#workspace-backup-button").addEventListener("click", () 
 });
 document.querySelectorAll(".close-workspace-backup").forEach(button => button.addEventListener("click", () => workspaceBackupDialog.close()));
 document.querySelector("#download-workspace-backup").addEventListener("click", () => {
-  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs });
+  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals });
   const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-workspace-${new Date().toISOString().slice(0, 10)}.json` });
   link.click();
@@ -955,7 +960,12 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
   });
   const error = document.querySelector("#create-campaign-error");
   if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
-  const withIo = pendingIoForCreate ? applyIoToCampaign(result.campaign, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign : result.campaign;
+  let withIo = result.campaign;
+  if (pendingIoForCreate?.mode === "totals") {
+    campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(result.campaign), pendingIoForCreate.io, pendingIoForCreate.fileName));
+  } else if (pendingIoForCreate) {
+    withIo = applyIoToCampaign(result.campaign, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign;
+  }
   pendingIoForCreate = null;
   campaigns.push(withIo);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
@@ -1215,6 +1225,7 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#line-item-start-input").value = campaign.startDate || "";
   document.querySelector("#line-item-end-input").value = campaign.endDate || "";
   renderLineItemFlights(campaign);
+  renderIoTotalsNote(campaign);
   campaignDialog.showModal();
 }
 
@@ -1259,8 +1270,23 @@ function renderIoReview() {
   document.querySelector("#io-review-budget-label").textContent = io.budget ? `Set the campaign budget to ${money(io.budget)} (recorded as a budget revision)` : "";
   document.querySelector("#io-review-apply").textContent = mode === "create" ? "Use these details" : "Apply to campaign";
   document.querySelector("#io-review-error").hidden = true;
+  // Campaigns that already have report data are paced on the order's totals by default, so IO placements never fight report lines.
+  const target = mode === "details" ? campaigns[activeCampaignIndex] : null;
+  const hasReports = target ? groupCampaigns(campaigns).find(group => group.key === groupKey(target))?.records.some(record => Number(record.spend) > 0) : false;
+  const defaultMode = mode === "create" || hasReports ? "totals" : "flights";
+  document.querySelectorAll('input[name="io-mode"]').forEach(radio => { radio.checked = radio.value === defaultMode; });
+  syncIoMode();
   updateIoSelection();
 }
+
+const currentIoMode = () => document.querySelector('input[name="io-mode"]:checked')?.value || "flights";
+
+function syncIoMode() {
+  document.querySelector(".io-review-card").classList.toggle("totals-mode", currentIoMode() === "totals");
+  const totalsMode = currentIoMode() === "totals";
+  document.querySelector("#io-review-apply").textContent = pendingIo?.mode === "create" ? "Use these details" : totalsMode ? "Use order totals" : "Apply to campaign";
+}
+document.querySelectorAll('input[name="io-mode"]').forEach(radio => radio.addEventListener("change", syncIoMode));
 
 function updateIoSelection() {
   const boxes = [...document.querySelectorAll('input[name="io-line"]')];
@@ -1280,7 +1306,8 @@ document.querySelectorAll(".close-io-review").forEach(button => button.addEventL
 document.querySelector("#io-review-form").addEventListener("submit", event => {
   event.preventDefault();
   const selectedIds = [...document.querySelectorAll('input[name="io-line"]:checked')].map(box => box.value);
-  if (!selectedIds.length) {
+  const ioMode = currentIoMode();
+  if (ioMode === "flights" && !selectedIds.length) {
     const error = document.querySelector("#io-review-error");
     error.textContent = "Select at least one placement.";
     error.hidden = false;
@@ -1297,8 +1324,23 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
     set("#new-campaign-budget", fields.budget);
     set("#new-campaign-budget-source", "io");
     syncBudgetSourceFields();
-    pendingIoForCreate = { io, fileName, selectedIds };
+    pendingIoForCreate = { io, fileName, selectedIds, mode: ioMode };
     ioReviewDialog.close();
+    return;
+  }
+  if (ioMode === "totals") {
+    const record = campaigns[activeCampaignIndex];
+    campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(record), io, fileName));
+    campaigns[activeCampaignIndex] = { ...record, ioFileName: fileName || record.ioFileName || null, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || record.ioOrder || null };
+    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    ioReviewDialog.close();
+    renderIoTotalsNote(campaigns[activeCampaignIndex]);
+    renderCampaigns(document.querySelector("#client-filter").value);
+    document.querySelector("#toast-title").textContent = "Order totals applied";
+    document.querySelector("#toast-message").textContent = `Pacing now uses the ${formatExactMoney(io.budget)} order budget across this campaign's lines.`;
+    const totalsToast = document.querySelector("#toast");
+    totalsToast.classList.add("show");
+    setTimeout(() => totalsToast.classList.remove("show"), 3200);
     return;
   }
   const applied = applyIoToCampaign(campaigns[activeCampaignIndex], io, { fileName, selectedIds, setBudget: document.querySelector("#io-review-set-budget").checked });
@@ -1314,7 +1356,24 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   setTimeout(() => toast.classList.remove("show"), 3200);
 });
 
+function renderIoTotalsNote(campaign) {
+  const note = document.querySelector("#io-totals-note");
+  const entry = campaignTotals[groupKey(campaign)];
+  note.hidden = !entry;
+  if (!entry) return;
+  note.innerHTML = `Pacing for this campaign uses the order total ${escapeHtml(formatExactMoney(entry.budget))}${entry.startDate && entry.endDate ? ` · ${escapeHtml(entry.startDate)} → ${escapeHtml(entry.endDate)}` : ""}${entry.order ? ` · ${escapeHtml(entry.order)}` : ""}<button type="button" id="remove-io-totals">Remove</button>`;
+}
+
+document.querySelector("#io-totals-note").addEventListener("click", event => {
+  if (!event.target.closest("#remove-io-totals") || activeCampaignIndex === null) return;
+  const record = campaigns[activeCampaignIndex];
+  campaignTotals = writeCampaignTotals(localStorage, removeCampaignTotals(campaignTotals, groupKey(record)));
+  renderIoTotalsNote(record);
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+
 function refreshBudgetAndFlights(campaign) {
+  renderIoTotalsNote(campaign);
   const latestRevision = latestBudgetRevision(campaign);
   const revisions = campaign.budgetRevisions?.length || 0;
   document.querySelector("#current-budget-value").textContent = hasBudget(campaign) ? formatMoney(campaign.budget) : "Not set";
@@ -1499,7 +1558,7 @@ document.querySelector("#export-import-history").addEventListener("click", () =>
 });
 
 function renderAlerts(visibleCampaigns) {
-  const alerts = unacknowledgedAlerts(evaluateCampaignAlerts(visibleCampaigns, alertRules), acknowledgedAlertIds);
+  const alerts = unacknowledgedAlerts(evaluateAlerts(visibleCampaigns), acknowledgedAlertIds);
   currentVisibleAlerts = alerts;
   document.querySelector("#export-alerts-button").disabled = alerts.length === 0;
   const critical = alerts.filter(alert => alert.severity === "critical").length;
