@@ -20,11 +20,14 @@
         </a>
 
         <nav class="nav-list">
-          <a class="nav-item active" href="#overview" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
+          <a class="nav-item active" id="nav-overview" href="./" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
           <a class="nav-item" href="#campaigns"><span class="nav-icon">◫</span>Campaigns</a>
           <a class="nav-item" href="#reports"><span class="nav-icon">↗</span>Reports</a>
           <a class="nav-item" href="#alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
         </nav>
+
+        <p class="nav-label" id="client-nav-label" hidden>Clients</p>
+        <nav class="nav-list client-nav" id="client-nav" aria-label="Client accounts"></nav>
 
         <p class="nav-label">Workspace</p>
         <nav class="nav-list">
@@ -51,9 +54,10 @@
         <header class="topbar">
           <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded="false">☰</button>
           <div>
-            <p class="eyebrow">PERFORMANCE CENTER</p>
+            <a class="client-back" id="client-back" href="./" hidden>← All clients</a>
+            <p class="eyebrow" id="page-eyebrow">PERFORMANCE CENTER</p>
             <h1 id="greeting">Good morning</h1>
-            <p class="subtitle">Here’s how your campaigns are tracking today.</p>
+            <p class="subtitle" id="page-subtitle">Here’s how your campaigns are tracking today.</p>
           </div>
           <div class="top-actions">
             <button class="secondary-button" id="undo-action" type="button" hidden>↶ Undo</button>

@@ -54,6 +54,7 @@ const sampleCampaigns = [
 let campaigns = loadCampaigns();
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
+let clientScope = new URLSearchParams(location.search).get("client");
 let alertRules = loadAlertRules();
 let visibleColumns = readColumnPreferences(localStorage);
 let acknowledgedAlertIds = readAcknowledgedAlerts(localStorage);
@@ -107,6 +108,9 @@ syncBudgetSourceFields();
 const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
+  // The client account view ignores the saved client filter and always shows that client only.
+  if (clientScope && !campaigns.some(campaign => campaign.client === clientScope)) { clientScope = null; history.replaceState({}, "", location.pathname); }
+  filter = clientScope ?? filter;
   const matchingRows = filterCampaigns(campaigns, { client: filter, status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
   const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matchingRows), acknowledgedAlertIds);
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
@@ -168,6 +172,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const portfolioRows = filterCampaigns(campaigns, { client: "all", status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
   renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateAlerts(portfolioRows), acknowledgedAlertIds), filter);
   renderCampaignList(matchingRows, activeAlerts);
+  applyClientScopeChrome();
+  renderClientNav();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -175,7 +181,7 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   const kpiView = document.querySelector("#kpi-view")?.value || "primary";
   const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules, totals: campaignTotals });
   const grid = document.querySelector("#client-grid");
-  document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to filter the dashboard` : "No clients have live campaigns for the current filters";
+  document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to open its account` : "No clients have live campaigns for the current filters";
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
   grid.innerHTML = rollup.map(client => `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
     <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
@@ -189,11 +195,64 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
 document.querySelector("#client-grid").addEventListener("click", event => {
   const card = event.target.closest(".client-card");
   if (!card) return;
-  const select = document.querySelector("#client-filter");
-  select.value = select.value === card.dataset.client ? "all" : card.dataset.client;
-  select.dispatchEvent(new Event("change", { bubbles: true }));
-  if (select.value !== "all") document.querySelector("#campaigns").scrollIntoView({ behavior: "smooth", block: "start" });
+  setClientScope(card.dataset.client);
 });
+
+// --- Client account view: ?client=Name shows only that client's campaigns, independent of the saved filters ---
+function setClientScope(name, { replace = false } = {}) {
+  clientScope = name || null;
+  const url = clientScope ? `?client=${encodeURIComponent(clientScope)}` : location.pathname;
+  if (replace) history.replaceState({ client: clientScope }, "", url); else history.pushState({ client: clientScope }, "", url);
+  renderCampaigns();
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+function applyClientScopeChrome() {
+  const scoped = Boolean(clientScope);
+  document.body.classList.toggle("client-view", scoped);
+  document.querySelector("#clients").hidden = scoped;
+  document.querySelector("#client-filter").closest(".filter-group").hidden = scoped;
+  document.querySelector("#client-back").hidden = !scoped;
+  const eyebrow = document.querySelector("#page-eyebrow");
+  const heading = document.querySelector("#greeting");
+  const subtitle = document.querySelector("#page-subtitle");
+  if (!scoped) {
+    eyebrow.textContent = "PERFORMANCE CENTER";
+    subtitle.textContent = "Here’s how your campaigns are tracking today.";
+    renderProfile();
+    document.title = "Northstar | Campaign overview";
+    return;
+  }
+  const rows = campaigns.filter(campaign => campaign.client === clientScope && !isCampaignArchived(campaign));
+  const groups = groupCampaigns(rows);
+  const live = groups.filter(group => group.status === "live").length;
+  eyebrow.textContent = "CLIENT ACCOUNT";
+  heading.textContent = clientScope;
+  subtitle.textContent = `${groups.length} campaign${groups.length === 1 ? "" : "s"} · ${live} live · only ${clientScope} data is shown below.`;
+  document.title = `Northstar | ${clientScope}`;
+}
+
+function renderClientNav() {
+  const clients = [...new Map(campaigns.filter(campaign => !isCampaignArchived(campaign)).map(campaign => [campaign.client, campaign])).values()].sort((a, b) => a.client.localeCompare(b.client));
+  document.querySelector("#client-nav-label").hidden = clients.length === 0;
+  document.querySelector("#client-nav").innerHTML = clients.map(campaign => `<a class="nav-item client-nav-item${campaign.client === clientScope ? " active" : ""}" href="?client=${encodeURIComponent(campaign.client)}" data-client-link="${escapeHtml(campaign.client)}"${campaign.client === clientScope ? ' aria-current="page"' : ""}><span class="client-nav-mark ${escapeHtml(campaign.className || "")}">${escapeHtml(campaign.short || "")}</span><span class="client-nav-name">${escapeHtml(campaign.client)}</span></a>`).join("");
+  const overview = document.querySelector("#nav-overview");
+  overview.classList.toggle("active", !clientScope);
+  if (clientScope) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
+}
+
+document.querySelector(".sidebar").addEventListener("click", event => {
+  const link = event.target.closest("[data-client-link]");
+  if (link) { event.preventDefault(); setClientScope(link.dataset.clientLink); document.querySelector(".sidebar").classList.remove("open"); return; }
+  if (event.target.closest("#nav-overview") && clientScope) { event.preventDefault(); setClientScope(null); }
+});
+document.querySelector("#client-back").addEventListener("click", event => { event.preventDefault(); setClientScope(null); });
+window.addEventListener("popstate", () => {
+  clientScope = new URLSearchParams(location.search).get("client");
+  renderCampaigns();
+});
+
+
 
 function renderProfile() {
   let name = "";
@@ -945,6 +1004,7 @@ document.querySelector("#column-settings-form").addEventListener("submit", event
 document.querySelector("#create-campaign-button").addEventListener("click", () => {
   document.querySelector("#create-campaign-form").reset();
   document.querySelector("#create-campaign-error").hidden = true;
+  if (clientScope) document.querySelector("#new-campaign-client").value = clientScope;
   createCampaignDialog.showModal();
 });
 document.querySelectorAll(".close-create-campaign-dialog").forEach(button => button.addEventListener("click", () => createCampaignDialog.close()));
