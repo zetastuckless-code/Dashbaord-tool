@@ -32,6 +32,9 @@ import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from 
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
+import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
+import { groupCampaigns } from "./lib/campaign-groups.js";
+import { metricsForCampaign, readMetricPrefs, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { addLedgerEntries, clearFolderHandle, folderSyncSupported, isProcessed, ledgerKey, listReportFiles, loadFolderHandle, planAutoImport, readLedger, resolveFileHandle, reviewItems, saveFolderHandle, SYNC_INTERVAL_MS, writeLedger } from "./lib/folder-sync.js";
 
 const sampleCampaigns = [
@@ -156,6 +159,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderAlerts(rows);
   const portfolioRows = filterCampaigns(campaigns, { client: "all", status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
   renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateCampaignAlerts(portfolioRows, alertRules), acknowledgedAlertIds), filter);
+  renderCampaignList(matchingRows, activeAlerts);
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -202,6 +206,118 @@ document.querySelector("#edit-profile").addEventListener("click", () => {
   renderProfile();
 });
 renderProfile();
+
+// --- Campaign list: one expandable row per campaign with per-campaign metrics ---
+let metricPrefs = readMetricPrefs(localStorage);
+const expandedCampaigns = new Set();
+let lastCampaignGroups = [];
+let metricPickerTarget = null;
+
+function lineStatusLabel(status) {
+  return { live: "Live", scheduled: "Scheduled", completed: "Completed", archived: "Archived" }[status] || "";
+}
+
+function renderCampaignList(rows, activeAlerts) {
+  const period = document.querySelector("#period-filter")?.value || "current";
+  const groups = groupCampaigns(rows);
+  lastCampaignGroups = groups;
+  const container = document.querySelector("#campaign-list-rows");
+  const lineCount = groups.reduce((sum, group) => sum + group.lines.length, 0);
+  document.querySelector("#campaign-list-context").textContent = groups.length ? `${groups.length} campaign${groups.length === 1 ? "" : "s"} · ${lineCount} line${lineCount === 1 ? "" : "s"} · select a row for line-item performance` : "No campaigns match the current filters";
+  document.querySelector("#toggle-all-campaigns").hidden = groups.length === 0;
+  document.querySelector("#toggle-all-campaigns").textContent = groups.length && groups.every(group => expandedCampaigns.has(group.key)) ? "Collapse all" : "Expand all";
+  const options = { spendView: selectedSource, period };
+  container.innerHTML = groups.map(group => {
+    const keys = metricsForCampaign(metricPrefs, group.key);
+    const open = expandedCampaigns.has(group.key);
+    const totals = computeMetrics(group.records, options);
+    const groupAlerts = activeAlerts.filter(alert => group.records.includes(alert.campaign));
+    const critical = groupAlerts.some(alert => alert.severity === "critical");
+    const cells = keys.map(key => `<span class="metric-cell"><small>${escapeHtml(metricLabel(key))}</small><strong>${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
+    const labels = keys.map(key => `<span>${escapeHtml(metricLabel(key))}</span>`).join("");
+    const lineRows = group.lines.map(line => {
+      const lineMetrics = computeMetrics(line.kind === "record" ? line.record : line, { ...options, period: line.kind === "record" ? period : "current" });
+      const index = campaigns.indexOf(line.record);
+      const dates = line.startDate && line.endDate ? `${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}` : "";
+      const meta = [dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
+      return `<div class="campaign-line"><span></span><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${dashboardFlightStatus(line.record)}">${lineStatusLabel(dashboardFlightStatus(line.record))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong>${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button></div>`;
+    }).join("");
+    return `<article class="campaign-card${open ? " open" : ""}" data-group-key="${escapeHtml(group.key)}" style="--metric-count:${keys.length}">
+      <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
+        <button class="campaign-toggle" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}">›</button>
+        <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
+        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${group.lines.length} line${group.lines.length === 1 ? "" : "s"}</small></span>
+        ${cells}
+        <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
+      </div>
+      ${open ? `<div class="campaign-lines"><div class="campaign-lines-labels"><span></span><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}</div>` : ""}
+    </article>`;
+  }).join("");
+}
+
+document.querySelector("#campaign-list-rows").addEventListener("click", event => {
+  const edit = event.target.closest("[data-edit-metrics]");
+  if (edit) { openMetricPicker(edit.dataset.editMetrics); return; }
+  const open = event.target.closest("[data-open-campaign]");
+  if (open) { openCampaignDialog(Number(open.dataset.openCampaign)); return; }
+  const head = event.target.closest("[data-toggle-campaign]");
+  if (!head) return;
+  const key = head.dataset.toggleCampaign;
+  if (expandedCampaigns.has(key)) expandedCampaigns.delete(key); else expandedCampaigns.add(key);
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+
+document.querySelector("#toggle-all-campaigns").addEventListener("click", () => {
+  const allOpen = lastCampaignGroups.every(group => expandedCampaigns.has(group.key));
+  lastCampaignGroups.forEach(group => allOpen ? expandedCampaigns.delete(group.key) : expandedCampaigns.add(group.key));
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+
+const metricPickerDialog = document.querySelector("#metric-picker-dialog");
+
+function openMetricPicker(key) {
+  metricPickerTarget = key;
+  const group = lastCampaignGroups.find(item => item.key === key);
+  const selected = new Set(key === null ? metricPrefs.defaults : metricsForCampaign(metricPrefs, key));
+  document.querySelector("#metric-picker-title").textContent = key === null ? "Metrics for all campaigns" : "Choose metrics";
+  document.querySelector("#metric-picker-subtitle").textContent = key === null ? "Replaces every campaign's metrics and the default for new campaigns." : `${group?.name || "Campaign"} · ${group?.client || ""}`;
+  document.querySelector("#metric-picker-reset").hidden = key === null;
+  document.querySelector("#metric-picker-grid").innerHTML = METRIC_CATALOG.map(metric => `<label><input type="checkbox" name="row-metric" value="${metric.key}"${selected.has(metric.key) ? " checked" : ""} />${escapeHtml(metric.label)}</label>`).join("");
+  updateMetricPickerCount();
+  document.querySelector("#metric-picker-error").hidden = true;
+  metricPickerDialog.showModal();
+}
+
+function updateMetricPickerCount() {
+  const count = document.querySelectorAll('input[name="row-metric"]:checked').length;
+  document.querySelector("#metric-picker-count").textContent = `${count} of ${MAX_ROW_METRICS} selected · shown in the order listed`;
+}
+
+document.querySelector("#metric-picker-grid").addEventListener("change", event => {
+  const checked = document.querySelectorAll('input[name="row-metric"]:checked');
+  if (checked.length > MAX_ROW_METRICS) { event.target.checked = false; }
+  updateMetricPickerCount();
+});
+document.querySelectorAll(".close-metric-picker").forEach(button => button.addEventListener("click", () => metricPickerDialog.close()));
+document.querySelector("#customize-all-metrics").addEventListener("click", () => openMetricPicker(null));
+document.querySelector("#metric-picker-reset").addEventListener("click", () => {
+  metricPrefs = writeMetricPrefs(localStorage, resetCampaignMetrics(metricPrefs, metricPickerTarget));
+  metricPickerDialog.close();
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+document.querySelector("#metric-picker-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const selection = [...document.querySelectorAll('input[name="row-metric"]:checked')].map(input => input.value);
+  if (!selection.length) {
+    const error = document.querySelector("#metric-picker-error");
+    error.textContent = "Choose at least one metric.";
+    error.hidden = false;
+    return;
+  }
+  metricPrefs = writeMetricPrefs(localStorage, setCampaignMetrics(metricPrefs, metricPickerTarget, selection));
+  metricPickerDialog.close();
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
 
 function renderSpendChart(visibleCampaigns) {
   const points = buildPortfolioSpendTrend(visibleCampaigns, { spendView: selectedSource }).filter(point => point.actual !== null);
@@ -392,7 +508,7 @@ document.querySelector("#workspace-backup-button").addEventListener("click", () 
 });
 document.querySelectorAll(".close-workspace-backup").forEach(button => button.addEventListener("click", () => workspaceBackupDialog.close()));
 document.querySelector("#download-workspace-backup").addEventListener("click", () => {
-  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews });
+  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs });
   const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-workspace-${new Date().toISOString().slice(0, 10)}.json` });
   link.click();

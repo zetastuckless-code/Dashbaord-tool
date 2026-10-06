@@ -166,6 +166,14 @@
           <div class="client-grid" id="client-grid"></div>
         </section>
 
+        <section class="campaign-list" id="campaign-list" aria-labelledby="campaign-list-title">
+          <div class="client-rollup-header campaign-list-header">
+            <div><h2 id="campaign-list-title">Campaigns</h2><p id="campaign-list-context">Select a campaign to see its line items</p></div>
+            <div class="panel-actions"><button class="text-button" id="toggle-all-campaigns" type="button">Expand all</button><button class="text-button" id="customize-all-metrics" type="button">Metrics for all</button></div>
+          </div>
+          <div id="campaign-list-rows" class="campaign-list-rows"></div>
+        </section>
+
         <section class="content-grid">
           <article class="panel performance-panel">
             <div class="panel-header">
@@ -324,6 +332,16 @@
         </div>
         <p class="settings-error" id="column-settings-error" hidden></p>
         <div class="dialog-actions"><button class="secondary-button close-column-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Apply columns</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="metric-picker-dialog" aria-labelledby="metric-picker-title">
+      <form class="dialog-card" id="metric-picker-form" method="dialog">
+        <div class="dialog-header"><div><p class="eyebrow">CUSTOMIZE VIEW</p><h2 id="metric-picker-title">Choose metrics</h2><p id="metric-picker-subtitle"></p></div><button class="close-button close-metric-picker" type="button" aria-label="Close">×</button></div>
+        <p class="settings-note" id="metric-picker-count"></p>
+        <div class="metric-picker-grid" id="metric-picker-grid"></div>
+        <p class="settings-error" id="metric-picker-error" hidden></p>
+        <div class="dialog-actions"><button class="text-button" id="metric-picker-reset" type="button">Reset to default</button><button class="secondary-button close-metric-picker" type="button">Cancel</button><button class="primary-button" id="metric-picker-save" type="submit">Save</button></div>
       </form>
     </dialog>
 

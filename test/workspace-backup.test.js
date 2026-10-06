@@ -25,3 +25,16 @@ test("restores every workspace collection to browser storage", () => {
   restoreWorkspaceBackup(storage, backup);
   assert.deepEqual([...values.keys()].sort(), ["northstar-acknowledged-alerts", "northstar-alert-rules", "northstar-campaign-columns", "northstar-campaigns", "northstar-dashboard-view", "northstar-import-history", "northstar-saved-views"]);
 });
+
+test("carries per-campaign metric choices and still accepts older backups without them", () => {
+  const prefs = { defaults: ["spend"], byCampaign: { "a::b": ["spend", "vcr"] } };
+  const base = { campaigns: [], importHistory: [], alertRules: {}, visibleColumns: [], acknowledgedAlerts: [], dashboardView: {} };
+  const values = new Map();
+  const storage = { setItem: (key, value) => values.set(key, value) };
+  const withPrefs = validateWorkspaceBackup(createWorkspaceBackup({ ...base, metricPrefs: prefs })).backup;
+  restoreWorkspaceBackup(storage, withPrefs);
+  assert.deepEqual(JSON.parse(values.get("northstar-campaign-metrics")), prefs);
+  const legacy = validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base }));
+  assert.equal(legacy.valid, true);
+  assert.equal(validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base, metricPrefs: [] })).valid, false);
+});
