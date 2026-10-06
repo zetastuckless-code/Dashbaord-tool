@@ -66,6 +66,8 @@
             <button class="secondary-button" id="workspace-backup-button">Backup</button>
             <button class="secondary-button" id="export-dashboard-button">Export CSV</button>
             <button class="secondary-button" id="create-campaign-button">New campaign</button>
+            <button class="secondary-button" id="client-io-button" type="button" hidden>Upload / revise IO</button>
+            <input id="client-io-input" type="file" accept=".pdf,application/pdf" hidden />
             <button class="primary-button" id="upload-button"><span>＋</span> Import report</button>
           </div>
         </header>
@@ -182,8 +184,8 @@
         <section class="content-grid">
           <article class="panel performance-panel">
             <div class="panel-header">
-              <div><h2>Spend performance</h2><p id="spend-chart-context">Billing spend vs. plan across active campaigns</p></div>
-              <div class="legend"><span><i class="actual"></i>Actual</span><span><i class="planned"></i>Planned</span><button class="text-button" id="export-spend-trend" type="button">Export trend</button></div>
+              <div><h2 id="spend-chart-title">Spend performance</h2><p id="spend-chart-context">Billing spend vs. plan across active campaigns</p></div>
+              <div class="chart-controls"><div class="chart-toggle" id="chart-mode" role="group" aria-label="Chart view"><button type="button" data-chart-mode="cumulative" class="active" aria-pressed="true">Cumulative</button><button type="button" data-chart-mode="daily" aria-pressed="false">Daily</button></div><div class="legend" id="spend-chart-legend"><span><i class="actual"></i>Actual</span><span><i class="planned"></i>Planned</span></div><button class="text-button" id="export-spend-trend" type="button">Export trend</button></div>
             </div>
             <div class="chart-wrap">
               <div class="y-axis" id="spend-chart-y-axis"><span>—</span><span>—</span><span>—</span><span>$0</span></div>
@@ -195,10 +197,13 @@
                 <path class="area" id="spend-chart-area" d=""/>
                 <path class="planned-line" id="spend-chart-planned" d=""/>
                 <path class="actual-line" id="spend-chart-actual" d=""/>
+                <g id="spend-chart-bars" style="display:none"></g>
+                <path class="baseline-line" id="spend-chart-baseline" d="" style="display:none"/>
               </svg>
               <p class="chart-empty" id="spend-chart-empty" hidden>Import at least two dated campaign reports to display the portfolio trend.</p>
               <div class="x-axis" id="spend-chart-x-axis"></div>
             </div>
+            <p class="chart-note" id="spend-chart-note" hidden></p>
           </article>
 
           <article class="panel alerts-panel" id="alerts">
@@ -348,11 +353,31 @@
       </form>
     </dialog>
 
+    <dialog id="bulk-edit-dialog" aria-labelledby="bulk-edit-title">
+      <form class="dialog-card" id="bulk-edit-form" method="dialog">
+        <div class="dialog-header"><div><p class="eyebrow">BULK EDIT</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
+        <fieldset class="bulk-edit-group" id="bulk-edit-lines"><legend>Report lines</legend><div class="settings-grid">
+          <label>Owner<input id="bulk-owner" autocomplete="off" /></label><label>Channel<input id="bulk-channel" autocomplete="off" /></label>
+          <label>Primary KPI<input id="bulk-kpi" autocomplete="off" placeholder="CTR" /></label><label>KPI target<input id="bulk-target" autocomplete="off" placeholder="0.25%" /></label>
+          <label>Billing source<select id="bulk-billing"><option value="">Keep</option><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
+          <label>Expected report<select id="bulk-cadence"><option value="">Keep</option><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+        </div></fieldset>
+        <fieldset class="bulk-edit-group" id="bulk-edit-items"><legend>Line items and flights</legend><div class="settings-grid">
+          <label>Start date<input id="bulk-start" type="date" /></label><label>End date<input id="bulk-end" type="date" /></label>
+          <label class="wide">Budget (sets each selected line item to this amount)<input id="bulk-budget" inputmode="decimal" autocomplete="off" /></label>
+        </div></fieldset>
+        <p class="settings-error" id="bulk-edit-error" hidden></p>
+        <div class="dialog-actions"><button class="secondary-button close-bulk-edit" type="button">Cancel</button><button class="primary-button" type="submit">Apply changes</button></div>
+      </form>
+    </dialog>
+
     <dialog id="io-review-dialog" aria-labelledby="io-review-title">
       <form class="dialog-card io-review-card" id="io-review-form" method="dialog">
         <div class="dialog-header"><div><p class="eyebrow">INSERTION ORDER</p><h2 id="io-review-title">Review insertion order</h2><p id="io-review-subtitle"></p></div><button class="close-button close-io-review" type="button" aria-label="Close">×</button></div>
         <div class="source-summary component-summary io-review-facts" id="io-review-facts"></div>
         <ul class="io-review-warnings" id="io-review-warnings" hidden></ul>
+        <label class="io-review-target" id="io-review-target-label" hidden>Apply this order to<select id="io-review-target"></select></label>
+        <p class="io-review-note" id="io-review-match-note" hidden></p>
         <fieldset class="io-review-mode" id="io-review-mode"><legend>How should this order be used?</legend>
           <label><input type="radio" name="io-mode" value="totals" /><span><strong>Campaign totals only</strong><small>Pace the whole campaign on the order's total budget and flight dates. Your report lines stay as imported and no placements are saved.</small></span></label>
           <label><input type="radio" name="io-mode" value="flights" /><span><strong>Save placements as line-item flights</strong><small>Add each placement as a planned flight with its own budget. Best when the order is uploaded before any reports.</small></span></label>

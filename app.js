@@ -6,7 +6,7 @@ import { budgetRevisionHistory, createBudgetRevision, exportBudgetRevisionsCsv, 
 import { DEFAULT_ALERT_RULES, evaluateCampaignAlerts, validateAlertRules } from "./lib/alert-engine.js";
 import { createCampaign } from "./lib/campaign-creation.js";
 import { readColumnPreferences, writeColumnPreferences } from "./lib/column-preferences.js";
-import { readReportFile } from "./lib/workbook-import.js";
+import { readReportFile, rowsToCsv } from "./lib/workbook-import.js";
 import { evaluateDataHealth } from "./lib/data-health.js";
 import { calculatePortfolioPacing, calculateSpendPacing, campaignFlightStatus, effectivePacing } from "./lib/spend-pacing.js";
 import { calculateAvailableKpis } from "./lib/metric-calculations.js";
@@ -36,7 +36,11 @@ import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
 import { budgetUnits, readCampaignTotals, removeCampaignTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
-import { groupKey } from "./lib/campaign-groups.js";
+import { campaignGroupName, groupKey } from "./lib/campaign-groups.js";
+import { dailyPacingView } from "./lib/daily-pacing.js";
+import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
+import { findCampaignForIo } from "./lib/io-match.js";
+import { pacingBand } from "./lib/client-rollup.js";
 import { applyAssignments, assignmentKey, initialChoices, KEEP, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
 import { applySetupEdits, rowForCreatedCampaign, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
 import { mergeCampaignImports } from "./lib/import-merge.js";
@@ -107,6 +111,8 @@ function syncBudgetSourceFields() {
 document.querySelector("#new-campaign-budget-source").addEventListener("change", syncBudgetSourceFields);
 syncBudgetSourceFields();
 
+// Pacing numbers take their colour from the same thresholds the alerts use: red over, amber under, green on track.
+const paceClass = pacing => Number.isFinite(pacing) ? `pace-${pacingBand(pacing, alertRules)}` : "";
 const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
@@ -135,7 +141,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
       <td data-column="status"><span class="status-${status}">${statusLabel}</span></td>
       <td data-column="spend"><strong>${selectedPeriodSpend === null ? "—" : formatMoney(selectedPeriodSpend)}</strong></td>
       <td data-column="budget">${hasBudget(campaign) ? formatMoney(campaign.budget) : '<span class="warning-text">Needed</span>'}</td>
-      <td data-column="pacing" class="pacing-cell"><div class="pacing-value"><strong>${pacingLabel}${pacing === null ? "" : "%"}</strong><span>${pacingStatus}</span></div><div class="mini-track ${pacingWarning ? "warn" : ""}"><span style="width:${Math.min(pacing || 0, 100)}%"></span></div></td>
+      <td data-column="pacing" class="pacing-cell"><div class="pacing-value"><strong class="${paceClass(pacing)}">${pacingLabel}${pacing === null ? "" : "%"}</strong><span class="${paceClass(pacing)}">${pacingStatus}</span></div><div class="mini-track ${pacingWarning ? "warn" : ""}"><span style="width:${Math.min(pacing || 0, 100)}%"></span></div></td>
       <td data-column="kpi" class="kpi"><strong>${escapeHtml(selectedKpi?.formatted || "—")} ${escapeHtml(selectedKpi?.metric || document.querySelector("#kpi-view")?.value || campaign.kpi)}</strong><small>${escapeHtml(selectedKpi?.target || (period === "current" ? "Required components unavailable" : "Period components unavailable"))}</small></td>
       <td data-column="source"><span class="source-tag ${campaign.source === "CM360" ? "third" : ""}">${escapeHtml((campaign.sources || [campaign.source]).join(" + "))}</span>${discrepancy.flagged ? `<small class="variance-flag">! ${discrepancy.label}</small>` : ""}</td>
       <td data-column="updated">${escapeHtml(campaign.updated)}</td>
@@ -166,6 +172,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const portfolioValue = document.querySelector("#portfolio-pacing-value");
   const portfolioStatus = document.querySelector("#portfolio-pacing-status");
   portfolioValue.textContent = portfolio.pacing === null ? "—" : `${portfolio.pacing.toFixed(1)}%`;
+  portfolioValue.classList.remove("pace-over", "pace-under", "pace-on-track");
+  if (paceClass(portfolio.pacing)) portfolioValue.classList.add(paceClass(portfolio.pacing));
   portfolioStatus.textContent = portfolio.pacing === null ? "No pacing data" : portfolio.pacing > alertRules.overPacing ? "Above plan" : portfolio.pacing < alertRules.underPacing ? "Below plan" : "On track";
   portfolioStatus.className = `status-pill ${portfolio.pacing !== null && (portfolio.pacing > alertRules.overPacing || portfolio.pacing < alertRules.underPacing) ? "warning" : "good"}`;
   document.querySelector("#portfolio-pacing-target").textContent = `Target: ${alertRules.underPacing}–${alertRules.overPacing}%`;
@@ -215,6 +223,7 @@ function applyClientScopeChrome() {
   document.querySelector("#clients").hidden = scoped;
   document.querySelector("#client-filter").closest(".filter-group").hidden = scoped;
   document.querySelector("#client-back").hidden = !scoped;
+  document.querySelector("#client-io-button").hidden = !scoped;
   const eyebrow = document.querySelector("#page-eyebrow");
   const heading = document.querySelector("#greeting");
   const subtitle = document.querySelector("#page-subtitle");
@@ -304,7 +313,7 @@ function renderCampaignList(rows, activeAlerts) {
     const totals = computeMetrics(group.records, { ...options, totals: campaignTotals[group.key] || null });
     const groupAlerts = activeAlerts.filter(alert => group.records.includes(alert.campaign));
     const critical = groupAlerts.some(alert => alert.severity === "critical");
-    const cells = keys.map(key => `<span class="metric-cell" draggable="true" data-metric="${key}" title="Drag to reorder"><small>${escapeHtml(metricLabel(key))}</small><strong>${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
+    const cells = keys.map(key => `<span class="metric-cell" draggable="true" data-metric="${key}" title="Drag to reorder"><small>${escapeHtml(metricLabel(key))}</small><strong class="${key === "pacing" ? paceClass(totals.pacing) : ""}">${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
     const labels = keys.map(key => `<span>${escapeHtml(metricLabel(key))}</span>`).join("");
     const lineRows = group.lines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
@@ -312,7 +321,9 @@ function renderCampaignList(rows, activeAlerts) {
       const index = campaigns.indexOf(line.record);
       const dates = line.startDate && line.endDate ? `${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}` : "";
       const meta = [dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
-      return `<div class="campaign-line"><span></span><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${dashboardFlightStatus(line.record)}">${lineStatusLabel(dashboardFlightStatus(line.record))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong>${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>`;
+      const lineSelectKey = stableLineKey(line);
+      const lineChecked = selectionFor(group.key).has(lineSelectKey);
+      return `<div class="campaign-line${lineChecked ? " selected" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${dashboardFlightStatus(line.record)}">${lineStatusLabel(dashboardFlightStatus(line.record))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>`;
     }).join("");
     return `<article class="campaign-card${open ? " open" : ""}" data-group-key="${escapeHtml(group.key)}" style="--metric-count:${keys.length}">
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
@@ -322,10 +333,112 @@ function renderCampaignList(rows, activeAlerts) {
         ${cells}
         <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines"><div class="campaign-lines-labels"><span></span><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
+      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${group.lines.length && group.lines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
+
+// --- Multi-select on campaign lines: bulk edit and bulk remove ---
+// Selections are stored by stable identity (not list position) so an import or removal can never point them at another line.
+const selectedLines = new Map();
+const recordIdentity = record => [record.client, record.name, record.campaignId, record.source].map(value => String(value ?? "").trim().toLowerCase()).join("::");
+const stableLineKey = line => line.kind === "record" ? `r|${recordIdentity(line.record)}` : `i|${recordIdentity(line.record)}|${line.id ?? ""}`;
+const selectionFor = key => selectedLines.get(key) || new Set();
+
+/** Selected lines of one campaign, resolved to current positions; anything that no longer exists is dropped. */
+function resolveSelection(groupKeyValue) {
+  const wanted = selectionFor(groupKeyValue);
+  const group = lastCampaignGroups.find(item => item.key === groupKeyValue);
+  if (!group) return [];
+  return group.lines.filter(line => wanted.has(stableLineKey(line))).map(line => ({ line, index: campaigns.indexOf(line.record), key: lineKey(campaigns.indexOf(line.record), line.kind, line.id) })).filter(entry => entry.index >= 0);
+}
+
+function setLineSelected(groupKeyValue, key, selected) {
+  const set = new Set(selectionFor(groupKeyValue));
+  if (selected) set.add(key); else set.delete(key);
+  if (set.size) selectedLines.set(groupKeyValue, set); else selectedLines.delete(groupKeyValue);
+}
+
+document.querySelector("#campaign-list-rows").addEventListener("change", event => {
+  const box = event.target.closest("[data-select-line]");
+  const all = event.target.closest("[data-select-all-lines]");
+  if (box) setLineSelected(box.dataset.group, box.dataset.selectLine, box.checked);
+  else if (all) {
+    const group = lastCampaignGroups.find(item => item.key === all.dataset.selectAllLines);
+    group?.lines.forEach(line => setLineSelected(group.key, stableLineKey(line), all.checked));
+  } else return;
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+
+document.querySelector("#campaign-list-rows").addEventListener("click", event => {
+  const clear = event.target.closest("[data-bulk-clear]");
+  if (clear) { selectedLines.delete(clear.dataset.bulkClear); renderCampaigns(document.querySelector("#client-filter").value); return; }
+  const remove = event.target.closest("[data-bulk-remove]");
+  if (remove) { bulkRemove(remove.dataset.bulkRemove); return; }
+  const edit = event.target.closest("[data-bulk-edit]");
+  if (edit) openBulkEdit(edit.dataset.bulkEdit);
+});
+
+const describeSelection = entries => {
+  const lines = entries.filter(entry => entry.line.kind === "record").length;
+  const items = entries.length - lines;
+  return [lines ? `${lines} line${lines === 1 ? "" : "s"}` : "", items ? `${items} line item${items === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+};
+
+function bulkRemove(groupKeyValue) {
+  const entries = resolveSelection(groupKeyValue);
+  if (!entries.length) return;
+  const summary = describeSelection(entries);
+  applyRemoval(`removing ${summary}`, `Remove ${summary} and their imported data from this campaign?`, () => {
+    const itemsByIndex = new Map();
+    const recordIndexes = [];
+    for (const { line, index } of entries) {
+      if (line.kind === "record") recordIndexes.push(index);
+      else itemsByIndex.set(index, [...(itemsByIndex.get(index) || []), line.id]);
+    }
+    for (const [index, ids] of itemsByIndex) campaigns[index] = ids.reduce((record, id) => removeLineItem(record, id), campaigns[index]);
+    const groups = new Set(recordIndexes.map(index => groupKey(campaigns[index])));
+    [...recordIndexes].sort((a, b) => b - a).forEach(index => { campaigns = removeRecordAt(campaigns, index); });
+    groups.forEach(dropOrphanTotals);
+    selectedLines.delete(groupKeyValue);
+  });
+}
+
+const bulkEditDialog = document.querySelector("#bulk-edit-dialog");
+let bulkEditGroup = null;
+
+function openBulkEdit(groupKeyValue) {
+  const entries = resolveSelection(groupKeyValue);
+  if (!entries.length) return;
+  bulkEditGroup = groupKeyValue;
+  const hasRecords = entries.some(entry => entry.line.kind === "record");
+  const hasItems = entries.some(entry => entry.line.kind !== "record");
+  document.querySelector("#bulk-edit-form").reset();
+  document.querySelector("#bulk-edit-summary").textContent = `Editing ${describeSelection(entries)}. Leave a field blank to keep its current value.`;
+  document.querySelector("#bulk-edit-lines").hidden = !hasRecords;
+  document.querySelector("#bulk-edit-items").hidden = !hasItems;
+  document.querySelector("#bulk-edit-error").hidden = true;
+  bulkEditDialog.showModal();
+}
+
+document.querySelectorAll(".close-bulk-edit").forEach(button => button.addEventListener("click", () => bulkEditDialog.close()));
+document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const value = id => document.querySelector(id).value.trim();
+  const edits = { owner: value("#bulk-owner"), channel: value("#bulk-channel"), kpi: value("#bulk-kpi"), target: value("#bulk-target"), billingSource: value("#bulk-billing"), reportCadence: value("#bulk-cadence"), startDate: value("#bulk-start"), endDate: value("#bulk-end"), budget: value("#bulk-budget") };
+  const errors = validateBulkEdits(edits);
+  const error = document.querySelector("#bulk-edit-error");
+  if (Object.values(edits).every(field => field === "")) errors.push("Fill in at least one field to change.");
+  if (errors.length) { error.textContent = errors.join(" "); error.hidden = false; return; }
+  const entries = resolveSelection(bulkEditGroup);
+  if (!entries.length) { bulkEditDialog.close(); return; }
+  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${describeSelection(entries)}` }));
+  campaigns = applyBulkEdits(campaigns, entries.map(entry => entry.key), edits).campaigns;
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  bulkEditDialog.close();
+  refreshAfterDataChange();
+  showToast("Lines updated", `${describeSelection(entries)} updated. Use Undo to revert.`);
+});
 
 // Drag a metric on a campaign row to reorder that campaign's metrics.
 let draggedMetric = null;
@@ -451,21 +564,94 @@ document.querySelector("#metric-picker-form").addEventListener("submit", event =
   renderCampaigns(document.querySelector("#client-filter").value);
 });
 
+// --- Spend chart: cumulative vs. plan, or daily spend against the baseline daily budget ---
+let chartMode = "cumulative";
+let currentDailyView = null;
+try { chartMode = localStorage.getItem("northstar-chart-mode") === "daily" ? "daily" : "cumulative"; } catch { chartMode = "cumulative"; }
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+function setChartMode(mode) {
+  chartMode = mode;
+  try { localStorage.setItem("northstar-chart-mode", mode); } catch { /* the toggle still works without storage */ }
+  renderCampaigns(document.querySelector("#client-filter").value);
+}
+
+document.querySelector("#chart-mode").addEventListener("click", event => {
+  const button = event.target.closest("[data-chart-mode]");
+  if (button && button.dataset.chartMode !== chartMode) setChartMode(button.dataset.chartMode);
+});
+
+function renderDailyChart(points, units, chart) {
+  const view = dailyPacingView(points, units, { today: todayIso() });
+  currentDailyView = view;
+  const days = view.days;
+  const bars = document.querySelector("#spend-chart-bars");
+  const note = document.querySelector("#spend-chart-note");
+  if (!days.length) {
+    chart.hidden = true;
+    document.querySelector("#spend-chart-empty").hidden = false;
+    document.querySelector("#spend-chart-empty").textContent = "The daily view needs at least two dated reports.";
+    document.querySelector("#spend-chart-x-axis").hidden = true;
+    document.querySelector("#spend-chart-y-axis").hidden = true;
+    note.hidden = true;
+    return;
+  }
+  const maximum = Math.max(...days.flatMap(day => [day.actual, day.baseline]), 1);
+  const step = 760 / days.length;
+  const barWidth = Math.max(1, step * 0.68);
+  const y = value => 256 - value / maximum * 236;
+  bars.innerHTML = days.map((day, index) => {
+    const percent = day.baseline > 0 ? day.actual / day.baseline * 100 : null;
+    const band = percent === null ? "on-track" : pacingBand(percent, alertRules);
+    return `<rect class="daily-bar pace-bar-${band}${day.estimated ? " estimated" : ""}" x="${(index * step + (step - barWidth) / 2).toFixed(2)}" y="${y(day.actual).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${(256 - y(day.actual)).toFixed(2)}"><title>${day.date}: ${formatExactMoney(day.actual)}${day.baseline > 0 ? ` vs ${formatExactMoney(day.baseline)} baseline (${Math.round(percent)}%)` : ""}${day.estimated ? " · averaged between reports" : ""}</title></rect>`;
+  }).join("");
+  const baselinePoints = days.map((day, index) => `${index ? "L" : "M"}${(index * step + step / 2).toFixed(2)},${y(day.baseline).toFixed(2)}`).join(" ");
+  document.querySelector("#spend-chart-baseline").setAttribute("d", baselinePoints);
+  document.querySelector("#spend-chart-y-axis").innerHTML = [maximum, maximum * 2 / 3, maximum / 3, 0].map(value => `<span>${formatMoney(value)}</span>`).join("");
+  const labels = [...new Set([days[0], days[Math.floor((days.length - 1) / 2)], days.at(-1)])];
+  document.querySelector("#spend-chart-x-axis").innerHTML = labels.map(day => `<span>${new Date(`${day.date}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" })}</span>`).join("");
+  const parts = [];
+  if (view.recentBaseline > 0) parts.push(`Baseline ${formatExactMoney(view.recentBaseline)}/day`);
+  if (view.recentActual !== null) parts.push(`last ${Math.min(7, days.length)} days averaged ${formatExactMoney(view.recentActual)}/day${view.recentPercent === null ? "" : ` (${Math.round(view.recentPercent)}% of baseline)`}`);
+  if (view.requiredFromToday !== null) parts.push(`needs ${formatExactMoney(view.requiredFromToday)}/day from today to spend the remaining budget by the end dates`);
+  if (view.skippedUnits) parts.push(`${view.skippedUnits} campaign${view.skippedUnits === 1 ? "" : "s"} without a budget or flight dates ${view.skippedUnits === 1 ? "is" : "are"} left out of the baseline`);
+  note.hidden = false;
+  note.textContent = parts.join(" · ") || "Add budgets and flight dates to see a daily baseline.";
+  chart.setAttribute("aria-label", `Daily spend against the baseline daily budget from ${days[0].date} to ${days.at(-1).date}`);
+}
+
 function renderSpendChart(visibleCampaigns) {
   const points = buildPortfolioSpendTrend(visibleCampaigns, { spendView: selectedSource }).filter(point => point.actual !== null);
   currentSpendTrend = points;
+  const daily = chartMode === "daily";
+  document.querySelectorAll("#chart-mode [data-chart-mode]").forEach(button => {
+    const active = button.dataset.chartMode === chartMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.querySelector("#spend-chart-legend").innerHTML = daily
+    ? '<span><i class="actual"></i>Daily spend</span><span><i class="baseline"></i>Baseline daily budget</span>'
+    : '<span><i class="actual"></i>Actual</span><span><i class="planned"></i>Planned</span>';
+  document.querySelector("#spend-chart-title").textContent = daily ? "Daily spend vs. baseline" : "Spend performance";
+  for (const id of ["#spend-chart-area", "#spend-chart-planned", "#spend-chart-actual"]) document.querySelector(id).style.display = daily ? "none" : "";
+  document.querySelector("#spend-chart-bars").style.display = daily ? "" : "none";
+  document.querySelector("#spend-chart-baseline").style.display = daily ? "" : "none";
+  document.querySelector("#spend-chart-note").hidden = true;
   document.querySelector("#export-spend-trend").disabled = points.length === 0;
   const chart = document.querySelector("#spend-chart");
   const empty = document.querySelector("#spend-chart-empty");
   const hasTrend = points.length >= 2;
   const sourceLabel = { billing: "Billing", first: "1st-party", third: "3rd-party" }[selectedSource];
   const coverage = points.at(-1);
-  document.querySelector("#spend-chart-context").textContent = coverage ? `${sourceLabel} spend vs. plan · ${coverage.historyCampaigns}/${coverage.totalCampaigns} campaigns with history` : `${sourceLabel} spend vs. plan across active campaigns`;
+  document.querySelector("#spend-chart-context").textContent = coverage ? `${sourceLabel} spend ${daily ? "per day vs. the budget baseline" : "vs. plan"} · ${coverage.historyCampaigns}/${coverage.totalCampaigns} campaigns with history` : `${sourceLabel} spend ${daily ? "per day" : "vs. plan"} across active campaigns`;
   chart.hidden = !hasTrend;
   empty.hidden = hasTrend;
+  empty.textContent = "Import at least two dated campaign reports to display the portfolio trend.";
   document.querySelector("#spend-chart-x-axis").hidden = !hasTrend;
   document.querySelector("#spend-chart-y-axis").hidden = !hasTrend;
   if (!hasTrend) return;
+  if (daily) { renderDailyChart(points, budgetUnits(visibleCampaigns, campaignTotals), chart); return; }
   const maximum = Math.max(...points.flatMap(point => [point.actual || 0, point.planned || 0]), 1);
   const coordinate = (point, index, key) => `${index / (points.length - 1) * 760},${256 - (point[key] || 0) / maximum * 236}`;
   const pathFor = key => points.map((point, index) => `${index ? "L" : "M"}${coordinate(point, index, key)}`).join(" ");
@@ -480,9 +666,13 @@ function renderSpendChart(visibleCampaigns) {
 }
 
 document.querySelector("#export-spend-trend").addEventListener("click", () => {
-  if (!currentSpendTrend.length) return;
-  const url = URL.createObjectURL(new Blob([exportPortfolioSpendTrendCsv(currentSpendTrend, selectedSource)], { type: "text/csv;charset=utf-8" }));
-  const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-spend-trend-${selectedSource}-${new Date().toISOString().slice(0, 10)}.csv` });
+  const daily = chartMode === "daily" && currentDailyView?.days.length;
+  if (!daily && !currentSpendTrend.length) return;
+  const text = daily
+    ? rowsToCsv([["date", "daily_spend", "baseline_daily_budget", "percent_of_baseline", "averaged_between_reports"], ...currentDailyView.days.map(day => [day.date, Number(day.actual.toFixed(2)), Number(day.baseline.toFixed(2)), day.baseline > 0 ? Number((day.actual / day.baseline * 100).toFixed(1)) : "", day.estimated ? "yes" : "no"])])
+    : exportPortfolioSpendTrendCsv(currentSpendTrend, selectedSource);
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-${daily ? "daily-spend" : "spend-trend"}-${selectedSource}-${todayIso()}.csv` });
   link.click();
   URL.revokeObjectURL(url);
 });
@@ -1413,21 +1603,48 @@ let pendingIoForCreate = null;
 async function startIoReview(file, mode) {
   const status = document.querySelector(mode === "create" ? "#create-campaign-error" : "#campaign-settings-error");
   status.hidden = true;
+  // Client pages have no inline error area, so problems there are shown as a notice.
+  const fail = message => {
+    if (mode === "client") { showToast("Insertion order", message); return; }
+    status.textContent = message;
+    status.hidden = false;
+  };
   if (!/\.pdf$/i.test(file.name)) {
     if (mode === "create") pendingIoForCreate = null;
+    if (mode === "client") fail("Choose the insertion order as a PDF.");
     return;
   }
-  if (file.size > 25 * 1024 * 1024) { status.textContent = "The insertion order is larger than the 25 MB limit."; status.hidden = false; return; }
+  if (file.size > 25 * 1024 * 1024) { fail("The insertion order is larger than the 25 MB limit."); return; }
   try {
     const io = await readIoPdf(file);
-    if (!io.valid) { status.textContent = io.errors.join(" "); status.hidden = false; if (mode === "create") pendingIoForCreate = null; return; }
+    if (!io.valid) { fail(io.errors.join(" ")); if (mode === "create") pendingIoForCreate = null; return; }
     pendingIo = { io, fileName: file.name, mode };
     renderIoReview();
     ioReviewDialog.showModal();
   } catch (error) {
-    status.textContent = `Could not read this PDF: ${error.message}`;
-    status.hidden = false;
+    fail(`Could not read this PDF: ${error.message}`);
   }
+}
+
+const ioTargetGroups = () => groupCampaigns(campaigns.filter(campaign => campaign.client === clientScope && !isCampaignArchived(campaign)));
+
+/** The campaign group the order will be applied to, or null when it will start a new campaign. */
+function ioTargetGroupKey() {
+  if (pendingIo.mode === "details") return campaigns[activeCampaignIndex] ? groupKey(campaigns[activeCampaignIndex]) : null;
+  if (pendingIo.mode === "client") {
+    const value = document.querySelector("#io-review-target").value;
+    return value === "__new" ? null : value;
+  }
+  return null;
+}
+
+function syncIoDefaultMode() {
+  // Campaigns that already have report data are paced on the order's totals by default, so IO placements never fight report lines.
+  const key = ioTargetGroupKey();
+  const group = key ? groupCampaigns(campaigns).find(item => item.key === key) : null;
+  const hasReports = Boolean(group?.records.some(record => Number(record.spend) > 0));
+  const defaultMode = pendingIo.mode === "create" || !group || hasReports ? "totals" : "flights";
+  document.querySelectorAll('input[name="io-mode"]').forEach(radio => { radio.checked = radio.value === defaultMode; });
 }
 
 function renderIoReview() {
@@ -1440,17 +1657,23 @@ function renderIoReview() {
   warnings.hidden = io.warnings.length === 0;
   warnings.innerHTML = io.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join("");
   document.querySelector("#io-review-lines").innerHTML = io.lineItems.map(item => `<label class="io-review-line"><input type="checkbox" name="io-line" value="${escapeHtml(item.id)}"${item.addedValue ? "" : " checked"} /><span class="io-line-name"><strong>${escapeHtml(item.name)}</strong><small>${item.startDate ? escapeHtml(item.startDate) : "—"} → ${item.endDate ? escapeHtml(item.endDate) : "—"}${item.rate ? ` · ${escapeHtml(item.rateType || "")} $${Number(item.rate).toFixed(2)}` : ""}${item.units ? ` · ${formatCount(item.units)} ${escapeHtml(item.unit || "units").toLowerCase()}` : ""}${item.kpi ? ` · ${escapeHtml(item.kpi)}` : ""}</small></span><b>${money(item.budget)}</b></label>`).join("");
-  const budgetToggle = document.querySelector("#io-review-set-budget");
-  budgetToggle.closest("label").hidden = mode === "create" || !(io.budget > 0);
-  budgetToggle.checked = true;
   document.querySelector("#io-review-budget-label").textContent = io.budget ? `Set the campaign budget to ${money(io.budget)} (recorded as a budget revision)` : "";
-  document.querySelector("#io-review-apply").textContent = mode === "create" ? "Use these details" : "Apply to campaign";
   document.querySelector("#io-review-error").hidden = true;
-  // Campaigns that already have report data are paced on the order's totals by default, so IO placements never fight report lines.
-  const target = mode === "details" ? campaigns[activeCampaignIndex] : null;
-  const hasReports = target ? groupCampaigns(campaigns).find(group => group.key === groupKey(target))?.records.some(record => Number(record.spend) > 0) : false;
-  const defaultMode = mode === "create" || hasReports ? "totals" : "flights";
-  document.querySelectorAll('input[name="io-mode"]').forEach(radio => { radio.checked = radio.value === defaultMode; });
+  // Client pages let you pick which campaign the order belongs to (or start a new one) and spot revisions of an applied order.
+  const targetLabel = document.querySelector("#io-review-target-label");
+  const note = document.querySelector("#io-review-match-note");
+  targetLabel.hidden = mode !== "client";
+  note.hidden = true;
+  if (mode === "client") {
+    const groups = ioTargetGroups();
+    const match = findCampaignForIo(groups, campaignTotals, io);
+    document.querySelector("#io-review-target").innerHTML = `${groups.map(group => `<option value="${escapeHtml(group.key)}"${match?.key === group.key ? " selected" : ""}>${escapeHtml(group.name)}</option>`).join("")}<option value="__new"${match ? "" : " selected"}>＋ Create a new campaign from this order</option>`;
+    note.hidden = false;
+    note.textContent = !match ? `No ${clientScope} campaign matches this order, so a new campaign is selected. Choose an existing campaign if it belongs to one.`
+      : match.reason === "order" ? (match.isRevision ? `This looks like a revision of order ${match.appliedOrder}, already applied to this campaign. Applying it updates the campaign.` : `Order ${match.appliedOrder} was already applied to this campaign; applying it again refreshes the same values.`)
+        : "Matched to this campaign by name. Change it below if that is wrong.";
+  }
+  syncIoDefaultMode();
   syncIoMode();
   updateIoSelection();
 }
@@ -1458,11 +1681,16 @@ function renderIoReview() {
 const currentIoMode = () => document.querySelector('input[name="io-mode"]:checked')?.value || "flights";
 
 function syncIoMode() {
-  document.querySelector(".io-review-card").classList.toggle("totals-mode", currentIoMode() === "totals");
   const totalsMode = currentIoMode() === "totals";
-  document.querySelector("#io-review-apply").textContent = pendingIo?.mode === "create" ? "Use these details" : totalsMode ? "Use order totals" : "Apply to campaign";
+  const startsNew = pendingIo?.mode === "create" || (pendingIo?.mode === "client" && !ioTargetGroupKey());
+  document.querySelector(".io-review-card").classList.toggle("totals-mode", totalsMode);
+  const budgetToggle = document.querySelector("#io-review-set-budget");
+  budgetToggle.closest("label").hidden = startsNew || !(pendingIo?.io.budget > 0);
+  budgetToggle.checked = true;
+  document.querySelector("#io-review-apply").textContent = startsNew ? (pendingIo?.mode === "client" ? "Create campaign" : "Use these details") : totalsMode ? "Use order totals" : "Apply to campaign";
 }
 document.querySelectorAll('input[name="io-mode"]').forEach(radio => radio.addEventListener("change", syncIoMode));
+document.querySelector("#io-review-target").addEventListener("change", () => { syncIoDefaultMode(); syncIoMode(); });
 
 function updateIoSelection() {
   const boxes = [...document.querySelectorAll('input[name="io-line"]')];
@@ -1479,6 +1707,19 @@ document.querySelector("#io-review-select-all").addEventListener("change", event
 });
 document.querySelectorAll(".close-io-review").forEach(button => button.addEventListener("click", () => { ioReviewDialog.close(); if (pendingIo?.mode === "create") pendingIoForCreate = null; }));
 
+function prefillCreateFromIo(io, fileName, selectedIds, ioMode, client = null) {
+  const fields = campaignFieldsFromIo(io, fileName);
+  const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
+  set("#new-campaign-client", client || fields.client);
+  set("#new-campaign-name", fields.name);
+  set("#new-campaign-start", fields.startDate);
+  set("#new-campaign-end", fields.endDate);
+  set("#new-campaign-budget", fields.budget);
+  set("#new-campaign-budget-source", "io");
+  syncBudgetSourceFields();
+  pendingIoForCreate = { io, fileName, selectedIds, mode: ioMode };
+}
+
 document.querySelector("#io-review-form").addEventListener("submit", event => {
   event.preventDefault();
   const selectedIds = [...document.querySelectorAll('input[name="io-line"]:checked')].map(box => box.value);
@@ -1490,20 +1731,29 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
     return;
   }
   const { io, fileName, mode } = pendingIo;
+  const targetKey = mode === "client" ? ioTargetGroupKey() : null;
   if (mode === "create") {
-    const fields = campaignFieldsFromIo(io, fileName);
-    const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
-    set("#new-campaign-client", fields.client);
-    set("#new-campaign-name", fields.name);
-    set("#new-campaign-start", fields.startDate);
-    set("#new-campaign-end", fields.endDate);
-    set("#new-campaign-budget", fields.budget);
-    set("#new-campaign-budget-source", "io");
-    syncBudgetSourceFields();
-    pendingIoForCreate = { io, fileName, selectedIds, mode: ioMode };
+    prefillCreateFromIo(io, fileName, selectedIds, ioMode);
     ioReviewDialog.close();
     return;
   }
+  if (mode === "client" && !targetKey) {
+    // A new campaign: open the setup form pre-filled from the order, still for this client.
+    ioReviewDialog.close();
+    document.querySelector("#create-campaign-button").click();
+    prefillCreateFromIo(io, fileName, selectedIds, ioMode, clientScope);
+    return;
+  }
+  if (mode === "client") {
+    const group = groupCampaigns(campaigns).find(item => item.key === targetKey);
+    const record = group?.records.find(item => (item.lineItemFlights || []).length) || group?.records[0];
+    activeCampaignIndex = record ? campaigns.indexOf(record) : null;
+  }
+  if (activeCampaignIndex === null || !campaigns[activeCampaignIndex]) return;
+  const orderLabel = [io.orderNumber, io.revision].filter(Boolean).join(" ") || fileName;
+  const targetName = campaignGroupName(campaigns[activeCampaignIndex]);
+  // Applying an order can change budgets and flights, so it gets a restore point like any other change.
+  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `applying order ${orderLabel} to ${targetName}` }));
   if (ioMode === "totals") {
     const record = campaigns[activeCampaignIndex];
     campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(record), io, fileName));
@@ -1512,11 +1762,8 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
     ioReviewDialog.close();
     renderIoTotalsNote(campaigns[activeCampaignIndex]);
     renderCampaigns(document.querySelector("#client-filter").value);
-    document.querySelector("#toast-title").textContent = "Order totals applied";
-    document.querySelector("#toast-message").textContent = `Pacing now uses the ${formatExactMoney(io.budget)} order budget across this campaign's lines.`;
-    const totalsToast = document.querySelector("#toast");
-    totalsToast.classList.add("show");
-    setTimeout(() => totalsToast.classList.remove("show"), 3200);
+    renderUndoButton();
+    showToast("Order totals applied", `Pacing now uses the ${formatExactMoney(io.budget)} order budget across ${targetName}'s lines.`);
     return;
   }
   const applied = applyIoToCampaign(campaigns[activeCampaignIndex], io, { fileName, selectedIds, setBudget: document.querySelector("#io-review-set-budget").checked });
@@ -1525,11 +1772,15 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   ioReviewDialog.close();
   refreshBudgetAndFlights(applied.campaign);
   renderCampaigns(document.querySelector("#client-filter").value);
-  document.querySelector("#toast-title").textContent = "Insertion order applied";
-  document.querySelector("#toast-message").textContent = `${applied.applied} placement${applied.applied === 1 ? "" : "s"} saved as line-item flights${applied.revised ? " and the budget was updated" : ""}.`;
-  const toast = document.querySelector("#toast");
-  toast.classList.add("show");
-  setTimeout(() => toast.classList.remove("show"), 3200);
+  renderUndoButton();
+  showToast("Insertion order applied", `${applied.applied} placement${applied.applied === 1 ? "" : "s"} saved as line-item flights${applied.revised ? " and the budget was updated" : ""}.`);
+});
+
+document.querySelector("#client-io-button").addEventListener("click", () => document.querySelector("#client-io-input").click());
+document.querySelector("#client-io-input").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (file && clientScope) await startIoReview(file, "client");
 });
 
 function renderIoTotalsNote(campaign) {
@@ -1711,6 +1962,7 @@ function renderUndoButton() {
 }
 
 function refreshAfterDataChange() {
+  selectedLines.clear();
   refreshClientFilter();
   renderCampaigns(document.querySelector("#client-filter").value);
   renderImportHistory();

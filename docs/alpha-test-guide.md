@@ -35,6 +35,9 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 22 | In **New campaign**, use **Pull details from a report** with a two-campaign CSV. | A campaign picker appears, the form fills from the chosen row, and creating the campaign also imports its numbers. **Undo** removes it. |
 | 23 | Remove one line and one whole campaign, then press **Undo** twice. | Both removals are reversed in order; the Undo button shows how many steps remain. |
 | 24 | Select a client card, then use browser Back. | The client page shows only that client's data; Back returns to the overview. |
+| 25 | Expand a campaign, tick two lines, choose **Edit selected…** and set an owner; then select all and **Remove selected**. | Only the ticked lines change; the removal is reversed by two presses of **Undo**. |
+| 26 | Open a client page and use **Upload / revise IO** with an order whose number was applied before. | The target campaign is pre-selected and the note calls it a revision; applying adds an Undo step. |
+| 27 | Switch the spend chart to **Daily**. | Bars per day against a dashed baseline, with a note giving baseline, last-7-day average, and the daily spend needed from today. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture
