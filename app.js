@@ -35,7 +35,9 @@ import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
-import { budgetUnits, readCampaignTotals, removeCampaignTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
+import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey } from "./lib/campaign-groups.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
@@ -286,6 +288,8 @@ renderProfile();
 
 // --- Campaign list: one expandable row per campaign with per-campaign metrics ---
 let metricPrefs = readMetricPrefs(localStorage);
+let auditMode = false;
+try { auditMode = localStorage.getItem("northstar-audit-mode") === "on"; } catch { auditMode = false; }
 let campaignTotals = readCampaignTotals(localStorage);
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
@@ -304,6 +308,7 @@ function renderCampaignList(rows, activeAlerts) {
   const lineCount = groups.reduce((sum, group) => sum + group.lines.length, 0);
   document.querySelector("#campaign-list-context").textContent = groups.length ? `${groups.length} campaign${groups.length === 1 ? "" : "s"} · ${lineCount} line${lineCount === 1 ? "" : "s"} · select a row for line-item performance` : "No campaigns match the current filters";
   document.querySelector("#toggle-all-campaigns").hidden = groups.length === 0;
+  syncAuditButton();
   document.querySelector("#toggle-all-campaigns").textContent = groups.length && groups.every(group => expandedCampaigns.has(group.key)) ? "Collapse all" : "Expand all";
   const options = { spendView: selectedSource, period };
   container.innerHTML = groups.map(group => {
@@ -314,21 +319,33 @@ function renderCampaignList(rows, activeAlerts) {
     const critical = groupAlerts.some(alert => alert.severity === "critical");
     const cells = keys.map(key => `<span class="metric-cell" draggable="true" data-metric="${key}" title="Drag to reorder"><small>${escapeHtml(metricLabel(key))}</small><strong class="${key === "pacing" ? paceClass(totals.pacing) : ""}">${escapeHtml(formatMetric(key, totals[key]))}</strong></span>`).join("");
     const labels = keys.map(key => `<span>${escapeHtml(metricLabel(key))}</span>`).join("");
+    // Report lines named "Flight N" take their dates from the matching placement of the campaign's insertion orders.
+    const placementMatches = matchLinesToPlacements(group.lines, campaignPlacements(campaignTotals[group.key]));
+    const auditOptions = line => ({ placement: placementMatches.get(line) || null, order: placementMatches.get(line)?.order || null });
     const lineRows = group.lines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
       const lineMetrics = line.kind === "flight" ? { budget: line.budget } : computeMetrics(line.kind === "record" ? line.record : line, { ...options, period: line.kind === "record" ? period : "current" });
       const index = campaigns.indexOf(line.record);
-      const dates = line.startDate && line.endDate ? `${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}` : "";
+      const placement = placementMatches.get(line) || null;
+      const shownStart = line.startDate || placement?.startDate || null;
+      const shownEnd = line.endDate || placement?.endDate || null;
+      const fromIo = !line.startDate && Boolean(placement);
+      const dates = shownStart && shownEnd ? `${escapeHtml(shownStart)} → ${escapeHtml(shownEnd)}${fromIo ? " · from IO" : ""}` : "";
+      const lineStatus = line.kind === "record" ? dashboardFlightStatus({ ...line.record, startDate: shownStart || line.record.startDate, endDate: shownEnd || line.record.endDate }) : null;
       const meta = [dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
       const lineSelectKey = stableLineKey(line);
       const lineChecked = selectionFor(group.key).has(lineSelectKey);
-      return `<div class="campaign-line${lineChecked ? " selected" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${dashboardFlightStatus(line.record)}">${lineStatusLabel(dashboardFlightStatus(line.record))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>`;
+      return `<div class="campaign-line${lineChecked ? " selected" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}`;
     }).join("");
+    const auditSummary = !auditMode ? "" : (() => {
+      const gaps = group.lines.filter(line => auditLine(line, auditOptions(line)).missing.some(label => ["Spend", "Budget", "Impressions", "Clicks", "CTR"].includes(label))).length;
+      return gaps ? ` · ${gaps} line${gaps === 1 ? "" : "s"} missing data` : " · all lines complete";
+    })();
     return `<article class="campaign-card${open ? " open" : ""}" data-group-key="${escapeHtml(group.key)}" style="--metric-count:${keys.length}">
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
         <button class="campaign-toggle" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}">›</button>
         <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
-        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${group.lines.length} line${group.lines.length === 1 ? "" : "s"}${campaignTotals[group.key] ? " · budget from IO" : ""}</small></span>
+        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${group.lines.length} line${group.lines.length === 1 ? "" : "s"}${campaignTotals[group.key] ? ` · budget from ${campaignTotals[group.key].orders.length > 1 ? `${campaignTotals[group.key].orders.length} IOs` : "IO"}` : ""}${auditSummary}</small></span>
         ${cells}
         <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
@@ -336,6 +353,26 @@ function renderCampaignList(rows, activeAlerts) {
     </article>`;
   }).join("");
 }
+
+// --- Audit view: what each line carries and where it came from ---
+const AUDIT_MONEY = new Set(["Spend", "1st-party spend", "3rd-party spend", "Budget", "Revenue"]);
+function renderLineAudit(audit) {
+  const display = item => item.state === "missing" ? "missing" : item.value === null || item.value === undefined ? "—" : typeof item.value === "number" ? (AUDIT_MONEY.has(item.label) ? formatExactMoney(item.value) : formatCount(item.value)) : item.value;
+  return `<div class="campaign-line-audit"><p class="audit-source">${escapeHtml(audit.source)}${audit.dataThrough ? ` · data through ${escapeHtml(audit.dataThrough)}` : ""}${audit.system ? ` · ${escapeHtml(audit.system)}` : ""}</p><div class="audit-chips">${audit.chips.map(item => `<span class="audit-chip ${item.state}"><small>${escapeHtml(item.label)}</small>${escapeHtml(display(item))}</span>`).join("")}</div>${audit.notes.length ? `<ul class="audit-notes">${audit.notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}</div>`;
+}
+
+function syncAuditButton() {
+  const button = document.querySelector("#toggle-audit");
+  button.setAttribute("aria-pressed", String(auditMode));
+  button.textContent = auditMode ? "Hide audit" : "Audit data";
+  button.classList.toggle("active", auditMode);
+}
+document.querySelector("#toggle-audit").addEventListener("click", () => {
+  auditMode = !auditMode;
+  try { localStorage.setItem("northstar-audit-mode", auditMode ? "on" : "off"); } catch { /* the toggle still works for this session */ }
+  if (auditMode) lastCampaignGroups.forEach(group => expandedCampaigns.add(group.key));
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
 
 // --- Multi-select on campaign lines: bulk edit and bulk remove ---
 // Selections are stored by stable identity (not list position) so an import or removal can never point them at another line.
@@ -1985,7 +2022,8 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
     renderIoTotalsNote(campaigns[activeCampaignIndex]);
     renderCampaigns(document.querySelector("#client-filter").value);
     renderUndoButton();
-    showToast("Order totals applied", `Pacing now uses the ${formatExactMoney(io.budget)} order budget across ${targetName}'s lines.`);
+    const appliedEntry = campaignTotals[groupKey(campaigns[activeCampaignIndex])];
+    showToast("Order totals applied", `Pacing now uses ${appliedEntry.orders.length > 1 ? `${appliedEntry.orders.length} orders totalling ` : "the "}${formatExactMoney(appliedEntry.budget)} across ${targetName}'s lines.`);
     return;
   }
   const applied = applyIoToCampaign(campaigns[activeCampaignIndex], io, { fileName, selectedIds, setBudget: document.querySelector("#io-review-set-budget").checked });
@@ -2011,15 +2049,20 @@ function renderIoTotalsNote(campaign) {
   const entry = campaignTotals[groupKey(campaign)];
   note.hidden = !entry;
   if (!entry) return;
-  note.innerHTML = `Pacing for this campaign uses the order total ${escapeHtml(formatExactMoney(entry.budget))}${entry.startDate && entry.endDate ? ` · ${escapeHtml(entry.startDate)} → ${escapeHtml(entry.endDate)}` : ""}${entry.order ? ` · ${escapeHtml(entry.order)}` : ""}<button type="button" id="remove-io-totals">Remove</button>`;
+  const many = entry.orders.length > 1;
+  note.innerHTML = `Pacing for this campaign uses ${many ? `${entry.orders.length} orders totalling` : "the order total"} ${escapeHtml(formatExactMoney(entry.budget))}${entry.startDate && entry.endDate ? ` · ${escapeHtml(entry.startDate)} → ${escapeHtml(entry.endDate)}` : ""}<span class="io-order-chips">${entry.orders.map(order => `<span class="io-order-chip">${escapeHtml(order.order || order.fileName || "Order")} · ${escapeHtml(formatExactMoney(order.budget))}<button type="button" data-remove-order="${escapeHtml(order.order || "")}" aria-label="Remove order ${escapeHtml(order.order || order.fileName || "")}" title="Remove this order">×</button></span>`).join("")}</span><button type="button" id="remove-io-totals">${many ? "Remove all" : "Remove"}</button>`;
 }
 
 document.querySelector("#io-totals-note").addEventListener("click", event => {
-  if (!event.target.closest("#remove-io-totals") || activeCampaignIndex === null) return;
+  const oneOrder = event.target.closest("[data-remove-order]");
+  if (!(oneOrder || event.target.closest("#remove-io-totals")) || activeCampaignIndex === null) return;
   const record = campaigns[activeCampaignIndex];
-  campaignTotals = writeCampaignTotals(localStorage, removeCampaignTotals(campaignTotals, groupKey(record)));
+  const key = groupKey(record);
+  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: oneOrder ? `removing order ${oneOrder.dataset.removeOrder} from ${campaignGroupName(record)}` : `removing the insertion orders from ${campaignGroupName(record)}` }));
+  campaignTotals = writeCampaignTotals(localStorage, oneOrder ? removeOrderFromTotals(campaignTotals, key, oneOrder.dataset.removeOrder) : removeCampaignTotals(campaignTotals, key));
   renderIoTotalsNote(record);
   renderCampaigns(document.querySelector("#client-filter").value);
+  renderUndoButton();
 });
 
 function refreshBudgetAndFlights(campaign) {

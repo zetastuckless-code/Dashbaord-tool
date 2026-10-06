@@ -40,6 +40,8 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 27 | Switch the spend chart to **Daily**. | Bars per day against a dashed baseline, with a note giving baseline, last-7-day average, and the daily spend needed from today. |
 | 28 | Import a report that contains two or three campaigns (for example the Rent A Center workbook) and attach two IO PDFs at once with **Attach IOs (PDF)…**. | One block per campaign; each IO is matched to its campaign; confirming creates the campaigns with the orders applied, and one **Undo** reverses everything. |
 | 29 | Choose **Upload / revise IO** and select two IO PDFs. | A dialog lists each order with its matched campaign; assigning both to one campaign is refused; applying adds a single Undo step. |
+| 30 | Apply an IO as totals to a campaign whose report lines are named Flight 1, Flight 2, … | Each line shows its flight dates marked *from IO* and a Completed / Live / Scheduled status. |
+| 31 | Press **Audit data**. | Each line gets a source/fields panel; missing fields are red and the campaign header counts lines with missing data. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture
