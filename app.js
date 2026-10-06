@@ -44,7 +44,7 @@ import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
 import { pacingBand } from "./lib/client-rollup.js";
 import { applyAssignments, assignmentKey, initialChoices, KEEP, lineLabel, readAssignments, rememberAssignments, SKIP } from "./lib/import-assignment.js";
-import { applySetupEdits, rowForCreatedCampaign, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
+import { applySetupEdits, rowsForCreatedGroup, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
 import { mergeCampaignImports } from "./lib/import-merge.js";
 import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
@@ -935,6 +935,12 @@ dialog.addEventListener("close", resetImportForm);
 document.querySelectorAll('input[name="import-mode"]').forEach(input => input.addEventListener("change", () => {
   if (pendingValidatedImport?.result) renderImportPreview(effectiveImport().campaigns);
 }));
+let allowDuplicateOnce = false;
+validationResult.addEventListener("click", event => {
+  if (!event.target.closest("#import-anyway")) return;
+  allowDuplicateOnce = true;
+  validateButton.click();
+});
 validateButton.addEventListener("click", async () => {
   const file = fileInput.files[0];
   if (!file) return;
@@ -944,13 +950,15 @@ validateButton.addEventListener("click", async () => {
   document.querySelector("#mapping-review").hidden = true;
   const fileBytes = await file.arrayBuffer();
   const fingerprint = await fingerprintBytes(fileBytes);
-  if (hasSuccessfulFingerprint(importHistory, fingerprint)) {
+  if (hasSuccessfulFingerprint(importHistory, fingerprint) && !allowDuplicateOnce) {
     recordImport(file.name, fingerprint, "Duplicate", 0, ["This exact report has already been imported."]);
     showValidationResult(["This exact report has already been imported. No dashboard data was changed."], "error");
+    validationResult.insertAdjacentHTML("beforeend", '<p class="duplicate-hint">Imported only part of it (for example from New campaign)? Importing again is safe: rows already in the dashboard are updated, not duplicated. <button type="button" class="text-button" id="import-anyway">Import it again anyway</button></p>');
     validateButton.textContent = "Validate report";
     validateButton.disabled = false;
     return;
   }
+  allowDuplicateOnce = false;
   let report;
   try {
     report = await readReportFile(file, fileBytes);
@@ -1150,13 +1158,7 @@ const SETUP_FIELDS = [
 const SINGLE_LINE_FIELDS = [["campaignId", "Stable campaign ID", "text"], ["startDate", "Start date", "date"], ["endDate", "End date", "date"], ["budget", "Approved budget", "text"]];
 
 function importGroups() {
-  const groups = new Map();
-  for (const row of pendingValidatedImport.result.campaigns) {
-    const key = groupKey(row);
-    if (!groups.has(key)) groups.set(key, { key, name: campaignGroupName(row), client: row.client, rows: [] });
-    groups.get(key).rows.push(row);
-  }
-  return [...groups.values()];
+  return groupReportRows(pendingValidatedImport.result.campaigns);
 }
 
 /** Applies a campaign-level setup edit to one of its rows: shared fields everywhere, and a rename keeps each line's label. */
@@ -1446,10 +1448,23 @@ document.querySelector("#new-campaign-report-multi-note").addEventListener("clic
   validateButton.click();
 });
 
-// --- Create a campaign from a performance report (fills the setup form, then imports the report's numbers) ---
+// --- Create a campaign from a performance report (fills the setup form, then imports the campaign's lines) ---
 let pendingReportForCreate = null;
 
-function fillCreateFormFromRow(row) {
+/** Rows grouped by the campaign they belong to ("Drive To Store — Flight 1" and "— Flight 2" are one campaign). */
+function groupReportRows(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = groupKey(row);
+    if (!groups.has(key)) groups.set(key, { key, name: campaignGroupName(row), client: row.client, rows: [] });
+    groups.get(key).rows.push(row);
+  }
+  return [...groups.values()];
+}
+
+function fillCreateFormFromGroup(group) {
+  // A campaign with several lines is created under its campaign name; each line keeps the budget and numbers the report gives it.
+  const row = { ...group.rows[0], name: group.rows.length > 1 ? group.name : group.rows[0].name };
   const fields = setupFieldsFromRow(row);
   const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
   set("#new-campaign-client", fields.client);
@@ -1465,7 +1480,24 @@ function fillCreateFormFromRow(row) {
   set("#new-campaign-kpi", fields.kpi);
   set("#new-campaign-target", fields.target);
   set("#new-campaign-report-cadence", fields.reportCadence);
+  // A report with no flight dates should not block creating the campaign; the dates can come from an insertion order.
+  const undated = !fields.startDate && !fields.endDate;
+  document.querySelector("#new-campaign-start").required = !undated;
+  document.querySelector("#new-campaign-end").required = !undated;
   syncBudgetSourceFields();
+  renderCreateReportNote(group, undated);
+}
+
+function renderCreateReportNote(group, undated) {
+  const pending = pendingReportForCreate;
+  const note = document.querySelector("#new-campaign-report-multi-note");
+  const others = pending.groups.length - 1;
+  const parts = [];
+  if (pending.groups.length > 1) parts.push(`This report holds ${pending.groups.length} campaigns. <button type="button" class="text-button" id="new-campaign-report-multi">Set up all ${pending.groups.length} campaigns from this report</button> (each with its own setup and insertion order), or create just the one selected below.`);
+  parts.push(`${group.rows.length === 1 ? "The 1 line" : `All ${group.rows.length} lines`} of “${escapeHtml(group.name)}” will be imported with it${others ? `; the other ${others} campaign${others === 1 ? "" : "s"} in this report stay available to import afterwards` : ""}.`);
+  if (undated) parts.push("This report has no flight dates, so they are optional here; apply an insertion order later to add them.");
+  note.innerHTML = parts.join(" ");
+  note.hidden = false;
 }
 
 document.querySelector("#new-campaign-report").addEventListener("change", async event => {
@@ -1475,6 +1507,8 @@ document.querySelector("#new-campaign-report").addEventListener("change", async 
   pendingReportForCreate = null;
   rowLabel.hidden = true;
   document.querySelector("#new-campaign-report-multi-note").hidden = true;
+  document.querySelector("#new-campaign-start").required = true;
+  document.querySelector("#new-campaign-end").required = true;
   error.hidden = true;
   if (!file) return;
   const fail = message => { error.textContent = message; error.hidden = false; event.target.value = ""; };
@@ -1487,21 +1521,17 @@ document.querySelector("#new-campaign-report").addEventListener("change", async 
     if (report.kind) return fail("That file is a daily-delivery or line-item report, which adds data to a campaign that already exists. Create the campaign first, or use a campaign summary report here.");
     const result = validateCampaignCsv(report.csvText);
     if (!result.valid) return fail(result.errors.join(" "));
-    pendingReportForCreate = { file, fileName: file.name, fingerprint, rows: result.campaigns, warnings: result.warnings };
-    const campaignCount = new Set(result.campaigns.map(groupKey)).size;
-    const multiNote = document.querySelector("#new-campaign-report-multi-note");
-    multiNote.hidden = campaignCount < 2;
-    multiNote.innerHTML = `This report holds ${campaignCount} campaigns. <button type="button" class="text-button" id="new-campaign-report-multi">Set up all ${campaignCount} campaigns from this report</button> (each with its own setup and insertion order), or pick one below to create it here.`;
-    document.querySelector("#new-campaign-report-row").innerHTML = result.campaigns.map((row, index) => `<option value="${index}">${escapeHtml(row.client)} · ${escapeHtml(row.name)}</option>`).join("");
-    rowLabel.hidden = result.campaigns.length < 2;
-    fillCreateFormFromRow(result.campaigns[0]);
+    pendingReportForCreate = { file, fileName: file.name, fingerprint, rows: result.campaigns, groups: groupReportRows(result.campaigns), warnings: result.warnings };
+    document.querySelector("#new-campaign-report-row").innerHTML = pendingReportForCreate.groups.map((group, index) => `<option value="${index}">${escapeHtml(group.client)} · ${escapeHtml(group.name)}${group.rows.length > 1 ? ` (${group.rows.length} lines)` : ""}</option>`).join("");
+    rowLabel.hidden = pendingReportForCreate.groups.length < 2;
+    fillCreateFormFromGroup(pendingReportForCreate.groups[0]);
   } catch (caught) {
     fail(`Could not read this report: ${caught.message}`);
   }
 });
 
 document.querySelector("#new-campaign-report-row").addEventListener("change", event => {
-  if (pendingReportForCreate) fillCreateFormFromRow(pendingReportForCreate.rows[Number(event.target.value)]);
+  if (pendingReportForCreate) fillCreateFormFromGroup(pendingReportForCreate.groups[Number(event.target.value)]);
 });
 
 function renderImportPreview(importedCampaigns) {
@@ -1554,6 +1584,8 @@ document.querySelector("#create-campaign-button").addEventListener("click", () =
   document.querySelector("#create-campaign-form").reset();
   document.querySelector("#create-campaign-error").hidden = true;
   pendingReportForCreate = null;
+  document.querySelector("#new-campaign-start").required = true;
+  document.querySelector("#new-campaign-end").required = true;
   document.querySelector("#new-campaign-report-row-label").hidden = true;
   document.querySelector("#new-campaign-report-multi-note").hidden = true;
   if (clientScope) document.querySelector("#new-campaign-client").value = clientScope;
@@ -1569,11 +1601,12 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
     startDate: document.querySelector("#new-campaign-start").value, endDate: document.querySelector("#new-campaign-end").value,
     budget: document.querySelector("#new-campaign-budget").value, budgetSource: document.querySelector("#new-campaign-budget-source").value, billingSource: document.querySelector("#new-campaign-billing-source").value,
     kpi: document.querySelector("#new-campaign-kpi").value, target: document.querySelector("#new-campaign-target").value,
-    reportCadence: document.querySelector("#new-campaign-report-cadence").value, ioFileName: ioFile?.name
+    reportCadence: document.querySelector("#new-campaign-report-cadence").value, ioFileName: ioFile?.name, allowUndated: Boolean(pendingReportForCreate)
   });
   const error = document.querySelector("#create-campaign-error");
   if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
   let withIo = result.campaign;
+  let importedFromReport = null;
   if (pendingIoForCreate?.mode === "totals") {
     campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(result.campaign), pendingIoForCreate.io, pendingIoForCreate.fileName));
   } else if (pendingIoForCreate) {
@@ -1582,13 +1615,18 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
   pendingIoForCreate = null;
   if (pendingReportForCreate) {
     // The report's numbers join the campaign as if it had been imported, with the same restore point and history entry.
-    const { fileName, fingerprint, rows, warnings } = pendingReportForCreate;
-    const row = rows[Number(document.querySelector("#new-campaign-report-row").value) || 0];
-    const key = campaignImportKey({ ...withIo, source: row.source });
-    writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: 1, campaignKeys: [key] }));
-    campaigns.push({ ...withIo, source: row.source, sources: [row.source] });
-    campaigns = mergeCampaignImports(campaigns, [rowForCreatedCampaign(row, withIo)]).campaigns;
-    recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", 1, [], [key], warnings);
+    const { fileName, fingerprint, groups, warnings } = pendingReportForCreate;
+    const group = groups[Number(document.querySelector("#new-campaign-report-row").value) || 0];
+    const built = rowsForCreatedGroup(group.rows, { ...withIo, source: group.rows[0].source, sources: [group.rows[0].source] }, document.querySelector("#new-campaign-name").value);
+    const keys = built.rows.map(campaignImportKey);
+    writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: built.rows.length, campaignKeys: keys }));
+    campaigns.push(built.created);
+    campaigns = mergeCampaignImports(campaigns, built.rows).campaigns;
+    // Only the chosen campaign was imported. If the report holds others, the file must stay importable.
+    const remaining = groups.length - 1;
+    if (remaining > 0) recordImport(fileName, fingerprint, "Partially imported", built.rows.length, [], keys, [`${built.rows.length} line${built.rows.length === 1 ? "" : "s"} of “${group.name}” imported; ${remaining} other campaign${remaining === 1 ? "" : "s"} in this report not imported yet.`, ...warnings]);
+    else recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", built.rows.length, [], keys, warnings);
+    importedFromReport = { lines: built.rows.length, remaining, fileName };
     pendingReportForCreate = null;
   } else {
     campaigns.push(withIo);
@@ -1598,7 +1636,7 @@ document.querySelector("#create-campaign-form").addEventListener("submit", event
   renderCampaigns();
   createCampaignDialog.close();
   document.querySelector("#toast-title").textContent = "Campaign created";
-  document.querySelector("#toast-message").textContent = `${result.campaign.name} is ready for report imports.`;
+  document.querySelector("#toast-message").textContent = importedFromReport ? `${result.campaign.name} was created with ${importedFromReport.lines} line${importedFromReport.lines === 1 ? "" : "s"} from ${importedFromReport.fileName}${importedFromReport.remaining ? `. The other ${importedFromReport.remaining} campaign${importedFromReport.remaining === 1 ? "" : "s"} in that report can still be imported.` : "."}` : `${result.campaign.name} is ready for report imports.`;
   const toast = document.querySelector("#toast"); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3200);
 });
 document.querySelector("#alert-settings-button").addEventListener("click", () => {
@@ -2200,7 +2238,7 @@ function renderImportHistory() {
   container.innerHTML = importHistory.slice(0, 3).map(record => {
     const date = new Date(record.importedAt);
     const statusClass = record.status.toLowerCase().replace(/\s+/g, "-");
-    const imported = ["Imported", "Imported with warnings"].includes(record.status);
+    const imported = ["Imported", "Imported with warnings", "Partially imported"].includes(record.status);
     const detail = imported ? `${record.rowCount} row${record.rowCount === 1 ? "" : "s"}${record.warnings?.[0] ? ` · ${record.warnings[0]}` : ""}` : record.status === "Superseded" ? "Replaced by a corrected report" : record.status === "Reverted" ? record.warnings?.[0] || "Import was undone" : record.errors[0] || "No data changed";
     return `<div class="history-item"><span class="history-file">▤</span><span><strong>${escapeHtml(record.fileName)}</strong><small>${escapeHtml(detail)} · ${date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></span><em class="history-status ${statusClass}">${record.status}</em></div>`;
   }).join("");

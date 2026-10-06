@@ -98,3 +98,5 @@ body.client-view .topbar h1{max-width:60vw}
 .audit-notes{margin:8px 0 0;padding-left:16px;font-size:10px;color:#8a5516}.audit-notes li{margin:2px 0}
 #toggle-audit.active{background:#efeeff;border-radius:6px;padding:2px 8px}
 .io-order-chips{display:inline-flex;flex-wrap:wrap;gap:5px;margin-left:8px}.io-order-chip{display:inline-flex;align-items:center;gap:4px;border-radius:7px;background:#fff;border:1px solid #d9d4fb;padding:1px 4px 1px 7px;font-size:9px}.io-order-chip button{margin:0;border:0;background:none;color:#ad4050;cursor:pointer;font-size:12px;line-height:1;padding:0 2px}
+
+.history-status.partially-imported{color:#a65f19;background:#fff3e5}.duplicate-hint{margin:10px 0 0;font-size:10px;line-height:1.5}.duplicate-hint button{font-size:10px}

@@ -42,6 +42,7 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 29 | Choose **Upload / revise IO** and select two IO PDFs. | A dialog lists each order with its matched campaign; assigning both to one campaign is refused; applying adds a single Undo step. |
 | 30 | Apply an IO as totals to a campaign whose report lines are named Flight 1, Flight 2, … | Each line shows its flight dates marked *from IO* and a Completed / Live / Scheduled status. |
 | 31 | Press **Audit data**. | Each line gets a source/fields panel; missing fields are red and the campaign header counts lines with missing data. |
+| 32 | In **New campaign**, pull details from a report with several campaigns, create one, then import the same file. | All lines of the chosen campaign come in; the file shows as *Partially imported*; the full import afterwards updates that campaign and adds the rest, with no duplicates. |
 | 14 | In Chrome or Edge, choose **Import report → Connect folder** and pick a folder holding the alpha CSVs. | Valid files import; daily files with unmatched campaigns appear under **Needs review**; **Undo last import** reverts the whole sync batch. |
 
 ## Feedback to capture
