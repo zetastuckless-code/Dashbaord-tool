@@ -961,7 +961,7 @@ confirmImportButton.addEventListener("click", () => {
   const effectiveRows = effectiveImport().campaigns;
   rememberAssignments(localStorage, result.campaigns, pendingValidatedImport.choices);
   if (setupErrors().length) return;
-  const mergeResult = previewCampaignImport(campaigns, effectiveRows, importMode);
+  const mergeResult = previewCampaignImport(campaigns, effectiveRows.map(row => ({ ...row, sourceFile: fileName })), importMode);
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
   campaigns = mergeResult.campaigns;
   const appliedOrders = applyAttachedImportIos(fileName);

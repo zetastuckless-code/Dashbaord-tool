@@ -127,3 +127,23 @@ test("ignores a later flight that has not delivered yet", () => {
   const [merged] = mergeNativeCampaigns([flight("2026-09-07", 300), flight("2026-12-31", 0)]);
   assert.equal(merged.spend, 300);
 });
+
+test("uses ad-server impressions (matching Clicks and CTR), keeps DSP impressions separately, and records the source row", () => {
+  const rows = [
+    [null, null, "Line", "Impressions", "Clicks", "CTR", "DCM Spend", "DSP Impression", "DSP Spend", "IO Budget"],
+    [null, "Flight 1", "Display", 6_567_625, 144, 0.0000219, 21_344.78, 2_892_266, 9_399.86, 20_782.86],
+    [null, "Flight 2", "Display", 9_432_378, 245, 0.000026, 30_655.23, null, null, 20_782.86]
+  ];
+  const [one, two] = extractPerformanceSummaryCampaigns(rows, { sheetName: "Hyperlocal", fileName: "RAC Report.xlsx" });
+  assert.deepEqual([one.impressions, one.dsp_impressions, one.source_sheet, one.source_row], [6_567_625, 2_892_266, "Hyperlocal", 2]);
+  assert.deepEqual([two.impressions, two.dsp_impressions, two.source_row], [9_432_378, "", 3]);
+  const result = validateCampaignCsv(rowsToCsv([Object.keys(one), Object.values(one), Object.values(two)]));
+  assert.equal(result.valid, true);
+  assert.deepEqual([result.campaigns[0].dspImpressions, result.campaigns[0].sourceSheet, result.campaigns[0].sourceRow, result.campaigns[1].dspImpressions], [2_892_266, "Hyperlocal", 2, undefined]);
+});
+
+test("falls back to DSP impressions when a row has no ad-server impressions", () => {
+  const rows = [[null, null, "Line", "Impressions", "Clicks", "DSP Impression", "DSP Spend", "IO Budget"], [null, "Flight 1", "Display", null, 10, 5_000, 100, 500]];
+  const [campaign] = extractPerformanceSummaryCampaigns(rows, { sheetName: "S", fileName: "x.xlsx" });
+  assert.equal(campaign.impressions, 5_000);
+});
