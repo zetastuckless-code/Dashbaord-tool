@@ -42,3 +42,14 @@ test("stores an optional billing CPM and rejects invalid values", () => {
   assert.equal(applyCampaignSettings(campaign, { ...base, billingCpm: "-1" }).valid, false);
   assert.equal(applyCampaignSettings(campaign, { ...base, billingCpm: "abc" }).valid, false);
 });
+
+test("flight dates are saved when passed, validated, and left alone when not passed", () => {
+  const dated = { ...campaign, startDate: "2026-01-01", endDate: "2026-06-30" };
+  const base = { name: "Name", kpi: "CTR", value: "1%", target: "2%", billingSource: "first" };
+  assert.deepEqual([dated.startDate, applyCampaignSettings(dated, base).campaign.endDate], ["2026-01-01", "2026-06-30"]);
+  const moved = applyCampaignSettings(dated, { ...base, startDate: "2026-01-01", endDate: "2026-12-31" });
+  assert.deepEqual([moved.valid, moved.campaign.startDate, moved.campaign.endDate], [true, "2026-01-01", "2026-12-31"]);
+  assert.equal(applyCampaignSettings(dated, { ...base, startDate: "2026-01-01", endDate: "" }).campaign.endDate, null);
+  assert.equal(applyCampaignSettings(dated, { ...base, startDate: "2026-02-01", endDate: "2026-01-01" }).valid, false);
+  assert.equal(applyCampaignSettings(dated, { ...base, startDate: "2026-02-30", endDate: "2026-03-01" }).valid, false);
+});

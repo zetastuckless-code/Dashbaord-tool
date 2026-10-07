@@ -21,7 +21,7 @@
 
         <nav class="nav-list">
           <a class="nav-item active" id="nav-overview" href="./" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
-          <a class="nav-item" href="#campaigns"><span class="nav-icon">◫</span>Campaigns</a>
+          <a class="nav-item" href="#campaign-list"><span class="nav-icon">◫</span>Campaigns</a>
           <a class="nav-item" href="#reports"><span class="nav-icon">↗</span>Reports</a>
           <a class="nav-item" href="#alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
         </nav>
@@ -65,7 +65,6 @@
             <button class="icon-button notification" aria-label="Notifications">♢<span></span></button>
             <button class="secondary-button" id="workspace-backup-button">Backup</button>
             <button class="secondary-button" id="export-dashboard-button">Export CSV</button>
-            <button class="secondary-button" id="create-campaign-button">New campaign</button>
             <button class="secondary-button" id="client-io-button" type="button">Upload / revise IO</button>
             <input id="client-io-input" type="file" accept=".pdf,application/pdf" multiple hidden />
             <button class="primary-button" id="upload-button"><span>＋</span> Import report</button>
@@ -212,18 +211,12 @@
           </article>
         </section>
 
-        <section class="panel campaign-panel" id="campaigns">
-          <div class="panel-header campaign-header">
-            <div><h2>Campaign performance</h2><p>Live performance and pacing across your portfolio</p></div>
-            <button class="secondary-button" id="customize-columns-button">Customize columns</button>
+        <section class="panel client-documents" id="client-documents" aria-labelledby="client-documents-title" hidden>
+          <div class="panel-header">
+            <div><h2 id="client-documents-title">Uploads &amp; documents</h2><p id="client-documents-context">Reports and insertion orders added for this client</p></div>
+            <button class="secondary-button" id="client-documents-import" type="button">＋ Import report</button>
           </div>
-          <div class="table-wrap">
-            <table><caption class="sr-only">Campaign performance, pacing, KPI, source, and freshness</caption>
-              <thead><tr><th>Client / campaign</th><th data-column="status">Status</th><th data-column="spend">Spend</th><th data-column="budget">Budget</th><th data-column="pacing">Pacing</th><th data-column="kpi" id="campaign-kpi-heading">Primary KPI</th><th data-column="source">Source</th><th data-column="updated">Updated</th><th></th></tr></thead>
-              <tbody id="campaign-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-footer"><span id="campaign-count">Showing 4 active campaigns</span><button class="text-button">View all campaigns →</button></div>
+          <div class="document-list" id="client-document-list"></div>
         </section>
       </main>
     </div>
@@ -252,9 +245,33 @@
 
     <dialog id="upload-dialog" aria-labelledby="upload-title">
       <form method="dialog" class="dialog-card">
-        <div class="dialog-header"><div><p class="eyebrow">DATA IMPORT</p><h2 id="upload-title">Import a performance report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
-        <p>Select an Excel or CSV report to validate before any data is added to the dashboard. Your existing data remains unchanged until validation succeeds.</p>
-        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong>Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
+        <div class="dialog-header"><div><p class="eyebrow">DATA IMPORT</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <p>Choose where the report goes, then the report itself. It is validated before any data is added to the dashboard, and your existing data stays unchanged until you confirm.</p>
+        <fieldset class="import-target" id="import-target">
+          <legend>Where does this report go?</legend>
+          <label><input type="radio" name="import-target" value="existing" checked /><span><strong>An existing campaign</strong><small>Add the report to a campaign you already track.</small></span></label>
+          <label><input type="radio" name="import-target" value="new" /><span><strong>A new campaign</strong><small>Set it up from the report, or fill in its setup yourself.</small></span></label>
+        </fieldset>
+        <label class="import-target-campaign" id="import-target-campaign-label">Campaign<select id="import-target-campaign" aria-label="Existing campaign"></select></label>
+        <section class="new-campaign-setup" id="new-campaign-setup" hidden aria-labelledby="new-campaign-setup-title">
+          <div class="detail-section-heading"><h3 id="new-campaign-setup-title">New campaign setup</h3><small>Choose a report below and its setup is read from it. Or fill this in, create the campaign, and add its report next.</small></div>
+          <div class="settings-grid campaign-create-grid">
+            <label>Client<input id="new-campaign-client" autocomplete="off" /></label><label>Campaign name<input id="new-campaign-name" autocomplete="off" /></label>
+            <label>Stable source campaign ID<input id="new-campaign-id" autocomplete="off" placeholder="CM360 or DSP campaign ID" /></label><label>Campaign owner<input id="new-campaign-owner" autocomplete="off" placeholder="Campaign manager" /></label>
+            <label class="wide">Channel<input id="new-campaign-channel" autocomplete="off" placeholder="Display, video, paid social…" /></label>
+            <label>Start date<input id="new-campaign-start" type="date" /></label><label>End date<input id="new-campaign-end" type="date" /></label>
+            <label>Budget source<select id="new-campaign-budget-source"><option value="manual">Enter manually</option><option value="io">From an insertion order</option><option value="report">Read from reports</option></select></label>
+            <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" autocomplete="off" placeholder="250000" /><small id="new-campaign-budget-hint" class="field-hint"></small></label>
+            <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
+            <label>Primary KPI<input id="new-campaign-kpi" autocomplete="off" placeholder="VCR" /></label><label>KPI target<input id="new-campaign-target" autocomplete="off" placeholder="70%" /></label>
+            <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            <label class="wide" id="new-campaign-io-label">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
+          </div>
+          <p class="revision-disclaimer">The prototype retains the IO filename and setup metadata locally; production will store the document securely.</p>
+          <p class="settings-error" id="create-campaign-error" hidden></p>
+          <div class="new-campaign-actions"><button class="secondary-button" id="create-campaign-submit" type="button">Create campaign</button></div>
+        </section>
+        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
         <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
         <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
         <div class="validation-result" id="validation-result" hidden role="status"></div>
@@ -310,49 +327,6 @@
         <p class="settings-error" id="alert-settings-error" hidden></p>
         <section class="acknowledgment-section"><div class="detail-section-heading"><span>Acknowledged alert conditions</span><small>Restore individual conditions to the active queue</small></div><div id="acknowledgment-list" class="acknowledgment-list"></div></section>
         <div class="dialog-actions"><button class="text-button" id="reset-acknowledged-alerts" type="button">Reset acknowledged alerts</button><button class="secondary-button close-alert-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Save rules</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="create-campaign-dialog" aria-labelledby="create-campaign-title">
-      <form class="dialog-card" id="create-campaign-form">
-        <div class="dialog-header"><div><p class="eyebrow">CAMPAIGN SETUP</p><h2 id="create-campaign-title">Create a campaign</h2></div><button class="close-button close-create-campaign-dialog" type="button" aria-label="Close">×</button></div>
-        <p>Set the approved budget and KPI before importing performance data.</p>
-        <div class="settings-grid campaign-create-grid">
-          <label>Client<input id="new-campaign-client" required /></label><label>Campaign name<input id="new-campaign-name" required /></label>
-          <label>Stable source campaign ID<input id="new-campaign-id" placeholder="CM360 or DSP campaign ID" /></label><label>Campaign owner<input id="new-campaign-owner" placeholder="Campaign manager" /></label>
-          <label class="wide">Channel<input id="new-campaign-channel" placeholder="Display, video, paid social…" /></label>
-          <label>Start date<input id="new-campaign-start" type="date" required /></label><label>End date<input id="new-campaign-end" type="date" required /></label>
-          <label>Budget source<select id="new-campaign-budget-source"><option value="manual">Enter manually</option><option value="io">From an insertion order</option><option value="report">Read from reports</option></select></label>
-          <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" placeholder="250000" /><small id="new-campaign-budget-hint" class="field-hint"></small></label>
-          <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
-          <label>Primary KPI<input id="new-campaign-kpi" placeholder="VCR" required /></label><label>KPI target<input id="new-campaign-target" placeholder="70%" required /></label>
-          <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-          <label class="wide" id="new-campaign-report-label">Pull details from a report (optional)<input id="new-campaign-report" type="file" accept=".xlsx,.csv,text/csv" /><small class="field-hint">Fills in this form from a performance report. Nothing is imported here; add the report afterwards with Import report.</small></label>
-          <p class="field-hint wide" id="new-campaign-report-multi-note" hidden></p>
-          <label class="wide" id="new-campaign-report-row-label" hidden>Campaign in this report<select id="new-campaign-report-row"></select></label>
-          <label class="wide" id="new-campaign-io-label">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
-        </div>
-        <p class="revision-disclaimer">The prototype retains the IO filename and setup metadata locally; production will store the document securely.</p>
-        <p class="settings-error" id="create-campaign-error" hidden></p>
-        <div class="dialog-actions"><button class="secondary-button close-create-campaign-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Create campaign</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="column-dialog" aria-labelledby="column-settings-title">
-      <form class="dialog-card" id="column-settings-form">
-        <div class="dialog-header"><div><p class="eyebrow">TABLE SETTINGS</p><h2 id="column-settings-title">Customize campaign columns</h2></div><button class="close-button close-column-dialog" type="button" aria-label="Close">×</button></div>
-        <p>Choose the performance fields shown in your campaign overview. Client and campaign always remain visible.</p>
-        <div class="column-options">
-          <label><input type="checkbox" name="campaign-column" value="status" />Status</label>
-          <label><input type="checkbox" name="campaign-column" value="spend" />Spend</label>
-          <label><input type="checkbox" name="campaign-column" value="budget" />Budget</label>
-          <label><input type="checkbox" name="campaign-column" value="pacing" />Pacing</label>
-          <label><input type="checkbox" name="campaign-column" value="kpi" />Primary KPI</label>
-          <label><input type="checkbox" name="campaign-column" value="source" />Source and discrepancy</label>
-          <label><input type="checkbox" name="campaign-column" value="updated" />Last updated</label>
-        </div>
-        <p class="settings-error" id="column-settings-error" hidden></p>
-        <div class="dialog-actions"><button class="secondary-button close-column-dialog" type="button">Cancel</button><button class="primary-button" type="submit">Apply columns</button></div>
       </form>
     </dialog>
 
@@ -456,6 +430,9 @@
           <label class="wide">Stable source campaign ID<input id="campaign-id-input" autocomplete="off" placeholder="CM360 or DSP campaign ID" /></label>
           <label class="wide">Campaign owner<input id="campaign-owner-input" autocomplete="off" placeholder="Campaign manager" /></label>
           <label class="wide">Channel<input id="campaign-channel-input" autocomplete="off" placeholder="Display, video, paid social…" /></label>
+          <label>Flight start<input id="campaign-start-input" type="date" /></label>
+          <label>Flight end<input id="campaign-end-input" type="date" /></label>
+          <div class="wide io-flight-fields" id="io-flight-fields" hidden><div class="settings-grid"><label>Order flight start (used for pacing)<input id="io-start-input" type="date" /></label><label>Order flight end (used for pacing)<input id="io-end-input" type="date" /></label></div><small class="field-hint">This campaign is paced on its insertion orders, so the pacing flight is set here. Clear both dates to go back to the orders' own dates.</small></div>
           <label>Billing CPM ($, optional)<input id="billing-cpm-input" type="number" min="0" step="0.01" placeholder="Used when daily reports have no cost" /></label>
           <label>Billing source<select id="billing-source-input"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
           <label>Expected report<select id="report-cadence-input"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>

@@ -98,3 +98,12 @@ test("a partly imported report does not block importing the rest, and is flagged
   const health = evaluateDataHealth([partial], new Date(partial.importedAt));
   assert.deepEqual([health.state, health.title], ["warning", "Part of a report imported"]);
 });
+
+test("a single line joining a campaign keeps the budget that was typed in; several lines keep the report's budgets", () => {
+  const manual = createCampaign({ ...setupFieldsFromRow(dts[0]), name: "Drive To Store", budgetSource: "manual", budget: "90000", allowUndated: true }).campaign;
+  const groups = groupCampaigns([manual]);
+  const one = applyAssignments([dts[0]], { [assignmentKey(dts[0])]: groupKey(manual) }, groups).campaigns[0];
+  assert.deepEqual([one.budget, one.budgetSource], [90000, "manual"]);
+  const two = applyAssignments(dts, Object.fromEntries(dts.map(row => [assignmentKey(row), groupKey(manual)])), groups).campaigns;
+  assert.deepEqual(two.map(row => row.budget), [5000, 5000]);
+});

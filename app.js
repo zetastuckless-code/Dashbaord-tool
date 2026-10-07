@@ -5,7 +5,9 @@ import { applyCampaignSettings } from "./lib/campaign-settings.js";
 import { budgetRevisionHistory, createBudgetRevision, exportBudgetRevisionsCsv, latestBudgetRevision } from "./lib/budget-revisions.js";
 import { DEFAULT_ALERT_RULES, evaluateCampaignAlerts, validateAlertRules } from "./lib/alert-engine.js";
 import { createCampaign } from "./lib/campaign-creation.js";
-import { readColumnPreferences, writeColumnPreferences } from "./lib/column-preferences.js";
+import { readColumnPreferences } from "./lib/column-preferences.js";
+import { DOCUMENT_KINDS, listClientDocuments, removeClientDocument } from "./lib/client-documents.js";
+import { makeUpload } from "./lib/uploads.js";
 import { readReportFile, rowsToCsv } from "./lib/workbook-import.js";
 import { evaluateDataHealth } from "./lib/data-health.js";
 import { calculatePortfolioPacing, calculateSpendPacing, campaignFlightStatus, effectivePacing } from "./lib/spend-pacing.js";
@@ -35,10 +37,10 @@ import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
-import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { auditLine } from "./lib/line-audit.js";
-import { campaignGroupName, groupKey } from "./lib/campaign-groups.js";
+import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
@@ -105,8 +107,6 @@ const BUDGET_HINTS = {
 function syncBudgetSourceFields() {
   const source = document.querySelector("#new-campaign-budget-source").value;
   document.querySelector("#new-campaign-budget-hint").textContent = BUDGET_HINTS[source];
-  document.querySelector("#new-campaign-budget").required = source !== "report";
-  document.querySelector("#new-campaign-io").required = source === "io";
   document.querySelector("#new-campaign-io-label").firstChild.textContent = source === "io" ? "Approved insertion order (required)" : "Insertion order (optional)";
 }
 document.querySelector("#new-campaign-budget-source").addEventListener("change", syncBudgetSourceFields);
@@ -125,39 +125,13 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
   const rows = sortCampaigns(filteredRows, { mode: document.querySelector("#campaign-sort")?.value, spendView: selectedSource });
   const period = document.querySelector("#period-filter")?.value || "current";
-  document.querySelector("#campaign-rows").innerHTML = rows.map(campaign => {
-    const discrepancy = discrepancyStatus(campaign);
-    const pacing = effectivePacing({ ...campaign, spend: resolveSpend(campaign, "billing") });
-    const pacingLabel = pacing === null ? "—" : Number(pacing.toFixed(1));
-    const pacingStatus = pacing === null ? "Not started" : pacing > 105 ? "High" : pacing < 85 ? "Low" : "On track";
-    const pacingWarning = pacing !== null && (pacing < 85 || pacing > 105);
-    const status = dashboardFlightStatus(campaign);
-    const statusLabel = { live: "Live", scheduled: "Scheduled", completed: "Completed", archived: "Archived" }[status];
-    const campaignIndex = campaigns.indexOf(campaign);
-    const selectedPeriodSpend = period === "current" ? resolveSpend(campaign, selectedSource) : periodSpend(campaign, period);
-    const selectedKpi = resolveKpiView(campaign, document.querySelector("#kpi-view")?.value, period === "current" ? campaign : periodMetrics(campaign, period));
-    return `
-    <tr>
-      <td><button class="campaign-name campaign-detail-button" data-campaign-index="${campaignIndex}"><span class="client-mark ${campaign.className}">${escapeHtml(campaign.short)}</span><span><strong>${escapeHtml(campaign.name)}</strong><small>${escapeHtml(campaign.client)}</small></span></button></td>
-      <td data-column="status"><span class="status-${status}">${statusLabel}</span></td>
-      <td data-column="spend"><strong>${selectedPeriodSpend === null ? "—" : formatMoney(selectedPeriodSpend)}</strong></td>
-      <td data-column="budget">${hasBudget(campaign) ? formatMoney(campaign.budget) : '<span class="warning-text">Needed</span>'}</td>
-      <td data-column="pacing" class="pacing-cell"><div class="pacing-value"><strong class="${paceClass(pacing)}">${pacingLabel}${pacing === null ? "" : "%"}</strong><span class="${paceClass(pacing)}">${pacingStatus}</span></div><div class="mini-track ${pacingWarning ? "warn" : ""}"><span style="width:${Math.min(pacing || 0, 100)}%"></span></div></td>
-      <td data-column="kpi" class="kpi"><strong>${escapeHtml(selectedKpi?.formatted || "—")} ${escapeHtml(selectedKpi?.metric || document.querySelector("#kpi-view")?.value || campaign.kpi)}</strong><small>${escapeHtml(selectedKpi?.target || (period === "current" ? "Required components unavailable" : "Period components unavailable"))}</small></td>
-      <td data-column="source"><span class="source-tag ${campaign.source === "CM360" ? "third" : ""}">${escapeHtml((campaign.sources || [campaign.source]).join(" + "))}</span>${discrepancy.flagged ? `<small class="variance-flag">! ${discrepancy.label}</small>` : ""}</td>
-      <td data-column="updated">${escapeHtml(campaign.updated)}</td>
-      <td><button class="row-button" aria-label="Options for ${escapeHtml(campaign.name)}">•••</button></td>
-    </tr>`;
-  }).join("");
   const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
   const selectedKpiView = document.querySelector("#kpi-view")?.value || "primary";
   const portfolioKpi = aggregateKpiView(activeRows, selectedKpiView);
-  document.querySelector("#campaign-kpi-heading").textContent = selectedKpiView === "primary" ? "Primary KPI" : selectedKpiView;
   document.querySelector("#portfolio-kpi-label").textContent = portfolioKpi.metric;
   document.querySelector("#portfolio-kpi-value").textContent = portfolioKpi.formatted;
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
   renderSpendChart(activeRows);
-  document.querySelector("#campaign-count").textContent = `Showing ${rows.length} campaign${rows.length === 1 ? "" : "s"} · ${activeRows.length} live`;
   const activeUnits = budgetUnits(activeRows, campaignTotals);
   const budget = unitsBudget(activeUnits);
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
@@ -178,13 +152,13 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   portfolioStatus.textContent = portfolio.pacing === null ? "No pacing data" : portfolio.pacing > alertRules.overPacing ? "Above plan" : portfolio.pacing < alertRules.underPacing ? "Below plan" : "On track";
   portfolioStatus.className = `status-pill ${portfolio.pacing !== null && (portfolio.pacing > alertRules.overPacing || portfolio.pacing < alertRules.underPacing) ? "warning" : "good"}`;
   document.querySelector("#portfolio-pacing-target").textContent = `Target: ${alertRules.underPacing}–${alertRules.overPacing}%`;
-  applyColumnVisibility();
   renderAlerts(rows);
   const portfolioRows = filterCampaigns(campaigns, { client: "all", status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
   renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateAlerts(portfolioRows), acknowledgedAlertIds), filter);
   renderCampaignList(matchingRows, activeAlerts);
   applyClientScopeChrome();
   renderClientNav();
+  renderClientDocuments();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -712,10 +686,6 @@ document.querySelector("#export-spend-trend").addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
-function applyColumnVisibility() {
-  document.querySelectorAll("[data-column]").forEach(cell => { cell.hidden = !visibleColumns.includes(cell.dataset.column); });
-}
-
 function refreshClientFilter() {
   const select = document.querySelector("#client-filter");
   const selected = select.value;
@@ -850,8 +820,6 @@ document.querySelectorAll(".segmented button").forEach(button => button.addEvent
 const dialog = document.querySelector("#upload-dialog");
 const campaignDialog = document.querySelector("#campaign-dialog");
 const alertDialog = document.querySelector("#alert-dialog");
-const createCampaignDialog = document.querySelector("#create-campaign-dialog");
-const columnDialog = document.querySelector("#column-dialog");
 const workspaceBackupDialog = document.querySelector("#workspace-backup-dialog");
 const importAuditDialog = document.querySelector("#import-audit-dialog");
 const savedViewsDialog = document.querySelector("#saved-views-dialog");
@@ -890,11 +858,7 @@ document.querySelector("#reset-workspace").addEventListener("click", () => {
   resetWorkspaceStorage(localStorage);
   window.location.reload();
 });
-document.querySelectorAll("#upload-button, #upload-nav").forEach(button => button.addEventListener("click", () => {
-  resetImportForm();
-  renderImportHistory();
-  dialog.showModal();
-}));
+document.querySelectorAll("#upload-button, #upload-nav, #client-documents-import").forEach(button => button.addEventListener("click", () => openImportDialog()));
 const fileInput = document.querySelector("#file-input");
 const filePreview = document.querySelector("#file-preview");
 const validateButton = document.querySelector("#validate-button");
@@ -914,6 +878,7 @@ fileInput.addEventListener("change", () => {
   selectedFile = file;
   document.querySelector("#file-name").textContent = file.name;
   filePreview.hidden = false;
+  syncImportTarget();
   if (!/\.(csv|xlsx)$/i.test(file.name)) {
     showValidationResult(["Choose a .csv or .xlsx report."], "error");
     validateButton.disabled = true;
@@ -952,7 +917,7 @@ validateButton.addEventListener("click", async () => {
   if (hasSuccessfulFingerprint(importHistory, fingerprint) && !allowDuplicateOnce) {
     recordImport(file.name, fingerprint, "Duplicate", 0, ["This exact report has already been imported."]);
     showValidationResult(["This exact report has already been imported. No dashboard data was changed."], "error");
-    validationResult.insertAdjacentHTML("beforeend", '<p class="duplicate-hint">Imported only part of it (for example from New campaign)? Importing again is safe: rows already in the dashboard are updated, not duplicated. <button type="button" class="text-button" id="import-anyway">Import it again anyway</button></p>');
+    validationResult.insertAdjacentHTML("beforeend", '<p class="duplicate-hint">Removed it from the client\u2019s uploads, or imported only part of it? Importing again is safe: rows already in the dashboard are updated, not duplicated. <button type="button" class="text-button" id="import-anyway">Import it again anyway</button></p>');
     validateButton.textContent = "Validate report";
     validateButton.disabled = false;
     return;
@@ -986,7 +951,9 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
-  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: initialChoices(result.campaigns, readAssignments(localStorage), groupCampaigns(campaigns)), groupEdits: {}, groupIo: {}, unmatchedIos: [], skippedLines: new Set() };
+  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: defaultImportChoices(result.campaigns), groupEdits: {}, groupIo: {}, unmatchedIos: [], skippedLines: new Set() };
+  // A report started as a new campaign opens each campaign's setup for review.
+  if (importTargetMode() === "new") pendingValidatedImport.openSetup = new Set(importGroups().map(group => group.key));
   normalizeLineSkips();
   renderImportAssignments();
   const effectiveRows = effectiveImport().campaigns;
@@ -1006,9 +973,12 @@ confirmImportButton.addEventListener("click", () => {
   const effectiveRows = effectiveImport().campaigns;
   rememberAssignments(localStorage, result.campaigns, { ...pendingValidatedImport.choices, ...Object.fromEntries([...pendingValidatedImport.skippedLines].map(key => [key, SKIP])) });
   if (setupErrors().length) return;
-  const mergeResult = previewCampaignImport(campaigns, effectiveRows.map(row => ({ ...row, sourceFile: fileName })), importMode);
+  const uploadedAt = new Date().toISOString();
+  const shellGroups = new Set(campaigns.filter(isPlaceholder).map(groupKey));
+  const mergeResult = previewCampaignImport(campaigns, effectiveRows.map(row => ({ ...row, sourceFile: fileName, uploads: [makeUpload({ kind: "report", fileName, source: row.source, date: row.dataAsOf || null, uploadedAt })] })), importMode);
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
-  campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows);
+  // Lines that join a campaign set up beforehand do not own it, so removing their report keeps the campaign.
+  campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows).map(record => shellGroups.has(groupKey(record)) && record.uploads ? { ...record, uploads: record.uploads.map(upload => upload.fileName === fileName ? { ...upload, created: false } : upload) } : record);
   const appliedOrders = applyAttachedImportIos(fileName);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   const importStatus = result.warnings.length ? "Imported with warnings" : "Imported";
@@ -1038,11 +1008,12 @@ function handleLineItemReport(file, fingerprint, report) {
   document.querySelector(".import-mode").hidden = true;
   document.querySelector("#mapping-review").hidden = true;
   renderLineItemPreview();
+  presetTargetLinks();
 }
 
 function renderLineItemPreview() {
   const { parsed, links, report } = pendingValidatedImport;
-  const result = applyLineItems(campaigns, parsed, links);
+  const result = applyLineItems(campaigns, parsed, links, { fileName: pendingValidatedImport.fileName });
   pendingValidatedImport.lineResult = result;
   const attached = result.matched.reduce((sum, item) => sum + item.count, 0);
   const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
@@ -1097,11 +1068,12 @@ function handleDailyReport(file, fingerprint, report) {
   document.querySelector(".import-mode").hidden = true;
   document.querySelector("#mapping-review").hidden = true;
   renderDailyPreview();
+  presetTargetLinks();
 }
 
 function renderDailyPreview() {
   const { parsed, links, report } = pendingValidatedImport;
-  const result = applyDailyDelivery(campaigns, parsed, links);
+  const result = applyDailyDelivery(campaigns, parsed, links, { fileName: pendingValidatedImport.fileName });
   pendingValidatedImport.dailyResult = result;
   const days = result.matched.reduce((sum, item) => sum + item.days, 0);
   const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
@@ -1455,21 +1427,7 @@ document.querySelector("#multi-io-form").addEventListener("submit", event => {
   showToast("Insertion orders applied", `${applied.length} order${applied.length === 1 ? "" : "s"} applied (${applied.map(item => item.name).join(", ")}). Use Undo to revert them together.`);
 });
 
-document.querySelector("#new-campaign-report-multi-note").addEventListener("click", event => {
-  if (!event.target.closest("#new-campaign-report-multi") || !pendingReportForCreate) return;
-  const { file } = pendingReportForCreate;
-  createCampaignDialog.close();
-  document.querySelector("#upload-button").click();
-  const transfer = new DataTransfer();
-  transfer.items.add(file);
-  fileInput.files = transfer.files;
-  fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-  validateButton.click();
-});
-
-// --- Create a campaign from a performance report (fills the setup form, then imports the campaign's lines) ---
-let pendingReportForCreate = null;
-
+// --- One import flow: pick where the report goes (an existing campaign or a new one), then the report itself ---
 /** Rows grouped by the campaign they belong to ("Drive To Store — Flight 1" and "— Flight 2" are one campaign). */
 function groupReportRows(rows) {
   const groups = new Map();
@@ -1481,77 +1439,80 @@ function groupReportRows(rows) {
   return [...groups.values()];
 }
 
-function fillCreateFormFromGroup(group) {
-  // A campaign with several lines is created under its campaign name; each line keeps the budget and numbers the report gives it.
-  const row = { ...group.rows[0], name: group.rows.length > 1 ? group.name : group.rows[0].name };
-  const fields = setupFieldsFromRow(row);
-  const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
-  set("#new-campaign-client", fields.client);
-  set("#new-campaign-name", fields.name);
-  set("#new-campaign-id", fields.campaignId);
-  set("#new-campaign-owner", fields.owner);
-  set("#new-campaign-channel", fields.channel);
-  set("#new-campaign-start", fields.startDate);
-  set("#new-campaign-end", fields.endDate);
-  set("#new-campaign-budget", fields.budget);
-  set("#new-campaign-budget-source", "report");
-  set("#new-campaign-billing-source", fields.billingSource);
-  set("#new-campaign-kpi", fields.kpi);
-  set("#new-campaign-target", fields.target);
-  set("#new-campaign-report-cadence", fields.reportCadence);
-  // A report with no flight dates should not block creating the campaign; the dates can come from an insertion order.
-  const undated = !fields.startDate && !fields.endDate;
-  document.querySelector("#new-campaign-start").required = !undated;
-  document.querySelector("#new-campaign-end").required = !undated;
-  syncBudgetSourceFields();
-  renderCreateReportNote(group, undated);
+const importTargetMode = () => document.querySelector('input[name="import-target"]:checked')?.value || "existing";
+const importTargetGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign) && (!clientScope || campaign.client === clientScope)));
+/** The campaign picked up front, or null when the report should decide (or a new campaign is being set up). */
+const specificImportTarget = () => {
+  if (importTargetMode() !== "existing") return null;
+  const value = document.querySelector("#import-target-campaign").value;
+  return value && value !== "__auto" ? value : null;
+};
+
+function renderImportTargets(selected = "__auto") {
+  const groups = importTargetGroups();
+  const select = document.querySelector("#import-target-campaign");
+  select.innerHTML = `<option value="__auto">Let the report decide (match by name)</option>${groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(clientScope ? group.name : `${group.client} · ${group.name}`)}</option>`).join("")}`;
+  select.value = groups.some(group => group.key === selected) ? selected : "__auto";
 }
 
-function renderCreateReportNote(group, undated) {
-  const pending = pendingReportForCreate;
-  const note = document.querySelector("#new-campaign-report-multi-note");
-  const others = pending.groups.length - 1;
-  const parts = [];
-  if (pending.groups.length > 1) parts.push(`This report holds ${pending.groups.length} campaigns. <button type="button" class="text-button" id="new-campaign-report-multi">Set up all ${pending.groups.length} campaigns from this report</button> (each with its own setup and insertion order), or create just the one selected below.`);
-  parts.push(`Only the setup is taken from this report; its numbers are not imported here. Afterwards, use <strong>Import report</strong> with the same file and ${group.rows.length === 1 ? "its line goes" : `its ${group.rows.length} lines go`} into this campaign${others ? ` (the other ${others} campaign${others === 1 ? "" : "s"} can be set up or imported then too)` : ""}.`);
-  if (undated) parts.push("This report has no flight dates, so they are optional here; apply an insertion order later to add them.");
-  note.innerHTML = parts.join(" ");
-  note.hidden = false;
+function syncImportTarget() {
+  const mode = importTargetMode();
+  document.querySelector("#import-target-campaign-label").hidden = mode !== "existing";
+  // The setup form is for a campaign with no report yet; once a report is chosen its setup comes from the report.
+  document.querySelector("#new-campaign-setup").hidden = !(mode === "new" && !selectedFile);
+  const client = document.querySelector("#new-campaign-client");
+  if (mode === "new" && clientScope && !client.value) client.value = clientScope;
+  document.querySelector("#import-dropzone-title").textContent = mode === "new" ? "Choose a report to set it up from (optional)" : "Choose a campaign report";
 }
 
-document.querySelector("#new-campaign-report").addEventListener("change", async event => {
-  const error = document.querySelector("#create-campaign-error");
-  const rowLabel = document.querySelector("#new-campaign-report-row-label");
-  const file = event.target.files[0];
-  pendingReportForCreate = null;
-  rowLabel.hidden = true;
-  document.querySelector("#new-campaign-report-multi-note").hidden = true;
-  document.querySelector("#new-campaign-start").required = true;
-  document.querySelector("#new-campaign-end").required = true;
-  error.hidden = true;
-  if (!file) return;
-  const fail = message => { error.textContent = message; error.hidden = false; event.target.value = ""; };
-  try {
-    if (file.size > 25 * 1024 * 1024) return fail("The selected file is larger than the 25 MB import limit.");
-    const bytes = await file.arrayBuffer();
-    const fingerprint = await fingerprintBytes(bytes);
-    if (hasSuccessfulFingerprint(importHistory, fingerprint)) return fail("This exact report has already been imported. Its campaigns are already in the dashboard.");
-    const report = await readReportFile(file, bytes);
-    if (report.kind) return fail("That file is a daily-delivery or line-item report, which adds data to a campaign that already exists. Create the campaign first, or use a campaign summary report here.");
-    const result = validateCampaignCsv(report.csvText);
-    if (!result.valid) return fail(result.errors.join(" "));
-    pendingReportForCreate = { file, fileName: file.name, fingerprint, rows: result.campaigns, groups: groupReportRows(result.campaigns), warnings: result.warnings };
-    document.querySelector("#new-campaign-report-row").innerHTML = pendingReportForCreate.groups.map((group, index) => `<option value="${index}">${escapeHtml(group.client)} · ${escapeHtml(group.name)}${group.rows.length > 1 ? ` (${group.rows.length} lines)` : ""}</option>`).join("");
-    rowLabel.hidden = pendingReportForCreate.groups.length < 2;
-    fillCreateFormFromGroup(pendingReportForCreate.groups[0]);
-  } catch (caught) {
-    fail(`Could not read this report: ${caught.message}`);
+/** Where each report line goes before the person changes anything: the picked campaign, a new campaign, or what the report matches. */
+function defaultImportChoices(rows) {
+  const remembered = initialChoices(rows, readAssignments(localStorage), groupCampaigns(campaigns));
+  const skips = Object.fromEntries(Object.entries(remembered).filter(([, choice]) => choice === SKIP));
+  if (importTargetMode() === "new") return skips;
+  const key = specificImportTarget();
+  if (!key) return remembered;
+  return { ...Object.fromEntries(rows.map(row => [assignmentKey(row), key])), ...skips };
+}
+
+/** A campaign picked up front takes every source campaign in a daily or line-item file that did not match on its own. */
+function presetTargetLinks() {
+  const pending = pendingValidatedImport;
+  const key = specificImportTarget();
+  if (!pending || !key) return;
+  const group = groupCampaigns(campaigns).find(item => item.key === key);
+  const index = group ? campaigns.indexOf(group.records[0]) : -1;
+  if (index < 0) return;
+  if (pending.kind === "daily" && pending.dailyResult.unmatched.length) {
+    pending.dailyResult.unmatched.forEach(entry => [entry.sourceCampaignId, entry.sourceCampaignName].map(value => String(value ?? "").trim().toLowerCase()).filter(Boolean).forEach(name => { pending.links[`${pending.parsed.source}::${name}`] = index; }));
+    renderDailyPreview();
+  } else if (pending.kind === "line-items" && pending.lineResult.unmatched.length) {
+    pending.lineResult.unmatched.forEach(entry => { pending.links[entry.key] = index; });
+    renderLineItemPreview();
   }
-});
+}
 
-document.querySelector("#new-campaign-report-row").addEventListener("change", event => {
-  if (pendingReportForCreate) fillCreateFormFromGroup(pendingReportForCreate.groups[Number(event.target.value)]);
-});
+function openImportDialog({ target } = {}) {
+  resetImportForm();
+  const mode = target || (importTargetGroups().length ? "existing" : "new");
+  renderImportTargets();
+  document.querySelector(`input[name="import-target"][value="${mode}"]`).checked = true;
+  syncImportTarget();
+  renderImportHistory();
+  dialog.showModal();
+}
+
+document.querySelectorAll('input[name="import-target"], #import-target-campaign').forEach(control => control.addEventListener("change", () => {
+  syncImportTarget();
+  const pending = pendingValidatedImport;
+  if (pending?.result) {
+    pending.choices = defaultImportChoices(pending.result.campaigns);
+    pending.openSetup = importTargetMode() === "new" ? new Set(importGroups().map(group => group.key)) : undefined;
+    normalizeLineSkips();
+    renderImportAssignments();
+    refreshImportAfterAssignment();
+  } else if (pending?.kind) presetTargetLinks();
+}));
 
 function renderImportPreview(importedCampaigns) {
   document.querySelector("#import-preview-title").textContent = "Import impact preview";
@@ -1585,73 +1546,49 @@ document.querySelector("#mobile-menu").addEventListener("click", event => {
   const open = document.querySelector(".sidebar").classList.toggle("open");
   event.currentTarget.setAttribute("aria-expanded", String(open));
 });
-document.querySelector("#customize-columns-button").addEventListener("click", () => {
-  document.querySelectorAll('input[name="campaign-column"]').forEach(input => { input.checked = visibleColumns.includes(input.value); });
-  document.querySelector("#column-settings-error").hidden = true;
-  columnDialog.showModal();
-});
-document.querySelectorAll(".close-column-dialog").forEach(button => button.addEventListener("click", () => columnDialog.close()));
-document.querySelector("#column-settings-form").addEventListener("submit", event => {
-  event.preventDefault();
-  const selected = [...document.querySelectorAll('input[name="campaign-column"]:checked')].map(input => input.value);
-  if (!selected.length) { const error = document.querySelector("#column-settings-error"); error.textContent = "Select at least one optional column."; error.hidden = false; return; }
-  visibleColumns = writeColumnPreferences(localStorage, selected);
-  applyColumnVisibility();
-  columnDialog.close();
-});
-document.querySelector("#create-campaign-button").addEventListener("click", () => {
-  document.querySelector("#create-campaign-form").reset();
+function clearNewCampaignFields() {
+  document.querySelectorAll("#new-campaign-setup input, #new-campaign-setup select").forEach(control => {
+    if (control.tagName === "SELECT") control.selectedIndex = 0; else control.value = "";
+  });
   document.querySelector("#create-campaign-error").hidden = true;
-  pendingReportForCreate = null;
-  document.querySelector("#new-campaign-start").required = true;
-  document.querySelector("#new-campaign-end").required = true;
-  document.querySelector("#new-campaign-report-row-label").hidden = true;
-  document.querySelector("#new-campaign-report-multi-note").hidden = true;
-  if (clientScope) document.querySelector("#new-campaign-client").value = clientScope;
-  createCampaignDialog.showModal();
-});
-document.querySelectorAll(".close-create-campaign-dialog").forEach(button => button.addEventListener("click", () => createCampaignDialog.close()));
-document.querySelector("#create-campaign-form").addEventListener("submit", event => {
-  event.preventDefault();
+  syncBudgetSourceFields();
+}
+
+/** Creates a campaign from the setup form (no report yet) and carries on to the report step with it selected. */
+function createCampaignFromSetup() {
   const ioFile = document.querySelector("#new-campaign-io").files[0];
+  const field = id => document.querySelector(id).value;
   const result = createCampaign({
-    client: document.querySelector("#new-campaign-client").value, name: document.querySelector("#new-campaign-name").value,
-    campaignId: document.querySelector("#new-campaign-id").value, owner: document.querySelector("#new-campaign-owner").value, channel: document.querySelector("#new-campaign-channel").value,
-    startDate: document.querySelector("#new-campaign-start").value, endDate: document.querySelector("#new-campaign-end").value,
-    budget: document.querySelector("#new-campaign-budget").value, budgetSource: document.querySelector("#new-campaign-budget-source").value, billingSource: document.querySelector("#new-campaign-billing-source").value,
-    kpi: document.querySelector("#new-campaign-kpi").value, target: document.querySelector("#new-campaign-target").value,
-    reportCadence: document.querySelector("#new-campaign-report-cadence").value, ioFileName: ioFile?.name, allowUndated: Boolean(pendingReportForCreate)
+    client: field("#new-campaign-client"), name: field("#new-campaign-name"), campaignId: field("#new-campaign-id"), owner: field("#new-campaign-owner"), channel: field("#new-campaign-channel"),
+    startDate: field("#new-campaign-start"), endDate: field("#new-campaign-end"),
+    budget: field("#new-campaign-budget"), budgetSource: field("#new-campaign-budget-source"), billingSource: field("#new-campaign-billing-source"),
+    kpi: field("#new-campaign-kpi"), target: field("#new-campaign-target"), reportCadence: field("#new-campaign-report-cadence"), ioFileName: ioFile?.name || pendingIoForCreate?.fileName
   });
   const error = document.querySelector("#create-campaign-error");
   if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
-  let withIo = result.campaign;
-  let importedFromReport = null;
+  let created = result.campaign;
   if (pendingIoForCreate?.mode === "totals") {
-    campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(result.campaign), pendingIoForCreate.io, pendingIoForCreate.fileName));
+    campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(created), pendingIoForCreate.io, pendingIoForCreate.fileName));
   } else if (pendingIoForCreate) {
-    withIo = applyIoToCampaign(result.campaign, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign;
+    created = applyIoToCampaign(created, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign;
   }
   pendingIoForCreate = null;
-  if (pendingReportForCreate) {
-    // The report's numbers join the campaign as if it had been imported, with the same restore point and history entry.
-    // The report only supplied the setup. Its numbers are not imported here, and the file is not marked as imported;
-    // instead its lines are set to go into this campaign when Import report is used.
-    const { fileName, groups } = pendingReportForCreate;
-    const group = groups[Number(document.querySelector("#new-campaign-report-row").value) || 0];
-    campaigns.push(withIo);
-    rememberAssignments(localStorage, group.rows, Object.fromEntries(group.rows.map(row => [assignmentKey(row), groupKey(withIo)])));
-    importedFromReport = { lines: group.rows.length, fileName };
-    pendingReportForCreate = null;
-  } else {
-    campaigns.push(withIo);
-  }
+  campaigns.push(created);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   refreshClientFilter();
   renderCampaigns();
-  createCampaignDialog.close();
-  document.querySelector("#toast-title").textContent = importedFromReport ? "Campaign set up" : "Campaign created";
-  document.querySelector("#toast-message").textContent = importedFromReport ? `${result.campaign.name} was set up from ${importedFromReport.fileName}. Use Import report with that file to add its ${importedFromReport.lines} line${importedFromReport.lines === 1 ? "" : "s"}; it is already set to go into this campaign.` : `${result.campaign.name} is ready for report imports.`;
-  const toast = document.querySelector("#toast"); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3200);
+  clearNewCampaignFields();
+  renderImportTargets(groupKey(created));
+  document.querySelector('input[name="import-target"][value="existing"]').checked = true;
+  syncImportTarget();
+  showToast("Campaign created", `${created.name} is ready. Choose its report below to add its numbers.`);
+}
+
+document.querySelector("#create-campaign-submit").addEventListener("click", createCampaignFromSetup);
+document.querySelector("#new-campaign-setup").addEventListener("keydown", event => {
+  if (event.key !== "Enter" || event.target.tagName !== "INPUT" || event.target.type === "file") return;
+  event.preventDefault();
+  createCampaignFromSetup();
 });
 document.querySelector("#alert-settings-button").addEventListener("click", () => {
   document.querySelector("#under-pacing-input").value = alertRules.underPacing;
@@ -1705,11 +1642,6 @@ document.querySelector("#reset-acknowledged-alerts").addEventListener("click", (
   document.querySelector("#toast-title").textContent = "Acknowledgments reset";
   document.querySelector("#toast-message").textContent = "Active conditions are visible in the alert queue again.";
   const toast = document.querySelector("#toast"); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3200);
-});
-document.querySelector("#campaign-rows").addEventListener("click", event => {
-  const button = event.target.closest(".campaign-detail-button");
-  if (!button) return;
-  openCampaignDialog(Number(button.dataset.campaignIndex));
 });
 document.querySelectorAll(".close-campaign-dialog").forEach(button => button.addEventListener("click", () => campaignDialog.close()));
 document.querySelector("#save-line-item-flight").addEventListener("click", () => {
@@ -1793,9 +1725,17 @@ document.querySelector("#campaign-settings-form").addEventListener("submit", eve
     billingCpm: document.querySelector("#billing-cpm-input").value,
     kpi: document.querySelector("#campaign-kpi-input").value,
     value: document.querySelector("#campaign-kpi-value-input").value,
-    target: document.querySelector("#campaign-kpi-target-input").value
+    target: document.querySelector("#campaign-kpi-target-input").value,
+    startDate: document.querySelector("#campaign-start-input").value,
+    endDate: document.querySelector("#campaign-end-input").value
   });
   const error = document.querySelector("#campaign-settings-error");
+  const totalsKey = groupKey(campaigns[activeCampaignIndex]);
+  const totalsEntry = campaignTotals[totalsKey];
+  const pacingStart = document.querySelector("#io-start-input").value;
+  const pacingEnd = document.querySelector("#io-end-input").value;
+  const flightEdited = Boolean(totalsEntry) && (pacingStart !== (totalsEntry.startDate || "") || pacingEnd !== (totalsEntry.endDate || ""));
+  if (result.valid && flightEdited && pacingStart && pacingEnd && pacingEnd < pacingStart) { result.valid = false; result.errors = ["Order flight end must be on or after its start."]; }
   if (!result.valid) {
     error.textContent = result.errors.join(" ");
     error.hidden = false;
@@ -1818,9 +1758,14 @@ document.querySelector("#campaign-settings-form").addEventListener("submit", eve
     }
     updatedCampaign = revision.campaign;
   }
+  const before = campaigns[activeCampaignIndex];
+  const datesChanged = (before.startDate || null) !== (updatedCampaign.startDate || null) || (before.endDate || null) !== (updatedCampaign.endDate || null) || flightEdited;
+  if (datesChanged) writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `changing the flight dates of ${updatedCampaign.name}` }));
+  if (flightEdited) campaignTotals = writeCampaignTotals(localStorage, setTotalsFlight(campaignTotals, totalsKey, pacingStart, pacingEnd));
   campaigns[activeCampaignIndex] = updatedCampaign;
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   renderCampaigns(document.querySelector("#client-filter").value);
+  renderUndoButton();
   campaignDialog.close();
   document.querySelector("#toast-title").textContent = "Campaign updated";
   document.querySelector("#toast-message").textContent = "Dashboard settings saved in this browser.";
@@ -1899,8 +1844,10 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#revision-io-input").value = "";
   document.querySelector("#campaign-settings-error").hidden = true;
   document.querySelector("#line-item-import-input").value = "";
-  document.querySelector("#line-item-start-input").value = campaign.startDate || "";
-  document.querySelector("#line-item-end-input").value = campaign.endDate || "";
+  document.querySelector("#campaign-start-input").value = campaign.startDate || "";
+  document.querySelector("#campaign-end-input").value = campaign.endDate || "";
+  document.querySelector("#line-item-start-input").value = "";
+  document.querySelector("#line-item-end-input").value = "";
   renderLineItemFlights(campaign);
   renderIoTotalsNote(campaign);
   campaignDialog.showModal();
@@ -2051,7 +1998,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   if (mode === "client" && !targetKey) {
     // A new campaign: open the setup form pre-filled from the order, still for this client.
     ioReviewDialog.close();
-    document.querySelector("#create-campaign-button").click();
+    openImportDialog({ target: "new" });
     prefillCreateFromIo(io, fileName, selectedIds, ioMode, clientScope);
     return;
   }
@@ -2100,6 +2047,9 @@ function renderIoTotalsNote(campaign) {
   const note = document.querySelector("#io-totals-note");
   const entry = campaignTotals[groupKey(campaign)];
   note.hidden = !entry;
+  document.querySelector("#io-flight-fields").hidden = !entry;
+  document.querySelector("#io-start-input").value = entry?.startDate || "";
+  document.querySelector("#io-end-input").value = entry?.endDate || "";
   if (!entry) return;
   const many = entry.orders.length > 1;
   note.innerHTML = `Pacing for this campaign uses ${many ? `${entry.orders.length} orders totalling` : "the order total"} ${escapeHtml(formatExactMoney(entry.budget))}${entry.startDate && entry.endDate ? ` · ${escapeHtml(entry.startDate)} → ${escapeHtml(entry.endDate)}` : ""}<span class="io-order-chips">${entry.orders.map(order => `<span class="io-order-chip">${escapeHtml(order.order || order.fileName || "Order")} · ${escapeHtml(formatExactMoney(order.budget))}<button type="button" data-remove-order="${escapeHtml(order.order || "")}" aria-label="Remove order ${escapeHtml(order.order || order.fileName || "")}" title="Remove this order">×</button></span>`).join("")}</span><button type="button" id="remove-io-totals">${many ? "Remove all" : "Remove"}</button>`;
@@ -2225,7 +2175,11 @@ function resetImportForm() {
   validateButton.textContent = "Validate report";
   confirmImportButton.disabled = true;
   pendingValidatedImport = null;
+  pendingIoForCreate = null;
+  document.querySelector("#create-campaign-error").hidden = true;
   document.querySelector('input[name="import-mode"][value="merge"]').checked = true;
+  syncBudgetSourceFields();
+  syncImportTarget();
 }
 
 function campaignImportKey(campaign) {
@@ -2257,6 +2211,49 @@ function renderImportHistory() {
     return `<div class="history-item"><span class="history-file">▤</span><span><strong>${escapeHtml(record.fileName)}</strong><small>${escapeHtml(detail)} · ${date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></span><em class="history-status ${statusClass}">${record.status}</em></div>`;
   }).join("");
 }
+
+// --- A client's upload history: every file uploaded for the account, with the option to remove any of them ---
+let lastClientDocuments = [];
+
+function documentDetail(doc) {
+  const when = doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString([], { dateStyle: "medium" }) : "";
+  const campaignsText = doc.campaigns.join(", ");
+  if (doc.kind === "io-order") return [doc.order, Number.isFinite(doc.budget) ? formatExactMoney(doc.budget) : "", doc.startDate && doc.endDate ? `${doc.startDate} → ${doc.endDate}` : "", campaignsText, when && `applied ${when}`].filter(Boolean).join(" · ");
+  const unit = doc.kind === "io-flights" ? "flight" : doc.kind === "daily" ? "line" : doc.kind === "line-items" ? "line" : "line";
+  return [`${doc.lines} ${unit}${doc.lines === 1 ? "" : "s"}`, campaignsText, doc.source && doc.kind !== "report" ? doc.source : "", doc.dataAsOf ? `data through ${doc.dataAsOf}` : "", when && `uploaded ${when}`, doc.legacy ? "added before uploads were tracked" : ""].filter(Boolean).join(" · ");
+}
+
+function renderClientDocuments() {
+  const panel = document.querySelector("#client-documents");
+  panel.hidden = !clientScope;
+  if (!clientScope) { lastClientDocuments = []; return; }
+  lastClientDocuments = listClientDocuments({ campaigns, totals: campaignTotals, client: clientScope });
+  document.querySelector("#client-documents-context").textContent = lastClientDocuments.length ? `${lastClientDocuments.length} upload${lastClientDocuments.length === 1 ? "" : "s"} for ${clientScope} · remove anything that was uploaded by mistake` : `Nothing has been uploaded for ${clientScope} yet`;
+  document.querySelector("#client-document-list").innerHTML = lastClientDocuments.length
+    ? lastClientDocuments.map(doc => `<div class="document-row"><span class="document-kind kind-${escapeHtml(doc.kind)}">${escapeHtml(DOCUMENT_KINDS[doc.kind] || doc.kind)}</span><span class="document-main"><strong>${escapeHtml(doc.fileName)}</strong><small>${escapeHtml(documentDetail(doc))}</small></span><button class="text-button destructive-text" type="button" data-remove-document="${escapeHtml(doc.id)}" aria-label="Remove ${escapeHtml(doc.fileName)}">Remove</button></div>`).join("")
+    : '<p class="history-empty">Reports and insertion orders you import for this client are listed here.</p>';
+}
+
+const DOCUMENT_REMOVAL_NOTES = {
+  report: "Lines this report brought in are removed; lines that later reports updated go back to the previous report's numbers.",
+  daily: "The days of delivery data from this file are removed.",
+  "line-items": "The line items from this file are removed.",
+  "io-order": "Pacing stops using this order's budget and flight.",
+  "io-flights": "The flights saved from this order are removed."
+};
+
+document.querySelector("#client-document-list").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-document]");
+  const doc = button ? lastClientDocuments.find(item => item.id === button.dataset.removeDocument) : null;
+  if (!doc) return;
+  applyRemoval(`removing ${doc.fileName} from ${clientScope}`, `Remove “${doc.fileName}” and the data it added for ${clientScope}?\n\n${DOCUMENT_REMOVAL_NOTES[doc.kind] || ""}`, () => {
+    const result = removeClientDocument({ campaigns, totals: campaignTotals, importHistory, client: clientScope, document: doc });
+    campaigns = result.campaigns;
+    campaignTotals = writeCampaignTotals(localStorage, result.totals);
+    importHistory = result.importHistory;
+    writeImportHistory(localStorage, importHistory);
+  });
+});
 
 // --- Undo (multi-step) and removals ---
 function showToast(title, message) {

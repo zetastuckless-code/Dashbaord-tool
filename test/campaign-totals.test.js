@@ -77,3 +77,15 @@ test("a spend-less placeholder from an IO is hidden once real lines join its cam
   assert.equal(joined.records.length, 2);
   assert.deepEqual(joined.lines.map(line => line.name), ["Standard Display"]);
 });
+
+test("an edited flight overrides the orders' dates, survives removing an order, and clears when emptied", async () => {
+  const { setCampaignTotals, setTotalsFlight, removeOrderFromTotals } = await import("../lib/campaign-totals.js");
+  const now = new Date("2026-10-06T12:00:00Z");
+  let totals = setCampaignTotals({}, "a::c", { orderNumber: "O-1", revision: "R1", budget: 100, startDate: "2026-01-01", endDate: "2026-03-01", lineItems: [] }, "a.pdf", now);
+  totals = setCampaignTotals(totals, "a::c", { orderNumber: "O-2", revision: "R1", budget: 50, startDate: "2026-03-02", endDate: "2026-04-01", lineItems: [] }, "b.pdf", now);
+  const edited = setTotalsFlight(totals, "a::c", "2026-01-01", "2026-12-31");
+  assert.deepEqual([edited["a::c"].startDate, edited["a::c"].endDate], ["2026-01-01", "2026-12-31"]);
+  assert.equal(removeOrderFromTotals(edited, "a::c", "O-2-R1")["a::c"].endDate, "2026-12-31");
+  assert.equal(setTotalsFlight(edited, "a::c", "", "")["a::c"].endDate, "2026-04-01");
+  assert.equal(setCampaignTotals(edited, "a::c", { orderNumber: "O-3", revision: "R1", budget: 10, startDate: "2026-05-01", endDate: "2026-06-01", lineItems: [] }, "c.pdf", now)["a::c"].endDate, "2026-06-01");  // a newly applied order brings its own dates
+});

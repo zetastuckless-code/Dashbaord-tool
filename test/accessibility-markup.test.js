@@ -2,13 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("provides landmark navigation, table context, and labelled dialogs", async () => {
+test("provides landmark navigation, labelled sections, and labelled dialogs", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /class="skip-link" href="#overview"/);
   assert.match(html, /<main[^>]+id="overview"[^>]+tabindex="-1"/);
-  assert.match(html, /<caption class="sr-only">Campaign performance/);
+  assert.match(html, /<section[^>]+id="client-documents"[^>]+aria-labelledby="client-documents-title"/);
+  assert.match(html, /<fieldset class="import-target"/);
   const dialogs = [...html.matchAll(/<dialog[^>]+aria-labelledby="([^"]+)"/g)];
-  assert.equal(dialogs.length, 12);
+  assert.equal(dialogs.length, 10);
   for (const [, labelId] of dialogs) assert.match(html, new RegExp(`<h2 id="${labelId}">`));
 });
 
