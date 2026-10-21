@@ -31,13 +31,6 @@ import { filterImportAudit, summarizeImportAudit } from "./lib/import-audit.js";
 import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from "./lib/saved-views.js";
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 
-const sampleCampaigns = [
-  { client: "Apex Athletics", owner: "Jordan Davis", channel: "Display", short: "AA", className: "apex", name: "Always On · Retargeting", spend: 184200, firstPartySpend: 184200, thirdPartySpend: 179600, billingSource: "1st party", budget: 240000, pacing: 112, kpi: "CPA", value: "$48.20", target: "Target $36.50", source: "1st party", updated: "8 min ago" },
-  { client: "Apex Athletics", owner: "Jordan Davis", channel: "Video", short: "AA", className: "apex", name: "Fall Video · Prospecting", spend: 221400, firstPartySpend: 216800, thirdPartySpend: 221400, billingSource: "CM360", budget: 380000, pacing: 101, kpi: "VCR", value: "74.8%", target: "Target 70%", source: "CM360", updated: "8 min ago" },
-  { client: "Lumon Home", owner: "Morgan Lee", channel: "Display", short: "LH", className: "lumon", name: "Fall Product Launch", spend: 146800, firstPartySpend: 128500, thirdPartySpend: 146800, billingSource: "CM360", budget: 280000, pacing: 79, kpi: "ROAS", value: "4.2×", target: "Target 3.5×", source: "CM360", updated: "1 hr ago" },
-  { client: "Nova Finance", owner: "Taylor Kim", channel: "Display", short: "NF", className: "nova", name: "Q3 Brand Awareness", spend: 131800, firstPartySpend: 131800, thirdPartySpend: 113100, billingSource: "1st party", budget: 340000, pacing: 96, kpi: "CTR", value: "0.82%", target: "Target 0.75%", source: "1st party", updated: "24 min ago" }
-];
-
 let campaigns = loadCampaigns();
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
@@ -56,9 +49,9 @@ let savedViews = readSavedViews(localStorage);
 function loadCampaigns() {
   try {
     const stored = JSON.parse(localStorage.getItem("northstar-campaigns"));
-    return Array.isArray(stored) && stored.length ? stored : sampleCampaigns;
+    return Array.isArray(stored) ? stored : [];
   } catch {
-    return sampleCampaigns;
+    return [];
   }
 }
 
@@ -81,7 +74,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
   const rows = sortCampaigns(filteredRows, { mode: document.querySelector("#campaign-sort")?.value, spendView: selectedSource });
   const period = document.querySelector("#period-filter")?.value || "current";
-  document.querySelector("#campaign-rows").innerHTML = rows.map(campaign => {
+  document.querySelector("#campaign-rows").innerHTML = !rows.length ? `<tr><td class="table-empty" colspan="9">${campaigns.length ? "No campaigns match the current filters." : "No campaigns yet. Use Import report to add your data."}</td></tr>` : rows.map(campaign => {
     const discrepancy = discrepancyStatus(campaign);
     const pacing = effectivePacing({ ...campaign, spend: resolveSpend(campaign, "billing") });
     const pacingLabel = pacing === null ? "—" : Number(pacing.toFixed(1));

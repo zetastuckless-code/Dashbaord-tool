@@ -103,7 +103,7 @@ Then open the repository's **Pull requests** tab, create a pull request from `da
 - Keep the active dashboard search, filters, sort, reporting period, and spend source across browser reloads, or restore the complete default portfolio with **Reset view**.
 - Save up to ten named portfolio views, reopen their complete filter and KPI configuration, replace a view by saving the same name, or delete views that are no longer needed.
 - Download a versioned JSON backup of the complete browser workspace—including campaigns, import history, alert settings, acknowledgments, columns, and dashboard filters—and restore it in another browser session only after validation succeeds.
-- Reset only Northstar-owned browser data back to the included demo portfolio after testing, with a confirmation warning and without clearing unrelated website storage.
+- Reset only Northstar-owned browser data to an empty workspace after testing, with a confirmation warning and without clearing unrelated website storage.
 - Switch the campaign table between each campaign's configured primary KPI and centrally calculated CTR, VCR, CPA, or ROAS; unavailable component-based KPIs display as unavailable instead of using unrelated reported values.
 - Review a portfolio-level KPI card calculated from the filtered live campaigns, with explicit data-coverage counts and a non-combined summary when campaigns use incompatible primary KPIs.
 - Plot actual cumulative spend from retained dated report snapshots against flight-aware planned spend; the chart carries campaign totals forward between report dates and shows an explicit empty state until enough history exists.

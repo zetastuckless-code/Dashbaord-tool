@@ -35,8 +35,8 @@
 
         <div class="sidebar-bottom">
           <div class="health-card" id="data-health-card" data-state="empty">
-            <div class="health-title"><span class="status-dot"></span><span id="data-health-title">Demo data</span></div>
-            <p id="data-health-detail">No reports imported</p>
+            <div class="health-title"><span class="status-dot"></span><span id="data-health-title">No data yet</span></div>
+            <p id="data-health-detail">Import a report to begin</p>
             <div class="health-row"><span>Last sync</span><strong id="data-health-sync">Not available</strong></div>
           </div>
           <div class="user-card">
@@ -74,9 +74,6 @@
             <label for="client-filter">Client</label>
             <select id="client-filter">
               <option value="all">All clients</option>
-              <option value="Apex Athletics">Apex Athletics</option>
-              <option value="Lumon Home">Lumon Home</option>
-              <option value="Nova Finance">Nova Finance</option>
             </select>
           </div>
           <div class="filter-group">
@@ -200,7 +197,7 @@
               <tbody id="campaign-rows"></tbody>
             </table>
           </div>
-          <div class="table-footer"><span id="campaign-count">Showing 4 active campaigns</span><button class="text-button">View all campaigns →</button></div>
+          <div class="table-footer"><span id="campaign-count">Showing 0 campaigns</span><button class="text-button">View all campaigns →</button></div>
         </section>
       </main>
     </div>
@@ -211,7 +208,7 @@
         <p>Download campaigns, preferences, alert settings, acknowledgments, and import history as JSON. Restoring replaces the workspace saved in this browser.</p>
         <div class="workspace-backup-actions"><button class="secondary-button" id="download-workspace-backup" type="button">Download backup</button><label class="secondary-button" for="workspace-backup-input">Choose backup file</label><input id="workspace-backup-input" type="file" accept=".json,application/json" hidden /></div>
         <p class="settings-error" id="workspace-backup-error" hidden></p>
-        <div class="workspace-danger-zone"><div><strong>Reset local workspace</strong><small>Remove imported campaigns, history, settings, saved views, and acknowledgments from this browser.</small></div><button class="text-button destructive-text" id="reset-workspace" type="button">Reset to demo data</button></div>
+        <div class="workspace-danger-zone"><div><strong>Reset local workspace</strong><small>Remove imported campaigns, history, settings, saved views, and acknowledgments from this browser.</small></div><button class="text-button destructive-text" id="reset-workspace" type="button">Reset workspace</button></div>
         <div class="dialog-actions"><button class="secondary-button close-workspace-backup" type="button">Cancel</button><button class="primary-button" id="restore-workspace-backup" type="submit" disabled>Restore workspace</button></div>
       </form>
     </dialog>

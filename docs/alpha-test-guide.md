@@ -6,7 +6,7 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 
 1. Run `npm install`, then `npm start`.
 2. Open <http://localhost:4173>.
-3. Select **Backup** and choose **Reset to demo data** if an earlier session changed the workspace.
+3. Select **Backup** and choose **Reset workspace** if an earlier session changed the workspace.
 
 ## Test sequence
 
@@ -21,7 +21,7 @@ This test pack uses synthetic data only. Do not substitute client reports until 
 | 7 | Choose **Undo last import**. | Campaign values and history return to the pre-correction state and a Reverted audit event is retained. |
 | 8 | Import `04-invalid-negative-spend.csv`. | Validation rejects the negative spend and enables validation-error CSV download. |
 | 9 | Save a named view, change filters, then reopen it. | The saved filters, spend source, KPI, period, search, and sort are restored. |
-| 10 | Download a workspace backup, reset to demo data, and restore the backup. | Imported campaigns, audit history, preferences, acknowledgments, and saved views return. |
+| 10 | Download a workspace backup, reset the workspace, and restore the backup. | Imported campaigns, audit history, preferences, acknowledgments, and saved views return. |
 
 ## Feedback to capture
 
