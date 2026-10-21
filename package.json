@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "start": "vite --host 0.0.0.0 --port 4173",
-    "build": "vite build && cp -R templates dist/templates",
+    "build": "vite build && node scripts/copy-templates.mjs",
     "test": "node --test",
-    "verify": "npm test && npm run build && test -f dist/templates/alpha/01-first-party-daily.csv"
+    "verify": "npm test && npm run build && node scripts/verify-build.mjs"
   },
   "dependencies": {
+    "pdfjs-dist": "^6.4.299",
     "read-excel-file": "^5.8.6",
     "vite": "^7.3.1"
   }

@@ -1,0 +1,12 @@
+Report Name,Daily Delivery (synthetic)
+Date/Time Generated,2026-09-30
+Date Range,2026-09-01 - 2026-09-03
+,
+Report Fields
+Date,Campaign,Campaign ID,Placement,Impressions,Clicks,Media Cost
+2026-09-01,Alpha Retargeting,900001,Site A,100000,300,420.00
+2026-09-01,Alpha Retargeting,900001,Site B,50000,120,210.00
+2026-09-02,Alpha Retargeting,900001,Site A,120000,360,500.00
+2026-09-03,Alpha Retargeting,900001,Site A,90000,270,380.00
+2026-09-03,Unknown Brand Display,900777,Site C,40000,80,150.00
+Grand Total,,,,400000,1130,1660.00

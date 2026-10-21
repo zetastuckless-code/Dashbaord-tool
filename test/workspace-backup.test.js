@@ -25,3 +25,25 @@ test("restores every workspace collection to browser storage", () => {
   restoreWorkspaceBackup(storage, backup);
   assert.deepEqual([...values.keys()].sort(), ["northstar-acknowledged-alerts", "northstar-alert-rules", "northstar-campaign-columns", "northstar-campaigns", "northstar-dashboard-view", "northstar-import-history", "northstar-saved-views"]);
 });
+
+test("carries per-campaign metric choices and still accepts older backups without them", () => {
+  const prefs = { defaults: ["spend"], byCampaign: { "a::b": ["spend", "vcr"] } };
+  const base = { campaigns: [], importHistory: [], alertRules: {}, visibleColumns: [], acknowledgedAlerts: [], dashboardView: {} };
+  const values = new Map();
+  const storage = { setItem: (key, value) => values.set(key, value) };
+  const withPrefs = validateWorkspaceBackup(createWorkspaceBackup({ ...base, metricPrefs: prefs })).backup;
+  restoreWorkspaceBackup(storage, withPrefs);
+  assert.deepEqual(JSON.parse(values.get("northstar-campaign-metrics")), prefs);
+  const legacy = validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base }));
+  assert.equal(legacy.valid, true);
+  assert.equal(validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base, metricPrefs: [] })).valid, false);
+});
+
+test("carries insertion-order campaign totals through a backup and rejects malformed ones", () => {
+  const totals = { "a::b": { budget: 600, startDate: "2026-09-01", endDate: "2026-09-30" } };
+  const base = { campaigns: [], importHistory: [], alertRules: {}, visibleColumns: [], acknowledgedAlerts: [], dashboardView: {} };
+  const values = new Map();
+  restoreWorkspaceBackup({ setItem: (key, value) => values.set(key, value) }, validateWorkspaceBackup(createWorkspaceBackup({ ...base, campaignTotals: totals })).backup);
+  assert.deepEqual(JSON.parse(values.get("northstar-campaign-totals")), totals);
+  assert.equal(validateWorkspaceBackup(JSON.stringify({ schemaVersion: 1, ...base, campaignTotals: [] })).valid, false);
+});
