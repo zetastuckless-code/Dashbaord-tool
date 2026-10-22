@@ -39,7 +39,7 @@
 .field-hint{display:block;margin-top:4px;font-size:9px;font-weight:500;text-transform:none;letter-spacing:0;color:#8d95a4}
 
 .campaign-list{margin-bottom:18px}.campaign-list-header{display:flex;justify-content:space-between;align-items:flex-end}.campaign-list-rows{display:grid;gap:10px}.campaign-card{background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);overflow:hidden}
-.campaign-card-head,.campaign-line,.campaign-lines-labels{display:grid;grid-template-columns:22px 72px minmax(190px,1.7fr) repeat(var(--metric-count,6),minmax(82px,1fr)) 84px;align-items:center;gap:8px;padding:12px 14px}
+.campaign-card-head,.campaign-line,.campaign-lines-labels{display:grid;grid-template-columns:22px 72px minmax(190px,1.7fr) repeat(var(--metric-count,6),minmax(82px,1fr)) 140px;align-items:center;gap:8px;padding:12px 14px}
 .campaign-card-head{cursor:pointer}.campaign-card-head:hover{background:#fafaff}.campaign-toggle{border:0;background:none;color:#8d95a4;font-size:16px;cursor:pointer;transition:transform .15s;padding:0}.campaign-card.open .campaign-toggle{transform:rotate(90deg)}
 .campaign-title strong,.campaign-title small{display:block}.campaign-title strong{font-size:12px;color:#293145}.campaign-title small{font-size:9px;color:#939baa;margin-top:2px}
 .metric-cell{text-align:right}.metric-cell small{display:block;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#9aa1af}.metric-cell strong{font-size:12px;color:#2d3548}.campaign-card-head .metric-cell small{margin-bottom:2px}
@@ -159,3 +159,8 @@ body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:no
 .source-when{font-size:11px;color:#596273;white-space:nowrap;text-align:right}.source-when.unknown{color:#a0a6b4;font-style:italic}
 @media(max-width:700px){.source-row{grid-template-columns:auto 1fr auto}.source-when{grid-column:2;grid-row:2;text-align:left}}
 .campaign-line.io-line{background:#fbfbfe}.plan-note{font-style:normal;font-weight:700;color:#b16a1f}
+.status-dot-label.paused{color:#9a651f}.status-dot-label.paused:before{background:#e3a04a}
+.campaign-move{display:inline-flex;gap:4px}.campaign-move .campaign-icon-button{width:26px;height:26px;font-size:12px}
+.campaign-lines-footer{display:flex;align-items:center;justify-content:flex-end;gap:14px;flex-wrap:wrap}
+.campaign-status-control{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:#596273;margin-right:auto}
+.campaign-status-control select{height:30px;border:1px solid #dfe2ea;border-radius:7px;background:#fff;padding:0 8px;font:600 12px "DM Sans",sans-serif;color:#30384b}

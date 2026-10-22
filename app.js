@@ -40,6 +40,7 @@ import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTo
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
 import { applyIoPlan, ioLines, recordLineLabel } from "./lib/io-plan.js";
+import { applyCampaignStatus, CAMPAIGN_ORDER_KEY, CAMPAIGN_STATUS_KEY, moveCampaign, orderGroups, readCampaignOrder, readCampaignStatus, setCampaignStatus } from "./lib/campaign-order.js";
 import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_KIND_OPTIONS } from "./lib/data-sources.js";
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
@@ -101,7 +102,7 @@ const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDig
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
   // The insertion order decides each line's dates and IO line; keep the stored lines in step with it.
-  const planned = applyIoPlan(campaigns, campaignTotals);
+  const planned = applyCampaignStatus(applyIoPlan(campaigns, campaignTotals), campaignStatus);
   if (planned !== campaigns) { campaigns = planned; localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns)); }
   // The client account view ignores the saved client filter and always shows that client only.
   if (clientScope && !campaigns.some(campaign => campaign.client === clientScope)) { clientScope = null; history.replaceState({}, "", location.pathname); }
@@ -259,18 +260,23 @@ let metricPrefs = readMetricPrefs(localStorage);
 let auditMode = false;
 try { auditMode = localStorage.getItem("northstar-audit-mode") === "on"; } catch { auditMode = false; }
 let campaignTotals = readCampaignTotals(localStorage);
+// Campaigns marked paused or completed by hand, and the order you put campaigns in (both views share it).
+let campaignStatus = readCampaignStatus(localStorage);
+let campaignOrder = readCampaignOrder(localStorage);
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
 let lastCampaignGroups = [];
 let metricPickerTarget = null;
 
 function lineStatusLabel(status) {
-  return { live: "Live", scheduled: "Scheduled", completed: "Completed", archived: "Archived" }[status] || "";
+  return { live: "Live", scheduled: "Scheduled", paused: "Paused", completed: "Completed", archived: "Archived" }[status] || "";
 }
 
 function renderCampaignList(rows, activeAlerts) {
   const period = document.querySelector("#period-filter")?.value || "current";
-  const groups = groupCampaigns(rows);
+  // Your order applies in portfolio order; completed campaigns always sit at the bottom.
+  const manualOrder = (document.querySelector("#campaign-sort")?.value || "portfolio") === "portfolio";
+  const groups = orderGroups(groupCampaigns(rows), campaignOrder, { manual: manualOrder });
   lastCampaignGroups = groups;
   const container = document.querySelector("#campaign-list-rows");
   const lineCount = groups.reduce((sum, group) => sum + group.lines.length, 0);
@@ -297,7 +303,7 @@ function renderCampaignList(rows, activeAlerts) {
     const shownLines = entry ? group.lines.filter(line => line.kind !== "record" || line.record.ioLineStatus !== "matched") .filter(line => line.kind === "record" ? !isPlaceholder(line.record) : true) : group.lines;
     const ioLineRows = planLines.map(line => {
       const lineMetrics = line.records.length ? computeMetrics(line.records, { ...options, totals: { budget: line.budget, startDate: line.startDate, endDate: line.endDate } }) : { budget: line.budget };
-      const lineStatus = dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
+      const lineStatus = ["paused", "completed"].includes(campaignStatus[group.key]) ? campaignStatus[group.key] : dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
       const reportNames = line.records.map(record => recordLineLabel(record));
       const meta = [`${line.startDate} → ${line.endDate}`, line.placements.length > 1 ? `${line.placements.length} IO flights combined` : "", reportNames.length ? `report: ${reportNames.join(", ")}` : "no report data yet"].filter(Boolean).join(" · ");
       const index = line.records.length ? campaigns.indexOf(line.records[0]) : -1;
@@ -329,9 +335,9 @@ function renderCampaignList(rows, activeAlerts) {
         <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
         <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${entry ? planLines.length + shownLines.length : group.lines.length} line${(entry ? planLines.length + shownLines.length : group.lines.length) === 1 ? "" : "s"}${campaignTotals[group.key] ? ` · budget from ${campaignTotals[group.key].orders.length > 1 ? `${campaignTotals[group.key].orders.length} IOs` : "IO"}` : ""}${auditSummary}</small></span>
         ${cells}
-        <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
+        <span class="campaign-card-actions">${manualOrder && group.status !== "completed" ? `<span class="campaign-move"><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="up" aria-label="Move ${escapeHtml(group.name)} up" title="Move up">↑</button><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="down" aria-label="Move ${escapeHtml(group.name)} down" title="Move down">↓</button></span>` : ""}${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
+      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}<button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
@@ -495,11 +501,31 @@ document.querySelector("#campaign-list-rows").addEventListener("click", event =>
   if (edit) { openMetricPicker(edit.dataset.editMetrics); return; }
   const open = event.target.closest("[data-open-campaign]");
   if (open) { openCampaignDialog(Number(open.dataset.openCampaign)); return; }
+  const move = event.target.closest("[data-move-campaign]");
+  if (move) {
+    // Only the campaigns on screen trade places; completed ones stay at the bottom.
+    const shown = lastCampaignGroups.filter(group => group.status !== "completed").map(group => group.key);
+    campaignOrder = moveCampaign(campaignOrder, shown, move.dataset.moveCampaign, move.dataset.move);
+    try { localStorage.setItem(CAMPAIGN_ORDER_KEY, JSON.stringify(campaignOrder)); } catch { /* the order lasts for this session */ }
+    renderCampaigns(document.querySelector("#client-filter").value);
+    return;
+  }
+  if (event.target.closest("[data-campaign-status], .campaign-status-control")) return;
   const head = event.target.closest("[data-toggle-campaign]");
   if (!head) return;
   const key = head.dataset.toggleCampaign;
   if (expandedCampaigns.has(key)) expandedCampaigns.delete(key); else expandedCampaigns.add(key);
   renderCampaigns(document.querySelector("#client-filter").value);
+});
+
+document.querySelector("#campaign-list-rows").addEventListener("change", event => {
+  const select = event.target.closest("[data-campaign-status]");
+  if (!select) return;
+  campaignStatus = setCampaignStatus(campaignStatus, select.dataset.campaignStatus, select.value);
+  try { localStorage.setItem(CAMPAIGN_STATUS_KEY, JSON.stringify(campaignStatus)); } catch { /* the status lasts for this session */ }
+  const name = lastCampaignGroups.find(group => group.key === select.dataset.campaignStatus)?.name || "Campaign";
+  renderCampaigns(document.querySelector("#client-filter").value);
+  showToast("Campaign status", select.value === "auto" ? `${name} follows its flight dates again.` : `${name} is marked ${select.value}.${select.value === "completed" ? " It moves to the bottom and leaves the live totals." : " It leaves the live totals and alerts until you set it back."}`);
 });
 
 document.querySelector("#toggle-all-campaigns").addEventListener("click", () => {
@@ -954,7 +980,7 @@ document.querySelector("#workspace-backup-button").addEventListener("click", () 
 });
 document.querySelectorAll(".close-workspace-backup").forEach(button => button.addEventListener("click", () => workspaceBackupDialog.close()));
 document.querySelector("#download-workspace-backup").addEventListener("click", () => {
-  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals });
+  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder });
   const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-workspace-${new Date().toISOString().slice(0, 10)}.json` });
   link.click();
