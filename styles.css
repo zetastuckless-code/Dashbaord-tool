@@ -221,3 +221,10 @@ body.alerts-view .main-content>:not(.topbar):not(#alerts-page){display:none!impo
 .metric-value.kpi-mix{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:17px;line-height:1.3;margin:8px 0 7px}.metric-value.kpi-mix span{white-space:nowrap;font-weight:600;color:#667083;font-size:11px}.metric-value.kpi-mix b{font:800 19px Manrope,sans-serif;color:var(--ink);letter-spacing:-.4px}
 .kpi-edit-select,.kpi-edit-goal{font:600 11px "DM Sans";border:1px solid var(--line);border-radius:6px;padding:4px 6px;color:#30384b;background:#fff}.kpi-edit-goal{width:110px}
 .filter-group:has(.period-custom:not([hidden])){min-width:262px}.period-custom input{width:112px}
+.client-section-label{margin:12px 0 4px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa1af}
+.client-card .client-campaigns{margin:0;padding:0;border-top:0}.client-card .client-campaigns li{display:grid;gap:1px;padding:4px 0;border-bottom:1px solid #f2f3f6;font-size:10px}.client-card .client-campaigns li:last-child{border-bottom:0}
+.client-campaign-name{font-weight:600;color:#30384b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.client-campaign-facts{color:#697285;font-size:9.5px}.client-campaign-facts .over{color:#c5384a;font-weight:700}.client-campaign-facts .under{color:#c27a15;font-weight:700}.client-campaign-facts .on-track{color:#18845f;font-weight:700}
+.client-more{color:#8d95a4;font-size:9.5px}
+.client-alerts{list-style:none;margin:0;padding:0;display:grid;gap:5px}.client-alerts li{display:flex;gap:7px;align-items:flex-start;font-size:10px;color:#30384b}.client-alerts li small{display:block;color:#7a8394;font-size:9.5px;margin-top:1px}.client-alert-dot{flex:0 0 7px;height:7px;border-radius:50%;margin-top:4px;background:var(--amber)}.client-alerts li.critical .client-alert-dot{background:var(--red)}.client-alerts li.info .client-alert-dot{background:var(--blue)}.client-alerts li.client-more{display:block}
+.client-all-clear{margin:12px 0 0;font-size:10px;color:#18845f;font-weight:600}
+.client-card .status-pill{white-space:nowrap;flex-shrink:0}
