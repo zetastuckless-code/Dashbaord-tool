@@ -69,3 +69,18 @@ test("applyIoPlan gives each line its IO line's dates, or the IO flight, so stat
   const again = applyIoPlan([nextChicago, nextUnknown, nextOther], totals);
   assert.equal(again[0], nextChicago);
 });
+
+test("matches report lines named by channel to IO lines that spell out the channel", () => {
+  const entry = entryFor([
+    placement("a", "Programmatic_Display_Banner_ZETA GLOBAL_Display_D", "2026-01-01", "2026-12-31", 927233.88),
+    placement("b", "Programmatic_Video_General_ZETA GLOBAL_YouTube_D", "2026-01-01", "2026-12-31", 415825.78),
+    placement("c", "Programmatic_Video_Trueview Instream Skip_ZETA GLOBAL_YouTube_Video_Views_Campaign_D", "2026-05-04", "2026-12-31", 78140.08)
+  ]);
+  const display = { client: "Acme", name: "Spring", channel: "Display", spend: 100 };
+  const youtube = record("YouTube");
+  const views = record("YouTube (Video Views)");
+  const matches = matchRecordsToIoLines([display, youtube, views], entry);
+  assert.equal(matches.get(display).line.name, "Programmatic_Display_Banner_ZETA GLOBAL_Display_D");
+  assert.equal(matches.get(youtube).line.name, "Programmatic_Video_General_ZETA GLOBAL_YouTube_D");
+  assert.equal(matches.get(views).line.name, "Programmatic_Video_Trueview Instream Skip_ZETA GLOBAL_YouTube_Video_Views_Campaign_D");
+});
