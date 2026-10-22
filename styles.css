@@ -192,3 +192,27 @@ body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:no
 .io-edit{margin-left:auto;font-size:11px}
 .client-back[hidden]{display:none}
 .campaign-line.line-done{padding-block:4px;color:#8d95a4;background:#fafafc}.campaign-line.line-done .campaign-title small{display:none}.campaign-line.line-done .campaign-title strong{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.campaign-line.line-done .metric-cell strong{font-weight:500;color:#8d95a4}.campaign-line.line-done .status-dot-label{font-size:9px}
+body.alerts-view .main-content>:not(.topbar):not(#alerts-page){display:none!important}
+.alerts-page[hidden]{display:none}.alerts-page{display:grid;gap:14px;margin-bottom:24px}
+.alerts-page-summary{display:flex;gap:10px;flex-wrap:wrap}.alerts-summary-chip{display:flex;align-items:baseline;gap:8px;padding:10px 16px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;font:inherit;color:var(--ink)}.alerts-summary-chip strong{font:800 20px Manrope,sans-serif}.alerts-summary-chip.critical strong{color:var(--red)}.alerts-summary-chip.warning strong{color:var(--amber)}.alerts-summary-chip.info strong{color:var(--blue)}.alerts-summary-chip.active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(99,87,229,.18)}
+.alerts-page-list{display:grid;gap:12px}
+.alert-detail{background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:11px;box-shadow:var(--shadow);padding:16px 18px;display:grid;gap:10px}.alert-detail.critical{border-left-color:var(--red)}.alert-detail.info{border-left-color:var(--blue)}
+.alert-detail-head{display:flex;gap:12px;align-items:flex-start}.alert-detail-head h3{margin:2px 0;font:700 16px Manrope,sans-serif}.alert-detail-meta{margin:0;display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600}.alert-detail-where{margin:0;font-size:12px;color:var(--muted)}
+.severity-tag{padding:2px 7px;border-radius:999px;font-size:10px;background:#fff3e5;color:#a65f19}.severity-tag.critical{background:#fdecef;color:#ad4050}.severity-tag.info{background:#eaf2fc;color:#2c66b0}
+.alert-detail-reading,.alert-detail-explain,.alert-detail-action{margin:0;font-size:13px;line-height:1.5}.alert-detail-explain{color:#454e60}.alert-detail-action{color:#30384b}
+.alert-detail-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:0;padding:10px 12px;background:#fafbfc;border-radius:8px}.alert-detail-facts div{display:grid;gap:2px}.alert-detail-facts dt{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.alert-detail-facts dd{margin:0;font-weight:600;font-size:13px}
+.alert-detail-buttons{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.kpi-card-picker{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}.kpi-card-picker select{font:600 11px "DM Sans";border:1px solid var(--line);border-radius:6px;padding:2px 4px;background:#fff;color:var(--ink);cursor:pointer}
+.metric-dialog-controls[hidden]{display:none}.metric-dialog-controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 12px}.metric-dialog-controls label{display:flex;gap:8px;align-items:center;font-size:12px;font-weight:600}.metric-dialog-controls select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:7px}.metric-dialog-controls small{color:var(--muted);font-size:11px}
+#metric-extra-section[hidden]{display:none}
+/* Zeta Global branding: black navigation with the ZETA wordmark */
+:root{--brand-black:#0b0b10;--brand-panel:#17171f;--brand-active:#24223a}
+.sidebar{background:var(--brand-black)}
+.brand{flex-direction:column;align-items:flex-start;gap:2px;padding:0 10px 30px}
+.brand-wordmark{font:800 26px/1 Manrope,sans-serif;letter-spacing:.14em;color:#fff}
+.brand-product{font:600 10px "DM Sans",sans-serif;letter-spacing:.16em;text-transform:uppercase;color:#8c82eb}
+.nav-item:hover{background:var(--brand-panel)}.nav-item.active{background:var(--brand-active)}
+.health-card{background:var(--brand-panel);border-color:#2a2a36}.health-row{border-top-color:#2a2a36}.user-card{border-top-color:#22222c}
+#metric-dialog{width:min(940px,calc(100% - 30px));max-height:calc(100vh - 40px)}
+.metric-more{display:block;margin:3px 0 0}
+#kpi-card .metric-detail{flex-direction:column;align-items:flex-start;gap:4px}

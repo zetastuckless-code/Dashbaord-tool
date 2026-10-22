@@ -8,7 +8,7 @@ test("provides landmark navigation, labelled sections, and labelled dialogs", as
   assert.match(html, /<main[^>]+id="overview"[^>]+tabindex="-1"/);
   assert.match(html, /<section[^>]+id="client-documents"[^>]+aria-labelledby="client-documents-title"/);
   const dialogs = [...html.matchAll(/<dialog[^>]+aria-labelledby="([^"]+)"/g)];
-  assert.equal(dialogs.length, 10);
+  assert.equal(dialogs.length, 11);
   for (const [, labelId] of dialogs) assert.match(html, new RegExp(`<h2 id="${labelId}">`));
 });
 

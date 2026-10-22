@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Campaign performance and spend dashboard prototype" />
-    <title>Northstar | Campaign overview</title>
+    <meta name="description" content="Zeta Global campaign pacing and performance dashboard" />
+    <title>Zeta | Campaign overview</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -14,16 +14,16 @@
     <a class="skip-link" href="#overview">Skip to dashboard content</a>
     <div class="app-shell">
       <aside class="sidebar" id="primary-navigation" aria-label="Primary navigation">
-        <a class="brand" href="#" aria-label="Northstar home">
-          <span class="brand-mark"><span></span></span>
-          <span>northstar</span>
+        <a class="brand" href="./" aria-label="Zeta Global campaign dashboard home">
+          <span class="brand-wordmark">ZETA</span>
+          <span class="brand-product">Campaign Pacing</span>
         </a>
 
         <nav class="nav-list">
           <a class="nav-item active" id="nav-overview" href="./" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
           <a class="nav-item" href="#campaign-list"><span class="nav-icon">◫</span>Campaigns</a>
           <a class="nav-item" href="#reports"><span class="nav-icon">↗</span>Reports</a>
-          <a class="nav-item" href="#alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
+          <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
         </nav>
 
         <p class="nav-label" id="client-nav-label" hidden>Clients</p>
@@ -83,6 +83,21 @@
             <label class="sources-search">Search<input id="sources-search" type="search" placeholder="File, client, or campaign" autocomplete="off" /></label>
           </div>
           <div class="sources-list" id="data-sources-list"></div>
+        </section>
+
+        <section class="alerts-page" id="alerts-page" aria-labelledby="alerts-page-title" hidden>
+          <div class="client-rollup-header">
+            <div><h2 id="alerts-page-title">Active alerts</h2><p id="alerts-page-context">Everything that needs a look, with what each alert is based on</p></div>
+            <div class="panel-actions"><button class="text-button" id="alerts-page-export" type="button">Export alerts</button><button class="secondary-button" id="alerts-page-rules" type="button">Alert rules</button></div>
+          </div>
+          <div class="sources-controls">
+            <label>Client<select id="alerts-client"></select></label>
+            <label>Severity<select id="alerts-severity"><option value="all">All severities</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></label>
+            <label>Type<select id="alerts-type"></select></label>
+            <label class="sources-search">Search<input id="alerts-search" type="search" placeholder="Campaign, client, or alert" autocomplete="off" /></label>
+          </div>
+          <div class="alerts-page-summary" id="alerts-page-summary"></div>
+          <div class="alerts-page-list" id="alerts-page-list"></div>
         </section>
 
         <section class="control-bar" aria-label="Dashboard controls">
@@ -154,13 +169,13 @@
         </section>
 
         <section class="metric-grid" aria-label="Key performance metrics">
-          <article class="metric-card">
-            <div class="metric-heading"><span>Active media budget</span><span class="metric-icon violet">$</span></div>
+          <article class="metric-card metric-card-action" id="budget-card" data-metric-detail="budget" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Active media budget. Open budget details">
+            <div class="metric-heading"><span>Active media budget <em class="metric-more">Details ›</em></span><span class="metric-icon violet">$</span></div>
             <strong class="metric-value" id="budget-value">$1.24M</strong>
             <div class="metric-detail"><span class="positive">↗ 8.2%</span><span>vs. last period</span></div>
           </article>
-          <article class="metric-card">
-            <div class="metric-heading"><span id="spend-metric-label">Spend to date</span><span class="metric-icon blue">↗</span></div>
+          <article class="metric-card metric-card-action" id="spend-card" data-metric-detail="spend" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Spend to date. Open spend details">
+            <div class="metric-heading"><span><span id="spend-metric-label">Spend to date</span> <em class="metric-more">Details ›</em></span><span class="metric-icon blue">↗</span></div>
             <strong class="metric-value" id="spend-value">$684.2K</strong>
             <div class="progress-track"><span id="spend-progress" style="width:55%"></span></div>
             <div class="progress-copy"><span id="utilization-value">55.2% utilized</span><span id="remaining-value">$555.8K remaining</span></div>
@@ -170,13 +185,13 @@
             <strong class="metric-value" id="portfolio-pacing-value">—</strong>
             <div class="metric-detail"><span class="status-pill good" id="portfolio-pacing-status">On track</span><span id="portfolio-pacing-target">Target: 85–110%</span></div>
           </article>
-          <article class="metric-card">
-            <div class="metric-heading"><span id="portfolio-kpi-label">Primary KPI mix</span><span class="metric-icon violet">K</span></div>
+          <article class="metric-card metric-card-action" id="kpi-card" data-metric-detail="kpi" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Primary KPI. Open KPI details">
+            <div class="metric-heading"><span><span id="portfolio-kpi-label">Primary KPI mix</span> <em class="metric-more">Details ›</em></span><span class="metric-icon violet">K</span></div>
             <strong class="metric-value" id="portfolio-kpi-value">—</strong>
-            <div class="metric-detail"><span id="portfolio-kpi-coverage">No KPI data</span><span>live campaigns</span></div>
+            <div class="metric-detail"><label class="kpi-card-picker">Show <select id="kpi-card-view" aria-label="KPI shown on this card"><option value="primary">Campaign primary</option><option value="CTR">CTR</option><option value="VCR">VCR</option><option value="CPA">CPA</option><option value="ROAS">ROAS</option></select></label><span id="portfolio-kpi-coverage">No KPI data</span></div>
           </article>
-          <article class="metric-card alert-card">
-            <div class="metric-heading"><span>Needs attention</span><span class="metric-icon amber">!</span></div>
+          <article class="metric-card alert-card metric-card-action" id="alert-card" role="button" tabindex="0" aria-label="Needs attention. Open the alerts page">
+            <div class="metric-heading"><span>Needs attention <em class="metric-more">View alerts ›</em></span><span class="metric-icon amber">!</span></div>
             <strong class="metric-value" id="alert-count">4</strong>
             <div class="metric-detail" id="alert-summary"><span class="warning-text">2 critical</span><span>across 3 campaigns</span></div>
           </article>
@@ -232,7 +247,7 @@
           </article>
 
           <article class="panel alerts-panel" id="alerts">
-            <div class="panel-header"><div><h2>Priority alerts</h2><p>Issues that need your attention</p></div><div class="panel-actions"><button class="text-button" id="export-alerts-button" type="button">Export alerts</button><button class="text-button" id="alert-settings-button">Configure</button></div></div>
+            <div class="panel-header"><div><h2>Priority alerts</h2><p>Issues that need your attention</p></div><div class="panel-actions"><button class="text-button" id="view-all-alerts" type="button">View all</button><button class="text-button" id="export-alerts-button" type="button">Export alerts</button><button class="text-button" id="alert-settings-button">Configure</button></div></div>
             <div class="alert-list" id="alert-list"></div>
           </article>
         </section>
@@ -313,6 +328,23 @@
         <section class="pacing-table-section" aria-labelledby="pacing-table-title">
           <div class="detail-section-heading"><h3 id="pacing-table-title">Campaigns</h3><small>Pacing = billing spend ÷ the spend a 100% pace would have reached by today</small></div>
           <div class="pacing-table" id="pacing-table"></div>
+        </section>
+        <div class="dialog-actions"><button class="secondary-button" value="cancel">Close</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="metric-dialog" aria-labelledby="metric-dialog-title">
+      <form method="dialog" class="dialog-card pacing-detail-card">
+        <div class="dialog-header"><div><p class="eyebrow" id="metric-dialog-eyebrow">DETAILS</p><h2 id="metric-dialog-title">Details</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="metric-dialog-controls" id="metric-dialog-controls"></div>
+        <div class="pacing-stats" id="metric-stats"></div>
+        <section class="pacing-table-section" aria-labelledby="metric-table-title">
+          <div class="detail-section-heading"><h3 id="metric-table-title">Campaigns</h3><small id="metric-table-note"></small></div>
+          <div class="pacing-table" id="metric-table"></div>
+        </section>
+        <section class="pacing-table-section" id="metric-extra-section" aria-labelledby="metric-extra-title" hidden>
+          <div class="detail-section-heading"><h3 id="metric-extra-title"></h3><small id="metric-extra-note"></small></div>
+          <div class="pacing-table" id="metric-extra"></div>
         </section>
         <div class="dialog-actions"><button class="secondary-button" value="cancel">Close</button></div>
       </form>
