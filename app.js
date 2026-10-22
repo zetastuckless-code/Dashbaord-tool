@@ -19,7 +19,7 @@ import { campaignSnapshotHistory, compareLatestSnapshots, exportPerformanceSnaps
 import { sortCampaigns } from "./lib/campaign-sort.js";
 import { filterCampaignsByAttention } from "./lib/campaign-attention.js";
 import { DEFAULT_DASHBOARD_VIEW, readDashboardView, writeDashboardView } from "./lib/dashboard-view.js";
-import { aggregateKpiView, resolveKpiView } from "./lib/kpi-view.js";
+import { aggregateKpiView, kpiBreakdown, resolveKpiView } from "./lib/kpi-view.js";
 import { buildPortfolioSpendTrend, exportPortfolioSpendTrendCsv } from "./lib/portfolio-trend.js";
 import { exportAlertsCsv } from "./lib/alert-export.js";
 import { exportValidationIssuesCsv } from "./lib/validation-export.js";
@@ -114,12 +114,16 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matchingRows), acknowledgedAlertIds);
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
   const rows = sortCampaigns(filteredRows, { mode: document.querySelector("#campaign-sort")?.value, spendView: selectedSource });
-  const period = document.querySelector("#period-filter")?.value || "current";
+  const period = currentPeriod();
   const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
   const selectedKpiView = document.querySelector("#kpi-view")?.value || "primary";
   const portfolioKpi = aggregateKpiView(activeRows, selectedKpiView);
-  document.querySelector("#portfolio-kpi-label").textContent = portfolioKpi.metric;
-  document.querySelector("#portfolio-kpi-value").textContent = portfolioKpi.formatted;
+  // Campaigns on different primary KPIs show each KPI with its own value instead of "2 KPIs".
+  const kpiMix = selectedKpiView === "primary" && portfolioKpi.metric === "Primary KPI mix" ? kpiBreakdown(activeRows) : [];
+  document.querySelector("#portfolio-kpi-label").textContent = kpiMix.length ? "Primary KPIs" : portfolioKpi.metric;
+  const kpiValue = document.querySelector("#portfolio-kpi-value");
+  kpiValue.classList.toggle("kpi-mix", kpiMix.length > 0);
+  kpiValue.innerHTML = kpiMix.length ? kpiMix.slice(0, 3).map(item => `<span><b>${escapeHtml(item.formatted)}</b> ${escapeHtml(item.metric)}</span>`).join("") : escapeHtml(portfolioKpi.formatted);
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
   document.querySelector("#kpi-card-view").value = selectedKpiView;
   renderSpendChart(activeRows);
@@ -129,12 +133,13 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
-  document.querySelector("#spend-value").textContent = formatMoney(spend);
-  document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · last ${period} days`;
+  // A period no report reaches (data through Oct 12, "last 7 days" ending Oct 22) has no spend to show, not $0.
+  document.querySelector("#spend-value").textContent = period !== "current" && !comparablePeriodRows.length ? "—" : formatMoney(spend);
+  document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · ${periodText(period)}`;
   const utilization = spend / budget * 100 || 0;
   document.querySelector("#spend-progress").style.width = period === "current" ? `${Math.min(utilization, 100)}%` : "0%";
-  document.querySelector("#utilization-value").textContent = period === "current" ? `${utilization.toFixed(1)}% utilized` : `${comparablePeriodRows.length} campaign${comparablePeriodRows.length === 1 ? "" : "s"} with history`;
-  document.querySelector("#remaining-value").textContent = period === "current" ? `${formatMoney(Math.max(budget - spend, 0))} remaining` : "Reported-source change";
+  document.querySelector("#utilization-value").textContent = period === "current" ? `${utilization.toFixed(1)}% utilized` : comparablePeriodRows.length ? `${comparablePeriodRows.length} campaign${comparablePeriodRows.length === 1 ? "" : "s"} with data` : "No reports cover this period";
+  document.querySelector("#remaining-value").textContent = period === "current" ? `${formatMoney(Math.max(budget - spend, 0))} remaining` : "";
   const portfolio = { pacing: unitsPacing(activeUnits) };
   const portfolioValue = document.querySelector("#portfolio-pacing-value");
   const portfolioStatus = document.querySelector("#portfolio-pacing-status");
@@ -158,7 +163,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
-  const period = document.querySelector("#period-filter")?.value || "current";
+  const period = currentPeriod();
   const kpiView = document.querySelector("#kpi-view")?.value || "primary";
   const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules, totals: campaignTotals });
   const grid = document.querySelector("#client-grid");
@@ -166,7 +171,7 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
   grid.innerHTML = rollup.map(client => `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
     <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
-    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)} budget` : "budget needed") : `last ${period} days`}</span></div>
+    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)} budget` : "budget needed") : escapeHtml(periodText(period))}</span></div>
     ${client.utilization === null ? "" : `<div class="progress-track"><span style="width:${Math.min(client.utilization, 100)}%"></span></div>`}
     <div class="client-kpi-row"><span>${escapeHtml(client.kpi.metric)} <strong>${escapeHtml(client.kpi.formatted)}</strong></span><span class="${client.criticalCount ? "warning-text" : ""}">${client.alertCount ? `${client.alertCount} alert${client.alertCount === 1 ? "" : "s"}` : "No alerts"}</span></div>
     <ul class="client-campaigns">${client.campaigns.slice(0, 4).map(campaign => `<li><span>${escapeHtml(campaign.name)}</span><span class="${campaign.pacingBand}">${campaign.pacing === null ? "—" : `${campaign.pacing.toFixed(0)}%`}${campaign.kpi ? ` · ${escapeHtml(campaign.kpi)}` : ""}</span></li>`).join("")}${client.campaigns.length > 4 ? `<li><span>+${client.campaigns.length - 4} more</span><span></span></li>` : ""}</ul>
@@ -291,7 +296,7 @@ function lineStatusLabel(status) {
 }
 
 function renderCampaignList(rows, activeAlerts) {
-  const period = document.querySelector("#period-filter")?.value || "current";
+  const period = currentPeriod();
   // Your order applies in portfolio order; completed campaigns always sit at the bottom.
   const manualOrder = (document.querySelector("#campaign-sort")?.value || "portfolio") === "portfolio";
   const groups = orderGroups(groupCampaigns(rows), campaignOrder, { manual: manualOrder });
@@ -959,26 +964,43 @@ function renderSpendDetail() {
   setMetricExtra("By client", "Live campaigns only", byClient.length > 1 ? metricTable(["Client", "Campaigns", "Budget", "Spend", "Budget used"], byClient.map(([client, item]) => `<tr><td><strong>${escapeHtml(client)}</strong></td><td>${item.count}</td><td>${item.budget ? escapeHtml(formatMoney(item.budget)) : "—"}</td><td>${escapeHtml(formatMoney(item.spend))}</td><td>${shareText(item.spend, item.budget)}</td></tr>`)) : "");
 }
 
+const KPI_CHOICES = ["CTR", "VCR", "CPA", "ROAS"];
+let kpiEditGroups = [];
+
 function renderKpiDetail() {
   const view = document.querySelector("#kpi-view").value || "primary";
   const detail = metricDetailRows();
   const overall = aggregateKpiView(lastPacingRows, view);
+  const mix = kpiBreakdown(lastPacingRows);
   document.querySelector("#metric-dialog-title").textContent = view === "primary" ? "Primary KPIs" : view;
-  document.querySelector("#metric-dialog-controls").innerHTML = `<label>KPI shown<select id="metric-kpi-view">${Object.entries(KPI_VIEW_LABEL).map(([value, label]) => `<option value="${value}"${value === view ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><small>"Campaign primary" uses the KPI set on each campaign. Use Edit on a campaign to change its primary KPI and target.</small>`;
-  const rows = detail.rows.map(row => {
-    const first = row.records[0];
-    const kpis = [...new Set(row.records.map(record => record.kpi).filter(Boolean))];
-    const value = aggregateKpiView(row.records, view === "primary" ? (kpis.length === 1 ? kpis[0] : "primary") : view);
-    return { ...row, key: groupKey(first), kpi: kpis.join(", ") || "Not set", target: String(first.target ?? "").replace(/^target\s*/i, "") || "—", value };
-  });
-  const mix = [...rows.reduce((map, row) => map.set(row.kpi, (map.get(row.kpi) || 0) + 1), new Map())].sort((a, b) => b[1] - a[1]);
+  document.querySelector("#metric-dialog-controls").innerHTML = `<label>KPI shown<select id="metric-kpi-view">${Object.entries(KPI_VIEW_LABEL).map(([value, label]) => `<option value="${value}"${value === view ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><small>Set each campaign's primary KPI and goal below. A campaign whose lines use different KPIs has a row for each.</small>`;
+  const unset = lastPacingRows.filter(record => !record.kpi).length;
+  const targetOf = record => String(record.target ?? "").replace(/^target\s*/i, "").replace(/^not provided$/i, "");
   document.querySelector("#metric-stats").innerHTML = [
-    metricStat(overall.metric, overall.formatted, `${overall.coverage}/${overall.total} live lines with data`),
-    metricStat("Primary KPIs in use", String(mix.filter(([kpi]) => kpi !== "Not set").length), mix.map(([kpi, count]) => `${kpi} ${count}`).join(" · ") || "None set"),
-    metricStat("Campaigns without a KPI", String(rows.filter(row => row.kpi === "Not set").length), "Set one with Edit")
-  ].join("");
-  document.querySelector("#metric-table-note").textContent = view === "primary" ? "Each campaign's own primary KPI" : `${view} calculated from each campaign's reported numbers`;
-  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Primary KPI", "Target", view === "primary" ? "Actual" : view, ""], rows.map(row => `<tr>${rowCampaign(row)}<td>${escapeHtml(row.kpi)}</td><td>${escapeHtml(row.target)}</td><td><strong>${escapeHtml(row.value.formatted)}</strong></td><td><button class="text-button" type="button" data-metric-edit="${escapeHtml(row.key)}">Edit</button></td></tr>`));
+    ...(view === "primary" ? mix.map(item => {
+      const targets = [...new Set(lastPacingRows.filter(record => record.kpi === item.metric).map(targetOf).filter(Boolean))];
+      return metricStat(item.metric, item.formatted, `${item.lines} live line${item.lines === 1 ? "" : "s"}${targets.length === 1 ? ` · goal ${targets[0]}` : targets.length ? " · several goals" : " · no goal set"}`);
+    }) : [metricStat(overall.metric, overall.formatted, `${overall.coverage}/${overall.total} live lines with data`)]),
+    ...(unset ? [metricStat("Lines without a KPI", String(unset), "Set one below")] : [])
+  ].join("") || metricStat("Primary KPI", "—", "No live lines");
+  // One editable row per campaign and primary KPI, so a campaign with display on CTR and video on VCR gets two.
+  kpiEditGroups = detail.rows.flatMap(row => {
+    const byKpi = new Map();
+    for (const record of row.records) byKpi.set(record.kpi || "", [...(byKpi.get(record.kpi || "") || []), record]);
+    return [...byKpi.entries()].map(([kpi, records]) => ({ name: row.name, client: row.client, kpi, records, split: byKpi.size > 1 }));
+  });
+  document.querySelector("#metric-table-title").textContent = "Campaigns";
+  document.querySelector("#metric-table-note").textContent = view === "primary" ? "Actual uses each row's primary KPI" : `Actual shows ${view} for every row`;
+  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Primary KPI", "Goal", "Actual", ""], kpiEditGroups.map((group, index) => {
+    const targets = [...new Set(group.records.map(targetOf).filter(Boolean))];
+    const actual = aggregateKpiView(group.records, view === "primary" ? group.kpi || "primary" : view).formatted;
+    const lineNames = group.split ? ` · ${group.records.map(record => recordLineLabel(record)).slice(0, 3).join(", ")}${group.records.length > 3 ? "…" : ""}` : "";
+    return `<tr><td><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)} · ${group.records.length} line${group.records.length === 1 ? "" : "s"}${escapeHtml(lineNames)}</small></td>
+      <td><select class="kpi-edit-select" data-kpi-group="${index}" aria-label="Primary KPI for ${escapeHtml(group.name)}"><option value="">Not set</option>${KPI_CHOICES.map(kpi => `<option${kpi === group.kpi ? " selected" : ""}>${kpi}</option>`).join("")}${group.kpi && !KPI_CHOICES.includes(group.kpi) ? `<option selected>${escapeHtml(group.kpi)}</option>` : ""}</select></td>
+      <td><input class="kpi-edit-goal" data-kpi-goal="${index}" value="${escapeHtml(targets.length === 1 ? targets[0] : "")}" placeholder="${targets.length > 1 ? "Several" : "e.g. 0.15%"}" aria-label="Goal for ${escapeHtml(group.name)}" /></td>
+      <td><strong>${escapeHtml(actual)}</strong></td>
+      <td><button class="text-button" type="button" data-kpi-save="${index}">Save</button></td></tr>`;
+  }));
   setMetricExtra("", "", "");
 }
 
@@ -1010,6 +1032,24 @@ function setKpiView(value) {
 document.querySelector("#kpi-card-view").addEventListener("change", event => setKpiView(event.target.value));
 metricDialog.addEventListener("change", event => { if (event.target.id === "metric-kpi-view") setKpiView(event.target.value); });
 metricDialog.addEventListener("click", event => {
+  const save = event.target.closest("[data-kpi-save]");
+  if (save) {
+    event.preventDefault();
+    const index = Number(save.dataset.kpiSave);
+    const group = kpiEditGroups[index];
+    if (!group) return;
+    const kpi = metricDialog.querySelector(`[data-kpi-group="${index}"]`).value;
+    const target = metricDialog.querySelector(`[data-kpi-goal="${index}"]`).value.trim();
+    if (!kpi && !target) return;
+    const keys = group.records.map(record => campaigns.indexOf(record)).filter(position => position >= 0).map(position => lineKey(position, "record"));
+    writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `setting the KPI for ${group.name}` }));
+    campaigns = applyBulkEdits(campaigns, keys, { kpi, target }).campaigns;
+    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    refreshAfterDataChange();
+    renderMetricDetail();
+    showToast("KPI updated", `${group.name}: ${kpi || group.kpi || "KPI"}${target ? ` with a goal of ${target}` : ""} on ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
+    return;
+  }
   const edit = event.target.closest("[data-metric-edit]");
   if (!edit) return;
   event.preventDefault();
@@ -1047,10 +1087,37 @@ function refreshClientFilter() {
   channelSelect.value = channels.includes(selectedChannel) ? selectedChannel : "all";
 }
 
+// --- Reporting period: the current flight, or any of the pacing periods, including a custom range ---
+const periodSelect = document.querySelector("#period-filter");
+periodSelect.innerHTML = `<option value="current">Current flight</option>${PACING_RANGES.map(range => `<option value="${range.id}">${escapeHtml(range.label.replace("…", ""))}</option>`).join("")}`;
+/** The selected period as one value: a preset id, or "custom:start:end" once both dates are set. */
+function currentPeriod() {
+  if (periodSelect.value !== "custom") return periodSelect.value || "current";
+  const start = document.querySelector("#period-start").value;
+  const end = document.querySelector("#period-end").value;
+  return start && end && start <= end ? `custom:${start}:${end}` : "current";
+}
+/** How the period reads in labels: "last 30 days", "this quarter", "Oct 1 – Oct 15". */
+function periodText(period = currentPeriod()) {
+  if (period.startsWith("custom:")) { const [, start, end] = period.split(":"); return `${shortDate(start)} – ${shortDate(end)}`; }
+  const label = PACING_RANGES.find(range => range.id === period)?.label || period;
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+function syncPeriodCustom() {
+  const custom = periodSelect.value === "custom";
+  document.querySelector("#period-custom").hidden = !custom;
+  if (custom && !document.querySelector("#period-start").value) {
+    const end = todayIso();
+    document.querySelector("#period-end").value = end;
+    document.querySelector("#period-start").value = new Date(Date.parse(`${end}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10);
+  }
+}
+for (const id of ["#period-start", "#period-end"]) document.querySelector(id).addEventListener("change", () => { captureDashboardView(); renderCampaigns(document.querySelector("#client-filter").value); });
+
 function captureDashboardView() {
   dashboardView = writeDashboardView(localStorage, {
     client: document.querySelector("#client-filter").value,
-    period: document.querySelector("#period-filter").value,
+    period: currentPeriod(),
     status: document.querySelector("#status-filter").value,
     owner: document.querySelector("#owner-filter").value,
     channel: document.querySelector("#channel-filter").value,
@@ -1068,7 +1135,13 @@ function applyDashboardView(view) {
     select.value = [...select.options].some(option => option.value === value) ? value : "all";
   };
   assignOption("#client-filter", view.client);
-  assignOption("#period-filter", view.period);
+  if (String(view.period).startsWith("custom:")) {
+    const [, start, end] = view.period.split(":");
+    periodSelect.value = "custom";
+    document.querySelector("#period-start").value = start;
+    document.querySelector("#period-end").value = end;
+  } else periodSelect.value = [...periodSelect.options].some(option => option.value === view.period) ? view.period : "current";
+  syncPeriodCustom();
   assignOption("#status-filter", view.status);
   assignOption("#owner-filter", view.owner);
   assignOption("#channel-filter", view.channel);
@@ -1093,7 +1166,7 @@ document.querySelector("#campaign-sort").addEventListener("change", () => render
 document.querySelector("#attention-filter").addEventListener("change", () => renderCampaigns(document.querySelector("#client-filter").value));
 document.querySelector("#kpi-view").addEventListener("change", () => renderCampaigns(document.querySelector("#client-filter").value));
 document.querySelector('[aria-label="Search"]').addEventListener("click", () => document.querySelector("#campaign-search").focus());
-document.querySelector("#period-filter").addEventListener("change", () => renderCampaigns(document.querySelector("#client-filter").value));
+document.querySelector("#period-filter").addEventListener("change", () => { syncPeriodCustom(); renderCampaigns(document.querySelector("#client-filter").value); });
 document.querySelector(".control-bar").addEventListener("change", captureDashboardView);
 document.querySelector("#campaign-search").addEventListener("input", captureDashboardView);
 document.querySelector("#reset-dashboard-view").addEventListener("click", () => {
@@ -1145,7 +1218,7 @@ document.querySelector("#export-dashboard-button").addEventListener("click", () 
   const matching = filterCampaigns(campaigns, { client: document.querySelector("#client-filter").value, status: document.querySelector("#status-filter").value, owner: document.querySelector("#owner-filter").value, channel: document.querySelector("#channel-filter").value, query: document.querySelector("#campaign-search").value });
   const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matching), acknowledgedAlertIds);
   const exportRows = filterCampaignsByAttention(matching, activeAlerts, document.querySelector("#attention-filter").value);
-  const csv = exportCampaignsCsv(exportRows, { sort: document.querySelector("#campaign-sort").value, spendView: selectedSource, period: document.querySelector("#period-filter").value, kpiView: document.querySelector("#kpi-view").value });
+  const csv = exportCampaignsCsv(exportRows, { sort: document.querySelector("#campaign-sort").value, spendView: selectedSource, period: currentPeriod(), kpiView: document.querySelector("#kpi-view").value });
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-campaigns-${new Date().toISOString().slice(0, 10)}.csv` });
   link.click();
