@@ -4,6 +4,7 @@ import { detectMonthlyPerformance, extractMonthlyPerformance } from "../lib/mont
 import { extractPerformanceSummaryCampaigns, refineClientName } from "../lib/native-workbook-import.js";
 import { validateCampaignCsv } from "../lib/importer.js";
 import { rowsToCsv } from "../lib/workbook-import.js";
+import { mergePerformanceSnapshots } from "../lib/performance-snapshots.js";
 
 // Synthetic layout mirroring a monthly video tab: one row per month and line, then a Total row.
 const monthlyRows = [
@@ -75,4 +76,54 @@ test("uses the client printed on the sheet when the file name adds noise", () =>
   const rows = [[], [null, "Note: x"], [null, "Acme Foods"]];
   assert.equal(refineClientName("Acme Foods Report", rows), "Acme Foods");
   assert.equal(refineClientName("Other Client", rows), "Other Client");
+});
+
+// A "(Video Views)" line sits under the campaign's standard line in the same month, so the tab has two lines per format.
+const twoLineRows = [
+  [],
+  [null, "Note: not for billing"],
+  [null, "Acme Foods", "1/1/26 - 5/10/26"],
+  [null, "Month", "Media Format", "Line", "Impressions", "Clicks", "CTR", "Spend", "CPM", "Conversions", "Views", "VCR (100%)", "Unique Users", "Impression Goal", "View Goal", "IO Budget", "Delivery"],
+  [null, "January", "YouTube", "Acme Foods 2026", 6_000_000, 5_000, 0.0008, 45_000, 7.5, 2_000, 580_000, 0.11, 4_000_000, 3_750_000, "-", 45_000, 1],
+  [null, "April", "YouTube", "Acme Foods 2026", 7_000_000, 3_000, 0.0004, 55_000, 7.8, 270, 380_000, 0.19, 5_000_000, 4_500_000, "-", 55_000, 1],
+  [null, null, "YouTube", "Acme Foods 2026 (Video Views)", 800_000, 180, 0.0002, 15_000, 18, 300, 440_000, 0.8, 570_000, "-", 148_000, 15_000, 1],
+  [null, "May", "YouTube", "Acme Foods 2026", 700_000, 300, 0.0004, 6_000, 8, 20, 30_000, 0.1, 500_000, 400_000, "-", 33_000, 0.2],
+  [null, null, "YouTube", "Acme Foods 2026 (Video Views)", 80_000, 14, 0.0002, 1_500, 17, 13, 31_000, 0.7, 70_000, "-", 80_000, 8_000, 0.2],
+  [null, null, "Total", null, 14_580_000, 8_494, 0.0005, 122_500, 8.4, 2_603, 1_461_000, 0.2, 10_000_000, null, null, 156_000, 0.8]
+];
+
+test("keeps a campaign's standard and Video Views lines as separate rows that add up to the Total", () => {
+  const rows = extractMonthlyPerformance(twoLineRows, detectMonthlyPerformance(twoLineRows));
+  assert.deepEqual(rows.map(row => row.campaign), ["Acme Foods 2026 — YouTube", "Acme Foods 2026 — YouTube (Video Views)"]);
+  assert.deepEqual(rows.map(row => [row.spend, row.budget, row.impressions]), [[106_000, 133_000, 13_700_000], [16_500, 23_000, 880_000]]);
+  assert.equal(rows.reduce((sum, row) => sum + row.spend, 0), 122_500);
+  assert.equal(rows.reduce((sum, row) => sum + row.budget, 0), 156_000);
+  const result = validateCampaignCsv(rowsToCsv([Object.keys(rows[0]), ...rows.map(row => Object.values(row))]));
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.campaigns.map(campaign => campaign.name), ["Acme Foods 2026 — YouTube", "Acme Foods 2026 — YouTube (Video Views)"]);
+});
+
+test("records cumulative monthly history, holding the total flat through months with no row", () => {
+  const [standard, views] = extractMonthlyPerformance(twoLineRows, detectMonthlyPerformance(twoLineRows));
+  assert.deepEqual(JSON.parse(standard.history).map(entry => [entry.date, entry.spend]), [
+    ["2025-12-31", 0], ["2026-01-31", 45_000], ["2026-03-31", 45_000], ["2026-04-30", 100_000], ["2026-05-10", 106_000]
+  ]);
+  assert.deepEqual(JSON.parse(views.history).map(entry => [entry.date, entry.spend]), [["2026-03-31", 0], ["2026-04-30", 15_000], ["2026-05-10", 16_500]]);
+});
+
+test("passes the monthly history into the imported campaign's snapshots", () => {
+  const rows = extractMonthlyPerformance(twoLineRows, detectMonthlyPerformance(twoLineRows));
+  const result = validateCampaignCsv(rowsToCsv([Object.keys(rows[0]), rows[0].history ? Object.values(rows[0]) : []]));
+  const [campaign] = result.campaigns;
+  const snapshots = mergePerformanceSnapshots({}, campaign);
+  assert.deepEqual(snapshots.map(snapshot => [snapshot.date, snapshot.spend]), [
+    ["2025-12-31", 0], ["2026-01-31", 45_000], ["2026-03-31", 45_000], ["2026-04-30", 100_000], ["2026-05-10", 106_000]
+  ]);
+  assert.equal(snapshots.at(-1).source, "Zeta Global");
+});
+
+test("rejects a malformed history column", () => {
+  const rows = extractMonthlyPerformance(twoLineRows, detectMonthlyPerformance(twoLineRows));
+  const bad = { ...rows[0], history: "not json" };
+  assert.equal(validateCampaignCsv(rowsToCsv([Object.keys(bad), Object.values(bad)])).valid, false);
 });
