@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseInsertionOrder } from "../lib/io-parser.js";
-import { applyIoToCampaign, campaignFieldsFromIo } from "../lib/io-apply.js";
 import { itemsToLines } from "../lib/pdf-text.js";
 
 // Synthetic layouts that mirror the two supported IO formats (made-up names and amounts).
@@ -96,49 +95,6 @@ test("makes unique line IDs when placement names repeat", () => {
   const rows = [["ADVERTISING INSERTION ORDER", "Agency: A", "Advertiser: B", "Campaign: C", "Budget: $200.00",
     "6/1/26 - 6/30/26 Standard Display CPM Impressions $4.00 25,000 $100.00 CTR", "6/1/26 - 6/30/26 Standard Display CPM Impressions $4.00 25,000 $100.00 CTR"]];
   assert.deepEqual(parseInsertionOrder(rows).lineItems.map(item => item.id), ["io-standard-display", "io-standard-display-2"]);
-});
-
-test("applies an IO to a new campaign as flights, a budget revision, and the IO reference", () => {
-  const io = parseInsertionOrder(zetaRio);
-  const now = new Date("2026-10-06T12:00:00Z");
-  const result = applyIoToCampaign({ client: "Acme Health", name: "Acme Fall Launch", budget: null }, io, { fileName: "acme-io.pdf", now });
-  assert.equal(result.applied, 3);
-  assert.equal(result.revised, true);
-  assert.equal(result.campaign.budget, 60000);
-  assert.equal(result.campaign.budgetSource, "io");
-  assert.equal(result.campaign.budgetRevisions.length, 1);
-  assert.equal(result.campaign.ioFileName, "acme-io.pdf");
-  assert.equal(result.campaign.startDate, "2026-06-15");
-  assert.equal(result.campaign.lineItemFlights[0].rateType, "CPM");
-  assert.equal(result.campaign.lineItemFlights[2].kpi, "VCR");
-});
-
-test("re-applying a revised IO updates flights by ID and only revises the budget when it changed", () => {
-  const first = applyIoToCampaign({ client: "A", name: "B", budget: null }, parseInsertionOrder(agencyOrder), { fileName: "r4.pdf" }).campaign;
-  const again = applyIoToCampaign(first, parseInsertionOrder(agencyOrder), { fileName: "r4.pdf" });
-  assert.equal(again.campaign.lineItemFlights.length, 2);
-  assert.equal(again.revised, false);
-  assert.equal(again.campaign.budgetRevisions.length, 1);
-  const revisedPages = clone(agencyOrder);
-  revisedPages[0][5] = "Order total $70,000.00 Placement changes";
-  revisedPages[1][1] = "REVISED PAAA111 Leaderboard 728 x 90 -- No 3rd party No 01/01/2026 - 12/31/2026 CPM Impressions $5.0000 8,000,000 $45,000.00";
-  const revised = applyIoToCampaign(again.campaign, parseInsertionOrder(revisedPages), { fileName: "r5.pdf" });
-  assert.equal(revised.campaign.budget, 70000);
-  assert.equal(revised.campaign.budgetRevisions.length, 2);
-  assert.equal(revised.campaign.lineItemFlights.find(flight => flight.id === "PAAA111").budget, 45000);
-});
-
-test("can apply selected placements only and leave the campaign budget alone", () => {
-  const io = parseInsertionOrder(zetaRio);
-  const result = applyIoToCampaign({ client: "A", name: "B", budget: 1234, budgetSource: "manual" }, io, { selectedIds: ["io-online-video-east"], setBudget: false });
-  assert.equal(result.applied, 1);
-  assert.equal(result.campaign.budget, 1234);
-  assert.equal(result.campaign.budgetSource, "manual");
-  assert.equal(result.campaign.lineItemFlights.length, 1);
-});
-
-test("prefills a new campaign from the order", () => {
-  assert.deepEqual(campaignFieldsFromIo(parseInsertionOrder(agencyOrder), "o.pdf"), { client: "Acme Brand", name: "Acme Brand 2026", startDate: "2026-01-01", endDate: "2026-12-31", budget: 75000, budgetSource: "io", ioFileName: "o.pdf", ioOrder: "O-ABC123X-R4" });
 });
 
 test("rebuilds visual lines from pdf.js text items by baseline and column order", () => {

@@ -147,3 +147,14 @@ test("falls back to DSP impressions when a row has no ad-server impressions", ()
   const [campaign] = extractPerformanceSummaryCampaigns(rows, { sheetName: "S", fileName: "x.xlsx" });
   assert.equal(campaign.impressions, 5_000);
 });
+
+test("bills a flight block on DCM spend when some flights only report DCM", () => {
+  const rows = [
+    [null, null, "Line", "Impressions", "Clicks", "CTR", "DCM Spend", "DSP Impression", "DSP Spend", "IO Budget"],
+    [null, "Flight 1", "Display", 6_567_625, 144, 0.0000219, 21_344.78, 2_892_266, 9_399.86, 20_782.86],
+    [null, "Flight 2", "Display", 9_432_378, 245, 0.000026, 30_655.23, null, null, 20_782.86]
+  ];
+  const [one, two] = extractPerformanceSummaryCampaigns(rows, { sheetName: "Hyperlocal", fileName: "RAC Report.xlsx" });
+  assert.deepEqual([one.spend, one.first_party_spend, one.third_party_spend, one.billing_source], [21_344.78, 9_399.86, 21_344.78, "CM360"]);
+  assert.deepEqual([two.spend, two.billing_source], [30_655.23, "CM360"]);
+});

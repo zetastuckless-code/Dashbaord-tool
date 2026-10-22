@@ -16,7 +16,6 @@ import { dashboardFlightStatus, filterCampaigns } from "./lib/campaign-filters.j
 import { acknowledgeAlert, readAcknowledgedAlerts, removeAcknowledgment, unacknowledgedAlerts, writeAcknowledgedAlerts } from "./lib/alert-acknowledgments.js";
 import { exportCampaignsCsv } from "./lib/dashboard-export.js";
 import { campaignSnapshotHistory, compareLatestSnapshots, exportPerformanceSnapshotsCsv, periodMetrics, periodSpend } from "./lib/performance-snapshots.js";
-import { exportLineItemFlightsCsv, importLineItemFlightsCsv, removeLineItemFlight, saveLineItemFlight, summarizeLineItemBudgets } from "./lib/line-item-flights.js";
 import { sortCampaigns } from "./lib/campaign-sort.js";
 import { filterCampaignsByAttention } from "./lib/campaign-attention.js";
 import { DEFAULT_DASHBOARD_VIEW, readDashboardView, writeDashboardView } from "./lib/dashboard-view.js";
@@ -36,11 +35,11 @@ import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
 import { purgeDemoCampaigns } from "./lib/demo-purge.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
-import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
 import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
+import { applyIoPlan, ioLines, recordLineLabel } from "./lib/io-plan.js";
 import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_KIND_OPTIONS } from "./lib/data-sources.js";
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
@@ -49,13 +48,11 @@ import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
 import { pacingBand } from "./lib/client-rollup.js";
-import { applyAssignments, assignmentKey, initialChoices, KEEP, lineLabel, readAssignments, rememberAssignments, removeFilledShells, SKIP } from "./lib/import-assignment.js";
+import { applyAssignments, assignmentKey, initialChoices, KEEP, lineLabel, readAssignments, rememberAssignments, removeFilledShells, SKIP, suggestCampaigns } from "./lib/import-assignment.js";
 import { applySetupEdits, setupFieldsFromRow, validateSetupEdits } from "./lib/new-campaign-setup.js";
-import { applyIoToCampaign, campaignFieldsFromIo } from "./lib/io-apply.js";
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
-import { addLedgerEntries, clearFolderHandle, folderSyncSupported, isProcessed, ledgerKey, listReportFiles, loadFolderHandle, planAutoImport, readLedger, resolveFileHandle, reviewItems, saveFolderHandle, SYNC_INTERVAL_MS, writeLedger } from "./lib/folder-sync.js";
 
 let campaigns = loadCampaigns();
 let importHistory = readImportHistory(localStorage);
@@ -98,24 +95,14 @@ function loadAlertRules() {
 const formatMoney = value => value >= 1_000_000 ? `$${(value / 1_000_000).toFixed(2)}M` : `$${(value / 1000).toFixed(1)}K`;
 const formatExactMoney = value => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(value);
 const hasBudget = campaign => Number.isFinite(campaign.budget) && campaign.budget > 0;
-const BUDGET_HINTS = {
-  manual: "Type the approved amount. Reports will not overwrite it.",
-  io: "Taken from the insertion order you uploaded. Reports will not overwrite it.",
-  report: "Optional. Leave blank to take the budget from the first report that includes one."
-};
-
-function syncBudgetSourceFields() {
-  const source = document.querySelector("#new-campaign-budget-source").value;
-  document.querySelector("#new-campaign-budget-hint").textContent = BUDGET_HINTS[source];
-}
-document.querySelector("#new-campaign-budget-source").addEventListener("change", syncBudgetSourceFields);
-syncBudgetSourceFields();
-
 // Pacing numbers take their colour from the same thresholds the alerts use: red over, amber under, green on track.
 const paceClass = pacing => Number.isFinite(pacing) ? `pace-${pacingBand(pacing, alertRules)}` : "";
 const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
+  // The insertion order decides each line's dates and IO line; keep the stored lines in step with it.
+  const planned = applyIoPlan(campaigns, campaignTotals);
+  if (planned !== campaigns) { campaigns = planned; localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns)); }
   // The client account view ignores the saved client filter and always shows that client only.
   if (clientScope && !campaigns.some(campaign => campaign.client === clientScope)) { clientScope = null; history.replaceState({}, "", location.pathname); }
   filter = clientScope ?? filter;
@@ -303,7 +290,20 @@ function renderCampaignList(rows, activeAlerts) {
     // Report lines named "Flight N" take their dates from the matching placement of the campaign's insertion orders.
     const placementMatches = matchLinesToPlacements(group.lines, campaignPlacements(campaignTotals[group.key]));
     const auditOptions = line => ({ placement: placementMatches.get(line) || null, order: placementMatches.get(line)?.order || null });
-    const lineRows = group.lines.map(line => {
+    // A campaign with an IO shows its IO lines, each with the report lines matched to it; report lines the IO does not
+    // plan are listed after them so nothing is hidden.
+    const entry = campaignTotals[group.key] || null;
+    const planLines = entry ? ioLines(entry).map(line => ({ ...line, records: group.records.filter(record => record.ioLineStatus === "matched" && record.ioLine === line.key) })) : [];
+    const shownLines = entry ? group.lines.filter(line => line.kind !== "record" || line.record.ioLineStatus !== "matched") .filter(line => line.kind === "record" ? !isPlaceholder(line.record) : true) : group.lines;
+    const ioLineRows = planLines.map(line => {
+      const lineMetrics = line.records.length ? computeMetrics(line.records, { ...options, totals: { budget: line.budget, startDate: line.startDate, endDate: line.endDate } }) : { budget: line.budget };
+      const lineStatus = dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
+      const reportNames = line.records.map(record => recordLineLabel(record));
+      const meta = [`${line.startDate} → ${line.endDate}`, line.placements.length > 1 ? `${line.placements.length} IO flights combined` : "", reportNames.length ? `report: ${reportNames.join(", ")}` : "no report data yet"].filter(Boolean).join(" · ");
+      const index = line.records.length ? campaigns.indexOf(line.records[0]) : -1;
+      return `<div class="campaign-line io-line"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(meta)}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions">${index >= 0 ? `<button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button>` : ""}</span></div>`;
+    }).join("");
+    const lineRows = ioLineRows + shownLines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
       const lineMetrics = line.kind === "flight" ? { budget: line.budget } : computeMetrics(line.kind === "record" ? line.record : line, { ...options, period: line.kind === "record" ? period : "current" });
       const index = campaigns.indexOf(line.record);
@@ -313,7 +313,8 @@ function renderCampaignList(rows, activeAlerts) {
       const fromIo = !line.startDate && Boolean(placement);
       const dates = shownStart && shownEnd ? `${escapeHtml(shownStart)} → ${escapeHtml(shownEnd)}${fromIo ? " · from IO" : ""}` : "";
       const lineStatus = line.kind === "record" ? dashboardFlightStatus({ ...line.record, startDate: shownStart || line.record.startDate, endDate: shownEnd || line.record.endDate }) : null;
-      const meta = [dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
+      const planNote = entry && line.kind === "record" ? (line.record.ioLineStatus === "outside" ? "outside the IO flight" : "not on the IO") : "";
+      const meta = [planNote ? `<em class="plan-note">${planNote}</em>` : "", dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
       const lineSelectKey = stableLineKey(line);
       const lineChecked = selectionFor(group.key).has(lineSelectKey);
       return `<div class="campaign-line${lineChecked ? " selected" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}`;
@@ -326,11 +327,11 @@ function renderCampaignList(rows, activeAlerts) {
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
         <button class="campaign-toggle" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}">›</button>
         <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
-        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${group.lines.length} line${group.lines.length === 1 ? "" : "s"}${campaignTotals[group.key] ? ` · budget from ${campaignTotals[group.key].orders.length > 1 ? `${campaignTotals[group.key].orders.length} IOs` : "IO"}` : ""}${auditSummary}</small></span>
+        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${entry ? planLines.length + shownLines.length : group.lines.length} line${(entry ? planLines.length + shownLines.length : group.lines.length) === 1 ? "" : "s"}${campaignTotals[group.key] ? ` · budget from ${campaignTotals[group.key].orders.length > 1 ? `${campaignTotals[group.key].orders.length} IOs` : "IO"}` : ""}${auditSummary}</small></span>
         ${cells}
         <span class="campaign-card-actions">${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${group.lines.length && group.lines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
+      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
@@ -998,7 +999,6 @@ fileInput.addEventListener("change", () => {
   selectedFile = file;
   document.querySelector("#file-name").textContent = file.name;
   filePreview.hidden = false;
-  syncImportTarget();
   if (!/\.(csv|xlsx)$/i.test(file.name)) {
     showValidationResult(["Choose a .csv or .xlsx report."], "error");
     validateButton.disabled = true;
@@ -1016,9 +1016,6 @@ document.querySelector("#remove-file").addEventListener("click", () => {
   document.querySelector(".dropzone").focus();
 });
 dialog.addEventListener("close", resetImportForm);
-document.querySelectorAll('input[name="import-mode"]').forEach(input => input.addEventListener("change", () => {
-  if (pendingValidatedImport?.result) renderImportPreview(effectiveImport().campaigns);
-}));
 let allowDuplicateOnce = false;
 validationResult.addEventListener("click", event => {
   if (!event.target.closest("#import-anyway")) return;
@@ -1053,14 +1050,13 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
-  if (report.kind === "daily-delivery") {
+  if (report.kind === "daily-delivery" || report.kind === "line-items") {
+    // Daily files and DSP line-item exports are no longer imported on their own; campaign reports carry the lines.
+    const message = "This file is a daily delivery or DSP line-item export. Import the campaign's performance report instead; its line breakdown is read automatically.";
+    recordImport(file.name, fingerprint, "Rejected", 0, [message]);
+    showValidationResult([message], "error");
     validateButton.textContent = "Validate report";
-    handleDailyReport(file, fingerprint, report);
-    return;
-  }
-  if (report.kind === "line-items") {
-    validateButton.textContent = "Validate report";
-    handleLineItemReport(file, fingerprint, report);
+    validateButton.disabled = false;
     return;
   }
   const result = validateCampaignCsv(report.csvText);
@@ -1073,8 +1069,9 @@ validateButton.addEventListener("click", async () => {
     return;
   }
   pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: defaultImportChoices(result.campaigns), groupEdits: {}, skippedLines: new Set() };
-  // A report started as a new campaign opens each campaign's setup for review.
-  if (importTargetMode() === "new") pendingValidatedImport.openSetup = new Set(importGroups().map(group => group.key));
+  // Rows going into a campaign with an IO take their budget from the IO, so a missing report budget is not a problem.
+  const choices = pendingValidatedImport.choices;
+  if (result.campaigns.every(row => campaignTotals[choices[assignmentKey(row)]])) result.warnings = result.warnings.filter(warning => !/has no budget|have no budget/.test(warning));
   normalizeLineSkips();
   renderImportAssignments();
   const effectiveRows = effectiveImport().campaigns;
@@ -1087,10 +1084,8 @@ validateButton.addEventListener("click", async () => {
 });
 confirmImportButton.addEventListener("click", () => {
   if (!pendingValidatedImport) return;
-  if (pendingValidatedImport.kind === "daily") { confirmDailyImport(); return; }
-  if (pendingValidatedImport.kind === "line-items") { confirmLineItemImport(); return; }
   const { fileName, fingerprint, result } = pendingValidatedImport;
-  const importMode = document.querySelector('input[name="import-mode"]:checked').value;
+  const importMode = "merge";
   const effectiveRows = effectiveImport().campaigns;
   rememberAssignments(localStorage, result.campaigns, { ...pendingValidatedImport.choices, ...Object.fromEntries([...pendingValidatedImport.skippedLines].map(key => [key, SKIP])) });
   if (setupErrors().length) return;
@@ -1115,131 +1110,6 @@ confirmImportButton.addEventListener("click", () => {
     resetImportForm();
   }, 550);
 });
-
-function handleLineItemReport(file, fingerprint, report) {
-  const parsed = report.parsed;
-  if (!parsed.valid) {
-    recordImport(file.name, fingerprint, "Rejected", 0, parsed.errors);
-    showValidationResult(parsed.errors, "error");
-    validateButton.disabled = false;
-    return;
-  }
-  pendingValidatedImport = { kind: "line-items", fileName: file.name, fingerprint, report, parsed, links: {} };
-  document.querySelector(".import-mode").hidden = true;
-  document.querySelector("#mapping-review").hidden = true;
-  renderLineItemPreview();
-  presetTargetLinks();
-}
-
-function renderLineItemPreview() {
-  const { parsed, links, report } = pendingValidatedImport;
-  const result = applyLineItems(campaigns, parsed, links, { fileName: pendingValidatedImport.fileName });
-  pendingValidatedImport.lineResult = result;
-  const attached = result.matched.reduce((sum, item) => sum + item.count, 0);
-  const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
-  document.querySelector("#import-preview").hidden = false;
-  document.querySelector("#import-preview-title").textContent = "DSP line-item preview";
-  document.querySelector("#import-preview-mode").textContent = "Line items attach to existing campaigns";
-  document.querySelector("#import-preview-summary").innerHTML = `<div><strong>${result.matched.length}</strong><small>Campaigns</small></div><div><strong>${attached}</strong><small>Line items</small></div><div class="${result.unmatched.length ? "destructive" : ""}"><strong>${result.unmatched.length}</strong><small>Unmatched</small></div><div><strong>${parsed.lineItemCount}</strong><small>In file</small></div>`;
-  const options = `<option value="">Skip this campaign</option>${campaigns.map((campaign, index) => `<option value="${index}">${escapeHtml(campaign.client)} · ${escapeHtml(campaign.name)}</option>`).join("")}`;
-  document.querySelector("#import-preview-list").innerHTML = result.matched.map(item => `<div><span><strong>${escapeHtml(item.campaign)}</strong><small>${escapeHtml(item.client)} · ${item.count} line item${item.count === 1 ? "" : "s"}</small></span><em class="preview-action update">attach</em></div>`).join("")
-    + result.unmatched.map(entry => `<div><span><strong>${escapeHtml(entry.sourceName)}</strong><small>${entry.lineItems.length} line item${entry.lineItems.length === 1 ? "" : "s"} · not matched</small></span><select class="daily-link-select" data-line-key="${escapeHtml(entry.key)}" aria-label="Link ${escapeHtml(entry.sourceName)} to a dashboard campaign">${options}</select></div>`).join("");
-  document.querySelectorAll("[data-line-key]").forEach(select => select.addEventListener("change", () => {
-    if (select.value === "") delete pendingValidatedImport.links[select.dataset.lineKey]; else pendingValidatedImport.links[select.dataset.lineKey] = Number(select.value);
-    renderLineItemPreview();
-  }));
-  confirmImportButton.disabled = result.matched.length === 0;
-  const messages = [`${parsed.lineItemCount} line item${parsed.lineItemCount === 1 ? "" : "s"} in ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"} read from ${location}.`, ...(result.unmatched.length ? [`${result.unmatched.length} campaign${result.unmatched.length === 1 ? "" : "s"} not matched; link each below or it will be skipped.`] : [])];
-  if (!result.matched.length) messages.unshift("No campaign in the file matched a dashboard campaign. Import the campaign's weekly report first or link it below.");
-  showValidationResult(messages, result.matched.length ? "success" : "error", result.unmatched.length ? messages.slice(1) : []);
-  validateButton.disabled = false;
-}
-
-function confirmLineItemImport() {
-  const { fileName, fingerprint, lineResult } = pendingValidatedImport;
-  const keys = lineResult.matched.map(item => [item.client, item.campaignId || item.campaign, "dsp line items"].map(value => String(value ?? "").trim().toLowerCase()).join("::"));
-  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: lineResult.matched.length, campaignKeys: keys }));
-  campaigns = lineResult.campaigns;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  const warnings = lineResult.unmatched.map(entry => `Skipped unmatched campaign: ${entry.sourceName}.`);
-  recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", lineResult.matched.length, [], keys, warnings);
-  refreshClientFilter();
-  renderCampaigns();
-  document.querySelector("#toast-title").textContent = "Line items imported";
-  document.querySelector("#toast-message").textContent = `Line-item performance attached to ${lineResult.matched.length} campaign${lineResult.matched.length === 1 ? "" : "s"}.`;
-  setTimeout(() => {
-    dialog.close();
-    const toast = document.querySelector("#toast");
-    toast.classList.add("show");
-    setTimeout(() => toast.classList.remove("show"), 3200);
-    resetImportForm();
-  }, 550);
-}
-
-function handleDailyReport(file, fingerprint, report) {
-  const parsed = report.parsed;
-  if (!parsed.valid) {
-    recordImport(file.name, fingerprint, "Rejected", 0, parsed.errors);
-    showValidationResult(parsed.errors, "error");
-    validateButton.disabled = false;
-    return;
-  }
-  pendingValidatedImport = { kind: "daily", fileName: file.name, fingerprint, report, parsed, links: {} };
-  document.querySelector(".import-mode").hidden = true;
-  document.querySelector("#mapping-review").hidden = true;
-  renderDailyPreview();
-  presetTargetLinks();
-}
-
-function renderDailyPreview() {
-  const { parsed, links, report } = pendingValidatedImport;
-  const result = applyDailyDelivery(campaigns, parsed, links, { fileName: pendingValidatedImport.fileName });
-  pendingValidatedImport.dailyResult = result;
-  const days = result.matched.reduce((sum, item) => sum + item.days, 0);
-  const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
-  document.querySelector("#import-preview").hidden = false;
-  document.querySelector("#import-preview-title").textContent = `${parsed.source} daily delivery preview`;
-  document.querySelector("#import-preview-mode").textContent = "Daily rows never create campaigns";
-  document.querySelector("#import-preview-summary").innerHTML = `<div><strong>${result.matched.length}</strong><small>Matched</small></div><div><strong>${days}</strong><small>Days applied</small></div><div class="${result.unmatched.length ? "destructive" : ""}"><strong>${result.unmatched.length}</strong><small>Unmatched</small></div><div><strong>${parsed.records.length}</strong><small>Daily rows</small></div>`;
-  const options = `<option value="">Skip this campaign</option>${campaigns.map((campaign, index) => `<option value="${index}">${escapeHtml(campaign.client)} · ${escapeHtml(campaign.name)}</option>`).join("")}`;
-  document.querySelector("#import-preview-list").innerHTML = result.matched.map(item => `<div><span><strong>${escapeHtml(item.campaign)}</strong><small>${escapeHtml(item.client)} · ${escapeHtml(parsed.source)} · ${item.days} day${item.days === 1 ? "" : "s"}</small></span><em class="preview-action update">update</em></div>`).join("")
-    + result.unmatched.map(entry => `<div><span><strong>${escapeHtml(entry.sourceCampaignName || entry.sourceCampaignId)}</strong><small>${escapeHtml(parsed.source)}${entry.sourceCampaignId ? ` · ${escapeHtml(entry.sourceCampaignId)}` : ""} · ${entry.days} day${entry.days === 1 ? "" : "s"} · not matched</small></span><select class="daily-link-select" data-key="${escapeHtml(entry.key)}" aria-label="Link ${escapeHtml(entry.sourceCampaignName || entry.sourceCampaignId)} to a dashboard campaign">${options}</select></div>`).join("");
-  document.querySelectorAll(".daily-link-select").forEach(select => select.addEventListener("change", () => {
-    const entry = parsed.campaigns.find(item => item.key === select.dataset.key);
-    const keys = [entry.sourceCampaignId, entry.sourceCampaignName].map(value => String(value ?? "").trim().toLowerCase()).filter(Boolean);
-    keys.forEach(key => {
-      if (select.value === "") delete pendingValidatedImport.links[`${parsed.source}::${key}`];
-      else pendingValidatedImport.links[`${parsed.source}::${key}`] = Number(select.value);
-    });
-    renderDailyPreview();
-  }));
-  confirmImportButton.disabled = result.matched.length === 0;
-  const messages = [`${parsed.records.length} daily row${parsed.records.length === 1 ? "" : "s"} for ${parsed.campaigns.length} source campaign${parsed.campaigns.length === 1 ? "" : "s"} read from ${location}.`, ...(result.unmatched.length ? [`${result.unmatched.length} campaign${result.unmatched.length === 1 ? "" : "s"} not matched; link each below or it will be skipped.`] : []), ...result.warnings];
-  if (!result.matched.length) messages.unshift("No source campaign matched an existing dashboard campaign. Create the campaign first or link it below.");
-  showValidationResult(messages, result.matched.length ? "success" : "error", result.unmatched.length || result.warnings.length ? messages.slice(1) : []);
-  validateButton.disabled = false;
-}
-
-function confirmDailyImport() {
-  const { fileName, fingerprint, parsed, dailyResult } = pendingValidatedImport;
-  const keys = dailyResult.matched.map(item => [item.client, item.campaignId || item.campaign, parsed.source].map(value => String(value ?? "").trim().toLowerCase()).join("::"));
-  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: dailyResult.matched.length, campaignKeys: keys }));
-  campaigns = dailyResult.campaigns;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  const warnings = [...dailyResult.warnings, ...dailyResult.unmatched.map(entry => `Skipped unmatched ${parsed.source} campaign: ${entry.sourceCampaignName || entry.sourceCampaignId}.`)];
-  recordImport(fileName, fingerprint, warnings.length ? "Imported with warnings" : "Imported", dailyResult.matched.length, [], keys, warnings);
-  refreshClientFilter();
-  renderCampaigns();
-  document.querySelector("#toast-message").textContent = `${parsed.source} daily delivery applied to ${dailyResult.matched.length} campaign${dailyResult.matched.length === 1 ? "" : "s"}.`;
-  document.querySelector("#toast-title").textContent = "Daily report imported";
-  setTimeout(() => {
-    dialog.close();
-    const toast = document.querySelector("#toast");
-    toast.classList.add("show");
-    setTimeout(() => toast.classList.remove("show"), 3200);
-    resetImportForm();
-  }, 550);
-}
 
 // --- Import preview, one block per campaign: what it becomes, its setup, and its insertion order ---
 // One report can hold several campaigns (e.g. Hyperlocal and OLA); each gets its own choice, setup, and IO.
@@ -1336,8 +1206,10 @@ function renderImportAssignments() {
     const editedRows = group.rows.map(row => rowWithGroupEdits(row, edits, sizes.get(group.key)));
     const actions = choice ? [] : previewCampaignImport(campaigns, editedRows).actions.map(item => item.action);
     const updates = actions.includes("update");
-    const keepLabel = updates ? "Update the matching campaign" : "New campaign from this report";
-    const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice ? '<em class="preview-action update">added to campaign</em>' : updates ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
+    // A report campaign with the same client and name as one you track (often one created from its IO) joins it.
+    const sameName = existing.find(item => item.key === group.key);
+    const keepLabel = sameName ? `Add to ${sameName.client} · ${sameName.name} (same name)` : updates ? "Update the matching campaign" : "New campaign from this report";
+    const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice || sameName ? '<em class="preview-action update">added to campaign</em>' : updates ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
     const budgetTotal = group.rows.reduce((sum, row) => sum + (Number.isFinite(row.budget) ? row.budget : 0), 0);
     const meta = [group.client, `${group.rows.length} line${group.rows.length === 1 ? "" : "s"}`, budgetTotal ? `${formatMoney(budgetTotal)} budget in report` : ""].filter(Boolean).map(escapeHtml).join(" · ");
     let setup = "";
@@ -1408,72 +1280,6 @@ document.querySelector("#import-assign-all").addEventListener("change", event =>
   refreshImportAfterAssignment();
 });
 
-/** Applies a parsed order to a campaign, with no dialog and no restore point of its own (callers take one). */
-function applyIoToGroup(io, fileName, key, mode, { selectedIds = null, setBudget = true } = {}) {
-  const group = groupCampaigns(campaigns).find(item => item.key === key);
-  if (!group) return null;
-  const record = group.records.find(item => (item.lineItemFlights || []).length) || group.records[0];
-  const index = campaigns.indexOf(record);
-  if (mode === "flights") {
-    const applied = applyIoToCampaign(record, io, { fileName, selectedIds, setBudget });
-    campaigns[index] = applied.campaign;
-    return { mode, name: group.name, applied: applied.applied };
-  }
-  campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, key, io, fileName));
-  campaigns[index] = { ...record, ioFileName: fileName || record.ioFileName || null, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || record.ioOrder || null };
-  return { mode, name: group.name };
-}
-
-// --- Several insertion orders at once: each is matched to a campaign, then all are applied together ---
-const multiIoDialog = document.querySelector("#multi-io-dialog");
-let pendingMultiIo = [];
-
-const multiIoGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign) && (!clientScope || campaign.client === clientScope)));
-
-async function startMultiIo(files) {
-  const entries = await readIoFiles(files);
-  const groups = multiIoGroups();
-  pendingMultiIo = entries.map(entry => ({ ...entry, target: entry.io ? findCampaignForIo(groups, campaignTotals, entry.io)?.key || "" : "" }));
-  renderMultiIo();
-  multiIoDialog.showModal();
-}
-
-function renderMultiIo() {
-  const groups = multiIoGroups();
-  const groupLabel = group => clientScope ? group.name : `${group.client} · ${group.name}`;
-  document.querySelector("#multi-io-error").hidden = true;
-  document.querySelector("#multi-io-list").innerHTML = pendingMultiIo.map((entry, index) => {
-    if (entry.error) return `<div class="multi-io-row error"><span><strong>${escapeHtml(entry.file.name)}</strong><small>${escapeHtml(entry.error)}</small></span><em class="preview-action replace">not read</em></div>`;
-    const { io } = entry;
-    const facts = [[io.orderNumber, io.revision].filter(Boolean).join(" "), io.budget ? formatExactMoney(io.budget) : "", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "", `${io.lineItems.length} placement${io.lineItems.length === 1 ? "" : "s"}`].filter(Boolean).map(escapeHtml).join(" · ");
-    return `<div class="multi-io-row"><span><strong>${escapeHtml(io.campaign || entry.file.name)}</strong><small>${escapeHtml(entry.file.name)} · ${facts}</small></span><select data-multi-io-target="${index}" aria-label="Campaign for ${escapeHtml(entry.file.name)}"><option value="">Choose a campaign…</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${entry.target === group.key ? " selected" : ""}>${escapeHtml(groupLabel(group))}</option>`).join("")}<option value="__skip"${entry.target === "__skip" ? " selected" : ""}>Skip this order</option></select></div>`;
-  }).join("");
-}
-
-document.querySelector("#multi-io-list").addEventListener("change", event => {
-  const select = event.target.closest("[data-multi-io-target]");
-  if (select) pendingMultiIo[Number(select.dataset.multiIoTarget)].target = select.value;
-});
-document.querySelectorAll(".close-multi-io").forEach(button => button.addEventListener("click", () => multiIoDialog.close()));
-
-document.querySelector("#multi-io-form").addEventListener("submit", event => {
-  event.preventDefault();
-  const error = document.querySelector("#multi-io-error");
-  const chosen = pendingMultiIo.filter(entry => entry.io && entry.target && entry.target !== "__skip");
-  const duplicates = chosen.filter((entry, index) => chosen.findIndex(other => other.target === entry.target) !== index);
-  const problems = [];
-  if (!chosen.length) problems.push("Choose a campaign for at least one order.");
-  if (duplicates.length) problems.push(`Two orders are assigned to the same campaign (${duplicates.map(entry => entry.file.name).join(", ")}). Each campaign takes one order.`);
-  if (problems.length) { error.textContent = problems.join(" "); error.hidden = false; return; }
-  const mode = document.querySelector('input[name="multi-io-mode"]:checked')?.value || "totals";
-  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `applying ${chosen.length} insertion order${chosen.length === 1 ? "" : "s"}` }));
-  const applied = chosen.map(entry => applyIoToGroup(entry.io, entry.file.name, entry.target, mode, { selectedIds: entry.io.lineItems.filter(item => !item.addedValue).map(item => item.id) })).filter(Boolean);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  multiIoDialog.close();
-  refreshAfterDataChange();
-  showToast("Insertion orders applied", `${applied.length} order${applied.length === 1 ? "" : "s"} applied (${applied.map(item => item.name).join(", ")}). Use Undo to revert them together.`);
-});
-
 // --- One import flow: pick where the report goes (an existing campaign or a new one), then the report itself ---
 /** Rows grouped by the campaign they belong to ("Drive To Store — Flight 1" and "— Flight 2" are one campaign). */
 function groupReportRows(rows) {
@@ -1486,84 +1292,21 @@ function groupReportRows(rows) {
   return [...groups.values()];
 }
 
-const importTargetMode = () => document.querySelector('input[name="import-target"]:checked')?.value || "existing";
-const importTargetGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign) && (!clientScope || campaign.client === clientScope)));
-/** The campaign picked up front, or null when the report should decide (or a new campaign is being set up). */
-const specificImportTarget = () => {
-  if (importTargetMode() !== "existing") return null;
-  const value = document.querySelector("#import-target-campaign").value;
-  return value && value !== "__auto" ? value : null;
-};
-
-function renderImportTargets(selected = "__auto") {
-  const groups = importTargetGroups();
-  const select = document.querySelector("#import-target-campaign");
-  select.innerHTML = `<option value="__auto">Let the report decide (match by name)</option>${groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(clientScope ? group.name : `${group.client} · ${group.name}`)}</option>`).join("")}`;
-  select.value = groups.some(group => group.key === selected) ? selected : "__auto";
-}
-
-function syncImportTarget() {
-  const mode = importTargetMode();
-  document.querySelector("#import-target-campaign-label").hidden = mode !== "existing";
-  // The setup form is for a campaign with no report yet; once a report is chosen its setup comes from the report.
-  document.querySelector("#new-campaign-setup").hidden = !(mode === "new" && !selectedFile);
-  const client = document.querySelector("#new-campaign-client");
-  if (mode === "new" && clientScope && !client.value) client.value = clientScope;
-  document.querySelector("#import-dropzone-title").textContent = mode === "new" ? "Choose a report to set it up from (optional)" : "Choose a campaign report";
-}
-
-/** Where each report line goes before the person changes anything: the picked campaign, a new campaign, or what the report matches. */
+/** Where each report campaign goes before the person changes anything: what it matched last time, or by name. */
 function defaultImportChoices(rows) {
-  const remembered = initialChoices(rows, readAssignments(localStorage), groupCampaigns(campaigns));
-  const skips = Object.fromEntries(Object.entries(remembered).filter(([, choice]) => choice === SKIP));
-  if (importTargetMode() === "new") return skips;
-  const key = specificImportTarget();
-  if (!key) return remembered;
-  return { ...Object.fromEntries(rows.map(row => [assignmentKey(row), key])), ...skips };
+  const groups = groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign)));
+  return { ...suggestCampaigns(rows, groups, campaignTotals), ...initialChoices(rows, readAssignments(localStorage), groups) };
 }
 
-/** A campaign picked up front takes every source campaign in a daily or line-item file that did not match on its own. */
-function presetTargetLinks() {
-  const pending = pendingValidatedImport;
-  const key = specificImportTarget();
-  if (!pending || !key) return;
-  const group = groupCampaigns(campaigns).find(item => item.key === key);
-  const index = group ? campaigns.indexOf(group.records[0]) : -1;
-  if (index < 0) return;
-  if (pending.kind === "daily" && pending.dailyResult.unmatched.length) {
-    pending.dailyResult.unmatched.forEach(entry => [entry.sourceCampaignId, entry.sourceCampaignName].map(value => String(value ?? "").trim().toLowerCase()).filter(Boolean).forEach(name => { pending.links[`${pending.parsed.source}::${name}`] = index; }));
-    renderDailyPreview();
-  } else if (pending.kind === "line-items" && pending.lineResult.unmatched.length) {
-    pending.lineResult.unmatched.forEach(entry => { pending.links[entry.key] = index; });
-    renderLineItemPreview();
-  }
-}
-
-function openImportDialog({ target } = {}) {
+function openImportDialog() {
   resetImportForm();
-  const mode = target || (importTargetGroups().length ? "existing" : "new");
-  renderImportTargets();
-  document.querySelector(`input[name="import-target"][value="${mode}"]`).checked = true;
-  syncImportTarget();
   renderImportHistory();
   dialog.showModal();
 }
 
-document.querySelectorAll('input[name="import-target"], #import-target-campaign').forEach(control => control.addEventListener("change", () => {
-  syncImportTarget();
-  const pending = pendingValidatedImport;
-  if (pending?.result) {
-    pending.choices = defaultImportChoices(pending.result.campaigns);
-    pending.openSetup = importTargetMode() === "new" ? new Set(importGroups().map(group => group.key)) : undefined;
-    normalizeLineSkips();
-    renderImportAssignments();
-    refreshImportAfterAssignment();
-  } else if (pending?.kind) presetTargetLinks();
-}));
-
 function renderImportPreview(importedCampaigns) {
   document.querySelector("#import-preview-title").textContent = "Import impact preview";
-  const mode = document.querySelector('input[name="import-mode"]:checked').value;
+  const mode = "merge";
   const preview = previewCampaignImport(campaigns, importedCampaigns, mode);
   const container = document.querySelector("#import-preview");
   container.hidden = false;
@@ -1592,50 +1335,6 @@ document.querySelector("#export-mapping-review").addEventListener("click", () =>
 document.querySelector("#mobile-menu").addEventListener("click", event => {
   const open = document.querySelector(".sidebar").classList.toggle("open");
   event.currentTarget.setAttribute("aria-expanded", String(open));
-});
-function clearNewCampaignFields() {
-  document.querySelector('#new-campaign-budget-source option[value="io"]')?.remove();
-  document.querySelectorAll("#new-campaign-setup input, #new-campaign-setup select").forEach(control => {
-    if (control.tagName === "SELECT") control.selectedIndex = 0; else control.value = "";
-  });
-  document.querySelector("#create-campaign-error").hidden = true;
-  syncBudgetSourceFields();
-}
-
-/** Creates a campaign from the setup form (no report yet) and carries on to the report step with it selected. */
-function createCampaignFromSetup() {
-  const field = id => document.querySelector(id).value;
-  const result = createCampaign({
-    client: field("#new-campaign-client"), name: field("#new-campaign-name"), campaignId: field("#new-campaign-id"), owner: field("#new-campaign-owner"), channel: field("#new-campaign-channel"),
-    startDate: field("#new-campaign-start"), endDate: field("#new-campaign-end"),
-    budget: field("#new-campaign-budget"), budgetSource: field("#new-campaign-budget-source"), billingSource: field("#new-campaign-billing-source"),
-    kpi: field("#new-campaign-kpi"), target: field("#new-campaign-target"), reportCadence: field("#new-campaign-report-cadence"), ioFileName: pendingIoForCreate?.fileName
-  });
-  const error = document.querySelector("#create-campaign-error");
-  if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
-  let created = result.campaign;
-  if (pendingIoForCreate?.mode === "totals") {
-    campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(created), pendingIoForCreate.io, pendingIoForCreate.fileName));
-  } else if (pendingIoForCreate) {
-    created = applyIoToCampaign(created, pendingIoForCreate.io, { fileName: pendingIoForCreate.fileName, selectedIds: pendingIoForCreate.selectedIds, setBudget: false }).campaign;
-  }
-  pendingIoForCreate = null;
-  campaigns.push(created);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  refreshClientFilter();
-  renderCampaigns();
-  clearNewCampaignFields();
-  renderImportTargets(groupKey(created));
-  document.querySelector('input[name="import-target"][value="existing"]').checked = true;
-  syncImportTarget();
-  showToast("Campaign created", `${created.name} is ready. Choose its report below to add its numbers.`);
-}
-
-document.querySelector("#create-campaign-submit").addEventListener("click", createCampaignFromSetup);
-document.querySelector("#new-campaign-setup").addEventListener("keydown", event => {
-  if (event.key !== "Enter" || event.target.tagName !== "INPUT" || event.target.type === "file") return;
-  event.preventDefault();
-  createCampaignFromSetup();
 });
 document.querySelector("#alert-settings-button").addEventListener("click", () => {
   document.querySelector("#under-pacing-input").value = alertRules.underPacing;
@@ -1691,52 +1390,6 @@ document.querySelector("#reset-acknowledged-alerts").addEventListener("click", (
   const toast = document.querySelector("#toast"); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3200);
 });
 document.querySelectorAll(".close-campaign-dialog").forEach(button => button.addEventListener("click", () => campaignDialog.close()));
-document.querySelector("#save-line-item-flight").addEventListener("click", () => {
-  const result = saveLineItemFlight(campaigns[activeCampaignIndex], {
-    id: document.querySelector("#line-item-id-input").value,
-    name: document.querySelector("#line-item-name-input").value,
-    startDate: document.querySelector("#line-item-start-input").value,
-    endDate: document.querySelector("#line-item-end-input").value,
-    budget: document.querySelector("#line-item-budget-input").value
-  });
-  const error = document.querySelector("#campaign-settings-error");
-  if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
-  campaigns[activeCampaignIndex] = result.campaign;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  renderLineItemFlights(result.campaign);
-  ["#line-item-id-input", "#line-item-name-input", "#line-item-budget-input"].forEach(selector => { document.querySelector(selector).value = ""; });
-  error.hidden = true;
-});
-document.querySelector("#export-line-items").addEventListener("click", () => {
-  const campaign = campaigns[activeCampaignIndex];
-  const csv = exportLineItemFlightsCsv(campaign);
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  const safeName = campaign.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "campaign";
-  const link = Object.assign(document.createElement("a"), { href: url, download: `${safeName}-line-item-flights.csv` });
-  link.click();
-  URL.revokeObjectURL(url);
-});
-document.querySelector("#line-item-flight-list").addEventListener("click", event => {
-  const button = event.target.closest("[data-remove-line-item]");
-  if (!button) return;
-  const result = removeLineItemFlight(campaigns[activeCampaignIndex], button.dataset.removeLineItem);
-  if (!result.removed) return;
-  campaigns[activeCampaignIndex] = result.campaign;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  renderLineItemFlights(result.campaign);
-});
-document.querySelector("#line-item-import-input").addEventListener("change", async event => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const result = importLineItemFlightsCsv(campaigns[activeCampaignIndex], await file.text());
-  const error = document.querySelector("#campaign-settings-error");
-  if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; event.target.value = ""; return; }
-  campaigns[activeCampaignIndex] = result.campaign;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  renderLineItemFlights(result.campaign);
-  error.hidden = true;
-  event.target.value = "";
-});
 document.querySelector("#snapshot-period-select").addEventListener("change", () => renderSnapshotComparison(campaigns[activeCampaignIndex]));
 document.querySelector("#export-snapshot-history").addEventListener("click", () => {
   const campaign = campaigns[activeCampaignIndex];
@@ -1890,212 +1543,127 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#revision-note-input").value = "";
   document.querySelector("#revision-io-input").value = "";
   document.querySelector("#campaign-settings-error").hidden = true;
-  document.querySelector("#line-item-import-input").value = "";
   document.querySelector("#campaign-start-input").value = campaign.startDate || "";
   document.querySelector("#campaign-end-input").value = campaign.endDate || "";
-  document.querySelector("#line-item-start-input").value = "";
-  document.querySelector("#line-item-end-input").value = "";
-  renderLineItemFlights(campaign);
   renderIoTotalsNote(campaign);
   campaignDialog.showModal();
 }
 
 // --- Insertion order (PDF) review: parse in the browser, confirm, then apply ---
+// --- Upload IO: one order at a time (several files queue up). It creates a campaign or revises one; nothing else. ---
 const ioReviewDialog = document.querySelector("#io-review-dialog");
+const NEW_CAMPAIGN = "__new";
 let pendingIo = null;
-let pendingIoForCreate = null;
+let ioQueue = [];
 
-async function startIoReview(file, mode) {
-  const status = document.querySelector(mode === "create" ? "#create-campaign-error" : "#campaign-settings-error");
-  status.hidden = true;
-  // Client pages have no inline error area, so problems there are shown as a notice.
-  const fail = message => {
-    if (mode === "client") { showToast("Insertion order", message); return; }
-    status.textContent = message;
-    status.hidden = false;
-  };
-  if (!/\.pdf$/i.test(file.name)) {
-    if (mode === "create") pendingIoForCreate = null;
-    if (mode === "client") fail("Choose the insertion order as a PDF.");
+const ioTargetGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign)));
+const orderLabel = io => [io.orderNumber, io.revision].filter(Boolean).join(" ");
+
+async function queueIoFiles(files, { presetKey = null } = {}) {
+  ioQueue.push(...files.map(file => ({ file, presetKey })));
+  if (!pendingIo) await nextIo();
+}
+
+async function nextIo() {
+  while (ioQueue.length) {
+    const { file, presetKey } = ioQueue.shift();
+    const [entry] = await readIoFiles([file]);
+    if (entry.error) { showToast("Insertion order", `${file.name}: ${entry.error}`); continue; }
+    pendingIo = { io: entry.io, fileName: file.name, presetKey };
+    renderIoReview();
+    if (!ioReviewDialog.open) ioReviewDialog.showModal();
     return;
   }
-  if (file.size > 25 * 1024 * 1024) { fail("The insertion order is larger than the 25 MB limit."); return; }
-  try {
-    const io = await readIoPdf(file);
-    if (!io.valid) { fail(io.errors.join(" ")); if (mode === "create") pendingIoForCreate = null; return; }
-    pendingIo = { io, fileName: file.name, mode };
-    renderIoReview();
-    ioReviewDialog.showModal();
-  } catch (error) {
-    fail(`Could not read this PDF: ${error.message}`);
-  }
-}
-
-const ioTargetGroups = () => groupCampaigns(campaigns.filter(campaign => !isCampaignArchived(campaign) && (!clientScope || campaign.client === clientScope)));
-
-/** The campaign group the order will be applied to, or null when it will start a new campaign. */
-function ioTargetGroupKey() {
-  if (pendingIo.mode === "details") return campaigns[activeCampaignIndex] ? groupKey(campaigns[activeCampaignIndex]) : null;
-  if (pendingIo.mode === "client") {
-    const value = document.querySelector("#io-review-target").value;
-    return value === "__new" ? null : value;
-  }
-  return null;
-}
-
-function syncIoDefaultMode() {
-  // Campaigns that already have report data are paced on the order's totals by default, so IO placements never fight report lines.
-  const key = ioTargetGroupKey();
-  const group = key ? groupCampaigns(campaigns).find(item => item.key === key) : null;
-  const hasReports = Boolean(group?.records.some(record => Number(record.spend) > 0));
-  const defaultMode = pendingIo.mode === "create" || !group || hasReports ? "totals" : "flights";
-  document.querySelectorAll('input[name="io-mode"]').forEach(radio => { radio.checked = radio.value === defaultMode; });
+  pendingIo = null;
+  if (ioReviewDialog.open) ioReviewDialog.close();
 }
 
 function renderIoReview() {
-  const { io, mode } = pendingIo;
-  const money = value => formatExactMoney(value);
-  document.querySelector("#io-review-subtitle").textContent = [io.advertiser, io.campaign].filter(Boolean).join(" · ");
-  const facts = [["Agency", io.agency], ["Order", [io.orderNumber, io.revision].filter(Boolean).join(" ") || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? money(io.budget) : "—"], ["Placements", String(io.lineItems.length)]];
+  const { io, fileName, presetKey } = pendingIo;
+  document.querySelector("#io-review-eyebrow").textContent = ioQueue.length ? `INSERTION ORDER · ${ioQueue.length} MORE AFTER THIS` : "INSERTION ORDER";
+  document.querySelector("#io-review-subtitle").textContent = [io.advertiser, io.campaign, fileName].filter(Boolean).join(" · ");
+  const facts = [["Agency", io.agency], ["Order", orderLabel(io) || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? formatExactMoney(io.budget) : "—"]];
   document.querySelector("#io-review-facts").innerHTML = facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
   const warnings = document.querySelector("#io-review-warnings");
   warnings.hidden = io.warnings.length === 0;
   warnings.innerHTML = io.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join("");
-  document.querySelector("#io-review-lines").innerHTML = io.lineItems.map(item => `<label class="io-review-line"><input type="checkbox" name="io-line" value="${escapeHtml(item.id)}"${item.addedValue ? "" : " checked"} /><span class="io-line-name"><strong>${escapeHtml(item.name)}</strong><small>${item.startDate ? escapeHtml(item.startDate) : "—"} → ${item.endDate ? escapeHtml(item.endDate) : "—"}${item.rate ? ` · ${escapeHtml(item.rateType || "")} $${Number(item.rate).toFixed(2)}` : ""}${item.units ? ` · ${formatCount(item.units)} ${escapeHtml(item.unit || "units").toLowerCase()}` : ""}${item.kpi ? ` · ${escapeHtml(item.kpi)}` : ""}</small></span><b>${money(item.budget)}</b></label>`).join("");
-  document.querySelector("#io-review-budget-label").textContent = io.budget ? `Set the campaign budget to ${money(io.budget)} (recorded as a budget revision)` : "";
+  const groups = ioTargetGroups();
+  const match = presetKey ? { key: presetKey, reason: "preset" } : findCampaignForIo(clientScope ? groups.filter(group => group.client === clientScope) : groups, campaignTotals, io) || findCampaignForIo(groups, campaignTotals, io);
+  const selected = match?.key || NEW_CAMPAIGN;
+  document.querySelector("#io-review-target").innerHTML = `<option value="${NEW_CAMPAIGN}">New campaign from this IO</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${group.key === selected ? " selected" : ""}>${escapeHtml(`${group.client} · ${group.name}`)}</option>`).join("")}`;
+  document.querySelector("#io-review-target").value = selected;
+  document.querySelector("#io-new-client").value = clientScope || io.advertiser || "";
+  document.querySelector("#io-new-name").value = io.campaign || "";
+  document.querySelector("#io-review-match-note").textContent = !match ? "No campaign matches this order, so it will start a new one. Choose a campaign instead if it revises one you track."
+    : match.reason === "preset" ? "This order will be applied to the campaign you opened."
+      : match.reason === "order" ? (match.isRevision ? `This revises order ${match.appliedOrder}, already applied to this campaign. Applying it replaces that order.` : `Order ${match.appliedOrder} is already applied to this campaign. Applying it again replaces it.`)
+        : "Matched to this campaign by name. Change it if that is wrong.";
+  // The lines the campaign will be paced on: placements with the same name are one line.
+  const lines = ioLines(setCampaignTotals({}, "preview", io, fileName).preview);
+  document.querySelector("#io-review-selection").textContent = `${lines.length} line${lines.length === 1 ? "" : "s"} · ${formatExactMoney(lines.reduce((sum, line) => sum + line.budget, 0))}`;
+  document.querySelector("#io-review-lines").innerHTML = lines.map(line => `<div class="io-review-line"><span class="io-line-main"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}${line.placements.length > 1 ? ` · ${line.placements.length} flights combined` : ""}</small></span><span class="io-line-budget">${escapeHtml(formatExactMoney(line.budget))}</span></div>`).join("");
   document.querySelector("#io-review-error").hidden = true;
-  // Client pages let you pick which campaign the order belongs to (or start a new one) and spot revisions of an applied order.
-  const targetLabel = document.querySelector("#io-review-target-label");
-  const note = document.querySelector("#io-review-match-note");
-  targetLabel.hidden = mode !== "client";
-  note.hidden = true;
-  if (mode === "client") {
-    const groups = ioTargetGroups();
-    const match = findCampaignForIo(groups, campaignTotals, io);
-    document.querySelector("#io-review-target").innerHTML = `${groups.map(group => `<option value="${escapeHtml(group.key)}"${match?.key === group.key ? " selected" : ""}>${escapeHtml(clientScope ? group.name : `${group.client} · ${group.name}`)}</option>`).join("")}<option value="__new"${match ? "" : " selected"}>＋ Create a new campaign from this order</option>`;
-    note.hidden = false;
-    note.textContent = !match ? `No ${clientScope ? `${clientScope} ` : ""}campaign matches this order, so a new campaign is selected. Choose an existing campaign if it belongs to one.`
-      : match.reason === "order" ? (match.isRevision ? `This looks like a revision of order ${match.appliedOrder}, already applied to this campaign. Applying it updates the campaign.` : `Order ${match.appliedOrder} was already applied to this campaign; applying it again refreshes the same values.`)
-        : "Matched to this campaign by name. Change it below if that is wrong.";
-  }
-  syncIoDefaultMode();
-  syncIoMode();
-  updateIoSelection();
+  syncIoTarget();
 }
 
-const currentIoMode = () => document.querySelector('input[name="io-mode"]:checked')?.value || "flights";
-
-function syncIoMode() {
-  const totalsMode = currentIoMode() === "totals";
-  const startsNew = pendingIo?.mode === "create" || (pendingIo?.mode === "client" && !ioTargetGroupKey());
-  document.querySelector(".io-review-card").classList.toggle("totals-mode", totalsMode);
-  const budgetToggle = document.querySelector("#io-review-set-budget");
-  budgetToggle.closest("label").hidden = startsNew || !(pendingIo?.io.budget > 0);
-  budgetToggle.checked = true;
-  document.querySelector("#io-review-apply").textContent = startsNew ? (pendingIo?.mode === "client" ? "Create campaign" : "Use these details") : totalsMode ? "Use order totals" : "Apply to campaign";
+function syncIoTarget() {
+  const isNew = document.querySelector("#io-review-target").value === NEW_CAMPAIGN;
+  document.querySelector("#io-new-campaign").hidden = !isNew;
+  const key = document.querySelector("#io-review-target").value;
+  const revises = !isNew && campaignTotals[key];
+  document.querySelector("#io-review-apply").textContent = isNew ? "Create campaign" : revises ? "Update campaign" : "Apply to campaign";
+  document.querySelector("#io-review-skip").textContent = ioQueue.length ? "Skip this order" : "Cancel";
 }
-document.querySelectorAll('input[name="io-mode"]').forEach(radio => radio.addEventListener("change", syncIoMode));
-document.querySelector("#io-review-target").addEventListener("change", () => { syncIoDefaultMode(); syncIoMode(); });
-
-function updateIoSelection() {
-  const boxes = [...document.querySelectorAll('input[name="io-line"]')];
-  const checked = boxes.filter(box => box.checked);
-  const total = pendingIo.io.lineItems.filter(item => checked.some(box => box.value === item.id)).reduce((sum, item) => sum + item.budget, 0);
-  document.querySelector("#io-review-selection").textContent = `${checked.length} of ${boxes.length} placements selected · ${formatExactMoney(total)}`;
-  document.querySelector("#io-review-select-all").checked = checked.length === boxes.length;
-}
-
-document.querySelector("#io-review-lines").addEventListener("change", updateIoSelection);
-document.querySelector("#io-review-select-all").addEventListener("change", event => {
-  document.querySelectorAll('input[name="io-line"]').forEach(box => { box.checked = event.target.checked; });
-  updateIoSelection();
-});
-document.querySelectorAll(".close-io-review").forEach(button => button.addEventListener("click", () => { ioReviewDialog.close(); if (pendingIo?.mode === "create") pendingIoForCreate = null; }));
-
-function prefillCreateFromIo(io, fileName, selectedIds, ioMode, client = null) {
-  const fields = campaignFieldsFromIo(io, fileName);
-  const set = (selector, value) => { document.querySelector(selector).value = value ?? ""; };
-  set("#new-campaign-client", client || fields.client);
-  set("#new-campaign-name", fields.name);
-  set("#new-campaign-start", fields.startDate);
-  set("#new-campaign-end", fields.endDate);
-  set("#new-campaign-budget", fields.budget);
-  const budgetSource = document.querySelector("#new-campaign-budget-source");
-  if (!budgetSource.querySelector('option[value="io"]')) budgetSource.insertAdjacentHTML("beforeend", '<option value="io">From the uploaded insertion order</option>');
-  budgetSource.value = "io";
-  syncBudgetSourceFields();
-  pendingIoForCreate = { io, fileName, selectedIds, mode: ioMode };
-}
+document.querySelector("#io-review-target").addEventListener("change", syncIoTarget);
+document.querySelectorAll(".close-io-review").forEach(button => button.addEventListener("click", () => { pendingIo = null; nextIo(); }));
+ioReviewDialog.addEventListener("cancel", event => { event.preventDefault(); pendingIo = null; nextIo(); });
 
 document.querySelector("#io-review-form").addEventListener("submit", event => {
   event.preventDefault();
-  const selectedIds = [...document.querySelectorAll('input[name="io-line"]:checked')].map(box => box.value);
-  const ioMode = currentIoMode();
-  if (ioMode === "flights" && !selectedIds.length) {
-    const error = document.querySelector("#io-review-error");
-    error.textContent = "Select at least one placement.";
-    error.hidden = false;
-    return;
+  if (!pendingIo) return;
+  const { io, fileName } = pendingIo;
+  const error = document.querySelector("#io-review-error");
+  const fail = message => { error.textContent = message; error.hidden = false; };
+  let key = document.querySelector("#io-review-target").value;
+  let created = null;
+  if (key === NEW_CAMPAIGN) {
+    const client = document.querySelector("#io-new-client").value.trim();
+    const name = document.querySelector("#io-new-name").value.trim();
+    if (!client || !name) { fail("Enter the client and the campaign name."); return; }
+    const result = createCampaign({ client, name, startDate: io.startDate, endDate: io.endDate, budget: io.budget, budgetSource: "io", billingSource: "reported", kpi: io.lineItems.find(item => item.kpi)?.kpi || "CTR", target: "Not provided", ioFileName: fileName });
+    if (!result.valid) { fail(result.errors.join(" ")); return; }
+    if (ioTargetGroups().some(group => group.key === groupKey(result.campaign))) { fail(`${client} already has a campaign named “${name}”. Choose it from the list to revise it.`); return; }
+    created = result.campaign;
+    key = groupKey(created);
   }
-  const { io, fileName, mode } = pendingIo;
-  const targetKey = mode === "client" ? ioTargetGroupKey() : null;
-  if (mode === "create") {
-    prefillCreateFromIo(io, fileName, selectedIds, ioMode);
-    ioReviewDialog.close();
-    return;
-  }
-  if (mode === "client" && !targetKey) {
-    // A new campaign: open the setup form pre-filled from the order, still for this client.
-    ioReviewDialog.close();
-    openImportDialog({ target: "new" });
-    prefillCreateFromIo(io, fileName, selectedIds, ioMode, clientScope);
-    return;
-  }
-  if (mode === "client") {
-    const group = groupCampaigns(campaigns).find(item => item.key === targetKey);
-    const record = group?.records.find(item => (item.lineItemFlights || []).length) || group?.records[0];
-    activeCampaignIndex = record ? campaigns.indexOf(record) : null;
-  }
-  if (activeCampaignIndex === null || !campaigns[activeCampaignIndex]) return;
-  const orderLabel = [io.orderNumber, io.revision].filter(Boolean).join(" ") || fileName;
-  const targetName = campaignGroupName(campaigns[activeCampaignIndex]);
-  // Applying an order can change budgets and flights, so it gets a restore point like any other change.
-  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `applying order ${orderLabel} to ${targetName}` }));
-  if (ioMode === "totals") {
-    const record = campaigns[activeCampaignIndex];
-    campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, groupKey(record), io, fileName));
-    campaigns[activeCampaignIndex] = { ...record, ioFileName: fileName || record.ioFileName || null, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || record.ioOrder || null };
-    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-    ioReviewDialog.close();
-    renderIoTotalsNote(campaigns[activeCampaignIndex]);
-    renderCampaigns(document.querySelector("#client-filter").value);
-    renderUndoButton();
-    const appliedEntry = campaignTotals[groupKey(campaigns[activeCampaignIndex])];
-    showToast("Order totals applied", `Pacing now uses ${appliedEntry.orders.length > 1 ? `${appliedEntry.orders.length} orders totalling ` : "the "}${formatExactMoney(appliedEntry.budget)} across ${targetName}'s lines.`);
-    return;
-  }
-  const applied = applyIoToCampaign(campaigns[activeCampaignIndex], io, { fileName, selectedIds, setBudget: document.querySelector("#io-review-set-budget").checked });
-  campaigns[activeCampaignIndex] = applied.campaign;
+  const targetName = created ? created.name : groupCampaigns(campaigns).find(group => group.key === key)?.name || "the campaign";
+  // Applying an order changes budgets and dates, so it gets a restore point like any other change.
+  writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `${created ? "creating" : "applying order to"} ${targetName}` }));
+  if (created) campaigns.push(created);
+  campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, key, io, fileName));
+  const index = campaigns.findIndex(record => groupKey(record) === key);
+  campaigns[index] = { ...campaigns[index], ioFileName: fileName, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || null };
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  ioReviewDialog.close();
-  refreshBudgetAndFlights(applied.campaign);
-  renderCampaigns(document.querySelector("#client-filter").value);
-  renderUndoButton();
-  showToast("Insertion order applied", `${applied.applied} placement${applied.applied === 1 ? "" : "s"} saved as line-item flights${applied.revised ? " and the budget was updated" : ""}.`);
+  const entry = campaignTotals[key];
+  refreshAfterDataChange();
+  if (activeCampaignIndex !== null && campaigns[activeCampaignIndex] && groupKey(campaigns[activeCampaignIndex]) === key) renderIoTotalsNote(campaigns[activeCampaignIndex]);
+  showToast(created ? "Campaign created" : "Insertion order applied", `${targetName} is paced on ${entry.orders.length > 1 ? `${entry.orders.length} orders totalling ` : ""}${formatExactMoney(entry.budget)} from ${entry.startDate} to ${entry.endDate}.${created ? " Import its reports to add delivery." : ""}`);
+  pendingIo = null;
+  nextIo();
 });
 
 document.querySelector("#client-io-button").addEventListener("click", () => document.querySelector("#client-io-input").click());
 document.querySelector("#client-io-input").addEventListener("change", async event => {
   const files = [...event.target.files];
   event.target.value = "";
-  if (files.length === 1) await startIoReview(files[0], "client");
-  else if (files.length > 1) await startMultiIo(files);
+  if (files.length) await queueIoFiles(files);
 });
 
 function renderIoTotalsNote(campaign) {
   const note = document.querySelector("#io-totals-note");
   const entry = campaignTotals[groupKey(campaign)];
   note.hidden = !entry;
+  document.querySelector("#io-section-title").textContent = entry ? `${formatExactMoney(entry.budget)} · ${entry.startDate} → ${entry.endDate}` : "No IO uploaded";
   document.querySelector("#io-flight-fields").hidden = !entry;
   document.querySelector("#io-start-input").value = entry?.startDate || "";
   document.querySelector("#io-end-input").value = entry?.endDate || "";
@@ -2123,30 +1691,18 @@ function refreshBudgetAndFlights(campaign) {
   document.querySelector("#current-budget-value").textContent = hasBudget(campaign) ? formatMoney(campaign.budget) : "Not set";
   document.querySelector("#budget-revision-meta").textContent = latestRevision ? `${revisions} revision${revisions === 1 ? "" : "s"} · Latest effective ${latestRevision.effectiveDate}` : "No budget revisions recorded";
   renderBudgetRevisionHistory(campaign);
-  renderLineItemFlights(campaign);
 }
 
 document.querySelector("#io-pdf-input").addEventListener("change", async event => {
   const file = event.target.files[0];
   event.target.value = "";
-  if (file) await startIoReview(file, "details");
+  if (file && campaigns[activeCampaignIndex]) await queueIoFiles([file], { presetKey: groupKey(campaigns[activeCampaignIndex]) });
 });
 
 function renderBudgetRevisionHistory(campaign) {
   const revisions = budgetRevisionHistory(campaign);
   document.querySelector("#export-budget-revisions").disabled = revisions.length === 0;
   document.querySelector("#budget-revision-list").innerHTML = revisions.length ? revisions.map(revision => `<div><span><strong>Revision ${revision.revisionNumber} · ${escapeHtml(revision.effectiveDate)}</strong><small>${escapeHtml(revision.fileName)}${revision.note ? ` · ${escapeHtml(revision.note)}` : ""}</small></span><span><strong>${formatExactMoney(revision.amount)}</strong><small>from ${formatExactMoney(revision.previousBudget)}</small></span></div>`).join("") : '<p class="history-empty">No budget revisions recorded.</p>';
-}
-
-function renderLineItemFlights(campaign) {
-  const flights = campaign.lineItemFlights || [];
-  const summary = summarizeLineItemBudgets(campaign);
-  document.querySelector("#line-item-flight-count").textContent = flights.length ? `${flights.length} flight${flights.length === 1 ? "" : "s"}` : "No flights";
-  document.querySelector("#export-line-items").disabled = flights.length === 0;
-  const summaryElement = document.querySelector("#line-item-budget-summary");
-  summaryElement.textContent = summary.campaignBudget === null ? `${formatExactMoney(summary.allocated)} allocated` : summary.fullyAllocated ? `${formatExactMoney(summary.allocated)} fully allocated` : `${formatExactMoney(summary.allocated)} allocated · ${formatExactMoney(summary.remaining)} remaining`;
-  summaryElement.className = summary.fullyAllocated ? "allocation-complete" : "";
-  document.querySelector("#line-item-flight-list").innerHTML = flights.map(flight => `<div><span><strong>${escapeHtml(flight.name)}</strong><small>${escapeHtml(flight.id)} · ${escapeHtml(flight.startDate)} – ${escapeHtml(flight.endDate)}</small></span><span class="line-item-actions"><b>${formatExactMoney(flight.budget)}</b><button type="button" data-remove-line-item="${escapeHtml(flight.id)}" aria-label="Remove ${escapeHtml(flight.name)}">×</button></span></div>`).join("");
 }
 
 function renderSnapshotComparison(campaign) {
@@ -2212,18 +1768,12 @@ function resetImportForm() {
   document.querySelector("#import-preview").hidden = true;
   document.querySelector("#mapping-review").hidden = true;
   document.querySelector("#import-assignments").hidden = true;
-  document.querySelector(".import-mode").hidden = false;
   currentValidationIssues = [];
   document.querySelector("#export-validation-issues").hidden = true;
   validateButton.disabled = true;
   validateButton.textContent = "Validate report";
   confirmImportButton.disabled = true;
   pendingValidatedImport = null;
-  pendingIoForCreate = null;
-  document.querySelector("#create-campaign-error").hidden = true;
-  document.querySelector('input[name="import-mode"][value="merge"]').checked = true;
-  syncBudgetSourceFields();
-  syncImportTarget();
 }
 
 function campaignImportKey(campaign) {
@@ -2285,7 +1835,7 @@ function renderClientIo() {
     const tracking = `<div class="io-tracking"><span><small>Spend to date</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
     if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong>${escapeHtml(item.name)}</strong></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
-    const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} flight${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
+    const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
     return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong>${escapeHtml(item.name)}</strong></div>
       <div class="io-facts"><span><small>Total IO budget</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
       ${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
@@ -2589,171 +2139,3 @@ refreshClientFilter();
 applyDashboardView(dashboardView);
 renderDataHealth();
 renderCampaigns();
-
-// --- Report folder auto-pull (File System Access API; Chrome and Edge) ---
-let folderRoot = null;
-let folderTimer = null;
-let folderSyncRunning = false;
-const folderStatus = document.querySelector("#folder-sync-status");
-
-function setFolderStatus(message) {
-  folderStatus.textContent = message;
-}
-
-function renderFolderReview() {
-  const items = reviewItems(readLedger(localStorage));
-  document.querySelector("#folder-review-list").innerHTML = items.map(item => `<div class="folder-review-item"><span><strong>${escapeHtml(item.path)}</strong><small>${escapeHtml(item.reason || "Needs review")}</small></span><button class="text-button" type="button" data-review-path="${escapeHtml(item.path)}">Review</button></div>`).join("");
-}
-
-document.querySelector("#folder-review-list").addEventListener("click", async event => {
-  const button = event.target.closest("[data-review-path]");
-  if (!button || !folderRoot) return;
-  try {
-    const handle = await resolveFileHandle(folderRoot, button.dataset.reviewPath);
-    const transfer = new DataTransfer();
-    transfer.items.add(await handle.getFile());
-    fileInput.files = transfer.files;
-    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-    validateButton.click();
-  } catch (error) {
-    setFolderStatus(`Could not open ${button.dataset.reviewPath}: ${error.message}`);
-  }
-});
-
-async function folderPermission(request = false) {
-  if (!folderRoot) return false;
-  if (await folderRoot.queryPermission({ mode: "read" }) === "granted") return true;
-  return request && await folderRoot.requestPermission({ mode: "read" }) === "granted";
-}
-
-function showFolderControls() {
-  const connected = Boolean(folderRoot);
-  document.querySelector("#folder-connect").hidden = connected;
-  document.querySelector("#folder-sync-now").hidden = !connected;
-  document.querySelector("#folder-disconnect").hidden = !connected;
-}
-
-async function runFolderSync({ interactive = false } = {}) {
-  if (folderSyncRunning || !folderRoot) return;
-  if (!await folderPermission(interactive)) {
-    setFolderStatus(`Allow access to “${folderRoot.name}” to resume syncing.`);
-    document.querySelector("#folder-sync-now").textContent = "Allow access & sync";
-    return;
-  }
-  document.querySelector("#folder-sync-now").textContent = "Sync now";
-  folderSyncRunning = true;
-  setFolderStatus(`Scanning “${folderRoot.name}”…`);
-  const originalCampaigns = campaigns;
-  const originalHistory = importHistory;
-  let working = campaigns;
-  let ledger = readLedger(localStorage);
-  const counts = { imported: 0, review: 0, skipped: 0 };
-  const appliedKeys = [];
-  let appliedRows = 0;
-  try {
-    const listed = await listReportFiles(folderRoot);
-    const files = await Promise.all(listed.map(async item => ({ ...item, file: await item.handle.getFile() })));
-    files.sort((a, b) => a.file.lastModified - b.file.lastModified);
-    for (const { path, file } of files) {
-      const key = ledgerKey(path, file);
-      if (isProcessed(ledger, key)) continue;
-      const entry = { key, path, status: "skipped", reason: "", fingerprint: "", at: new Date().toISOString() };
-      if (file.size > 25 * 1024 * 1024) {
-        entry.reason = "Larger than the 25 MB import limit.";
-      } else {
-        const bytes = await file.arrayBuffer();
-        entry.fingerprint = await fingerprintBytes(bytes);
-        if (ledger.some(item => item.fingerprint === entry.fingerprint && item.status === "imported") || hasSuccessfulFingerprint(importHistory, entry.fingerprint)) {
-          entry.status = "duplicate";
-          entry.reason = "Identical to a report that was already imported.";
-        } else {
-          try {
-            const plan = planAutoImport(await readReportFile(file, bytes), working);
-            if (plan.status === "apply") {
-              working = plan.campaigns;
-              appliedKeys.push(...plan.campaignKeys);
-              appliedRows += plan.rowCount;
-              entry.status = "imported";
-              recordImport(path, entry.fingerprint, plan.warnings.length ? "Imported with warnings" : "Imported", plan.rowCount, [], plan.campaignKeys, plan.warnings);
-            } else {
-              entry.status = plan.status;
-              entry.reason = plan.reason;
-            }
-          } catch (error) {
-            entry.status = "skipped";
-            entry.reason = error.message;
-          }
-        }
-      }
-      if (entry.status === "imported") counts.imported += 1;
-      else if (entry.status === "review") counts.review += 1;
-      else counts.skipped += 1;
-      ledger = addLedgerEntries(ledger, [entry]);
-    }
-    if (counts.imported) {
-      writeImportRollback(localStorage, createImportRollback({ campaigns: originalCampaigns, importHistory: originalHistory, fileName: `${counts.imported} report${counts.imported === 1 ? "" : "s"} from ${folderRoot.name}`, fingerprint: `folder-sync-${Date.now().toString(16)}`, rowCount: appliedRows, campaignKeys: appliedKeys }));
-      campaigns = working;
-      localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-      refreshClientFilter();
-      renderCampaigns(document.querySelector("#client-filter").value);
-      renderImportHistory();
-      document.querySelector("#toast-title").textContent = "Folder sync complete";
-      document.querySelector("#toast-message").textContent = `${counts.imported} report${counts.imported === 1 ? "" : "s"} imported${counts.review ? `, ${counts.review} need review` : ""}.`;
-      const toast = document.querySelector("#toast");
-      toast.classList.add("show");
-      setTimeout(() => toast.classList.remove("show"), 3200);
-    }
-    writeLedger(localStorage, ledger);
-    renderFolderReview();
-    setFolderStatus(`Last sync ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · ${counts.imported} imported · ${counts.review} need review · ${counts.skipped} skipped or already imported.`);
-  } catch (error) {
-    setFolderStatus(`Sync failed: ${error.message}`);
-  } finally {
-    folderSyncRunning = false;
-  }
-}
-
-document.querySelector("#folder-connect").addEventListener("click", async () => {
-  try {
-    folderRoot = await window.showDirectoryPicker({ id: "northstar-reports", mode: "read" });
-    await saveFolderHandle(folderRoot);
-    showFolderControls();
-    startFolderTimer();
-    await runFolderSync({ interactive: true });
-  } catch (error) {
-    if (error.name !== "AbortError") setFolderStatus(`Could not connect the folder: ${error.message}`);
-  }
-});
-document.querySelector("#folder-sync-now").addEventListener("click", () => runFolderSync({ interactive: true }));
-document.querySelector("#folder-disconnect").addEventListener("click", async () => {
-  clearInterval(folderTimer);
-  folderRoot = null;
-  await clearFolderHandle();
-  showFolderControls();
-  setFolderStatus("Folder disconnected. Reports already imported stay in the dashboard.");
-});
-
-function startFolderTimer() {
-  clearInterval(folderTimer);
-  folderTimer = setInterval(() => runFolderSync(), SYNC_INTERVAL_MS);
-}
-
-async function initFolderSync() {
-  if (!folderSyncSupported()) {
-    document.querySelector("#folder-connect").hidden = true;
-    setFolderStatus("Folder auto-pull needs Chrome or Edge. Manual import still works in every browser.");
-    return;
-  }
-  renderFolderReview();
-  try {
-    folderRoot = await loadFolderHandle() || null;
-  } catch {
-    folderRoot = null;
-  }
-  showFolderControls();
-  if (!folderRoot) return;
-  startFolderTimer();
-  await runFolderSync();
-}
-
-initFolderSync();
