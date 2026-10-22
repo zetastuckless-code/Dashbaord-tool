@@ -175,7 +175,14 @@ document.querySelector("#client-grid").addEventListener("click", event => {
 });
 
 // --- Client account view: ?client=Name shows only that client's campaigns, independent of the saved filters ---
+// Every page starts with its cards in their default state: collapsed on the overview, current campaigns open on a client tab.
+function resetExpandedCampaigns() {
+  expandedCampaigns.clear();
+  autoExpandedClient = null;
+}
+
 function setClientScope(name, { replace = false } = {}) {
+  if ((name || null) !== clientScope) resetExpandedCampaigns();
   clientScope = name || null;
   sourcesView = false;
   const url = clientScope ? `?client=${encodeURIComponent(clientScope)}` : location.pathname;
@@ -230,6 +237,7 @@ document.querySelector(".sidebar").addEventListener("click", event => {
 document.querySelector("#client-back").addEventListener("click", event => { event.preventDefault(); setClientScope(null); });
 window.addEventListener("popstate", () => {
   sourcesView = new URLSearchParams(location.search).get("view") === "sources";
+  resetExpandedCampaigns();
   clientScope = sourcesView ? null : new URLSearchParams(location.search).get("client");
   renderCampaigns();
 });
