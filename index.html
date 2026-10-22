@@ -105,9 +105,9 @@
             </select>
           </div>
           <div class="filter-group">
-            <label for="status-filter">Flight status</label>
+            <label for="status-filter">Status</label>
             <select id="status-filter">
-              <option value="all">All active statuses</option>
+              <option value="all">All statuses</option>
               <option value="live">Live</option>
               <option value="scheduled">Scheduled</option>
               <option value="paused">Paused</option>
@@ -116,38 +116,41 @@
             </select>
           </div>
           <div class="filter-group">
-            <label for="owner-filter">Campaign owner</label>
-            <select id="owner-filter"><option value="all">All owners</option></select>
-          </div>
-          <div class="filter-group">
-            <label for="channel-filter">Channel</label>
-            <select id="channel-filter"><option value="all">All channels</option></select>
-          </div>
-          <div class="filter-group">
             <label for="campaign-sort">Sort by</label>
             <select id="campaign-sort">
               <option value="portfolio">Portfolio order</option><option value="pacing-risk">Pacing risk</option><option value="spend">Highest spend</option><option value="freshness">Newest data</option><option value="name">Campaign name</option>
             </select>
           </div>
-          <div class="filter-group">
-            <label for="attention-filter">Alert status</label>
-            <select id="attention-filter"><option value="all">All campaigns</option><option value="attention">Needs attention</option><option value="clear">No active alerts</option></select>
-          </div>
-          <div class="filter-group">
-            <label for="kpi-view">KPI view</label>
-            <select id="kpi-view"><option value="primary">Campaign primary</option><option value="CTR">CTR</option><option value="VCR">VCR</option><option value="CPA">CPA</option><option value="ROAS">ROAS</option></select>
-          </div>
-          <div class="source-control" aria-label="Spend source">
-            <span>Spend source</span>
-            <div class="segmented" role="group">
-              <button class="active" type="button" data-source="billing" aria-pressed="true">Billing</button>
-              <button type="button" data-source="first" aria-pressed="false">1st party</button>
-              <button type="button" data-source="third" aria-pressed="false">3rd party</button>
+          <details class="more-filters" id="more-filters">
+            <summary class="secondary-button">More filters<span class="more-filters-count" id="more-filters-count" hidden></span></summary>
+            <div class="more-filters-panel">
+              <div class="filter-group">
+                <label for="owner-filter">Campaign owner</label>
+                <select id="owner-filter"><option value="all">All owners</option></select>
+              </div>
+              <div class="filter-group">
+                <label for="channel-filter">Channel</label>
+                <select id="channel-filter"><option value="all">All channels</option></select>
+              </div>
+              <div class="filter-group">
+                <label for="attention-filter">Alert status</label>
+                <select id="attention-filter"><option value="all">All campaigns</option><option value="attention">Needs attention</option><option value="clear">No active alerts</option></select>
+              </div>
+              <div class="filter-group">
+                <label for="kpi-view">KPI view</label>
+                <select id="kpi-view"><option value="primary">Campaign primary</option><option value="CTR">CTR</option><option value="VCR">VCR</option><option value="CPA">CPA</option><option value="ROAS">ROAS</option></select>
+              </div>
+              <div class="source-control" aria-label="Spend source">
+                <span>Spend source</span>
+                <div class="segmented" role="group">
+                  <button class="active" type="button" data-source="billing" aria-pressed="true">Billing</button>
+                  <button type="button" data-source="first" aria-pressed="false">1st party</button>
+                  <button type="button" data-source="third" aria-pressed="false">3rd party</button>
+                </div>
+              </div>
+              <div class="more-filters-actions"><button class="text-button" id="clear-more-filters" type="button">Clear these filters</button><button class="text-button" id="manage-saved-views" type="button">Saved views</button><button class="text-button reset-view-button" id="reset-dashboard-view" type="button">Reset view</button></div>
             </div>
-          </div>
-          <button class="text-button" id="manage-saved-views" type="button">Saved views</button>
-          <button class="text-button reset-view-button" id="reset-dashboard-view" type="button">Reset view</button>
-          <p class="updated"><span></span> Updated today at 9:42 AM</p>
+          </details>
         </section>
 
         <section class="metric-grid" aria-label="Key performance metrics">
@@ -346,10 +349,10 @@
 
     <dialog id="bulk-edit-dialog" aria-labelledby="bulk-edit-title">
       <form class="dialog-card" id="bulk-edit-form" method="dialog">
-        <div class="dialog-header"><div><p class="eyebrow">BULK EDIT</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow" id="bulk-edit-eyebrow">BULK EDIT</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
         <fieldset class="bulk-edit-group" id="bulk-edit-lines"><legend>Report lines</legend><div class="settings-grid">
-          <label>Owner<input id="bulk-owner" autocomplete="off" /></label><label>Channel<input id="bulk-channel" autocomplete="off" /></label>
-          <label>Primary KPI<input id="bulk-kpi" autocomplete="off" placeholder="CTR" /></label><label>KPI target<input id="bulk-target" autocomplete="off" placeholder="0.25%" /></label>
+          <label>Owner<input id="bulk-owner" autocomplete="off" /></label><label id="bulk-channel-label">Channel<input id="bulk-channel" autocomplete="off" /></label>
+          <label>Primary KPI<input id="bulk-kpi" autocomplete="off" placeholder="CTR" list="kpi-options" /><datalist id="kpi-options"><option value="CTR"></option><option value="CPA"></option><option value="ROAS"></option><option value="VCR"></option><option value="CPM"></option><option value="CPC"></option><option value="ACR"></option></datalist></label><label>KPI target<input id="bulk-target" autocomplete="off" placeholder="0.25%" /></label>
           <label>Billing source<select id="bulk-billing"><option value="">Keep</option><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
           <label>Expected report<select id="bulk-cadence"><option value="">Keep</option><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
         </div></fieldset>

@@ -141,6 +141,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   portfolioStatus.className = `status-pill ${portfolio.pacing !== null && (portfolio.pacing > alertRules.overPacing || portfolio.pacing < alertRules.underPacing) ? "warning" : "good"}`;
   document.querySelector("#portfolio-pacing-target").textContent = `Target: ${alertRules.underPacing}–${alertRules.overPacing}%`;
   renderAlerts(rows);
+  updateMoreFiltersCount();
   const portfolioRows = filterCampaigns(campaigns, { client: "all", status: statusFilter, owner: ownerFilter, channel: channelFilter, query });
   renderClientRollup(portfolioRows, unacknowledgedAlerts(evaluateAlerts(portfolioRows), acknowledgedAlertIds), filter);
   renderCampaignList(matchingRows, activeAlerts);
@@ -337,7 +338,7 @@ function renderCampaignList(rows, activeAlerts) {
         ${cells}
         <span class="campaign-card-actions">${manualOrder && group.status !== "completed" ? `<span class="campaign-move"><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="up" aria-label="Move ${escapeHtml(group.name)} up" title="Move up">↑</button><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="down" aria-label="Move ${escapeHtml(group.name)} down" title="Move down">↓</button></span>` : ""}${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}<button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
+      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(group.key)}">Edit campaign…</button><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
@@ -431,10 +432,45 @@ function bulkRemove(groupKeyValue) {
 const bulkEditDialog = document.querySelector("#bulk-edit-dialog");
 let bulkEditGroup = null;
 
+let bulkEditCampaign = null;
+
+function setBulkEditMode(campaignMode) {
+  document.querySelector("#bulk-edit-eyebrow").textContent = campaignMode ? "CAMPAIGN DETAILS" : "BULK EDIT";
+  document.querySelector("#bulk-channel-label").hidden = campaignMode;
+}
+
+/** Edits the details every line of a campaign shares: owner, primary KPI and target, billing source, report cadence. */
+function openCampaignEdit(key) {
+  const records = campaigns.filter(record => groupKey(record) === key && !isCampaignArchived(record));
+  if (!records.length) return;
+  bulkEditCampaign = key;
+  bulkEditGroup = null;
+  document.querySelector("#bulk-edit-form").reset();
+  setBulkEditMode(true);
+  // Show what the lines already share; a field the lines disagree on starts blank and is left alone unless filled in.
+  const shared = read => { const values = [...new Set(records.filter(record => !isPlaceholder(record) || records.length === 1).map(read).map(value => String(value ?? "").trim()))]; return values.length === 1 ? values[0] : ""; };
+  document.querySelector("#bulk-owner").value = shared(record => record.owner);
+  document.querySelector("#bulk-kpi").value = shared(record => record.kpi);
+  document.querySelector("#bulk-target").value = shared(record => String(record.target ?? "").replace(/^target\s*/i, "").replace(/^not provided$/i, ""));
+  document.querySelector("#bulk-billing").value = shared(record => record.billingSource) || "";
+  if (!document.querySelector("#bulk-billing").value) document.querySelector("#bulk-billing").value = "";
+  document.querySelector("#bulk-cadence").value = shared(record => record.reportCadence || "none") || "";
+  const name = campaignGroupName(records[0]);
+  document.querySelector("#bulk-edit-title").textContent = `Edit ${name}`;
+  document.querySelector("#bulk-edit-summary").textContent = `Changes apply to all ${records.length} line${records.length === 1 ? "" : "s"} of this campaign. Blank fields keep their current values.`;
+  document.querySelector("#bulk-edit-lines").hidden = false;
+  document.querySelector("#bulk-edit-items").hidden = true;
+  document.querySelector("#bulk-edit-error").hidden = true;
+  bulkEditDialog.showModal();
+}
+
 function openBulkEdit(groupKeyValue) {
   const entries = resolveSelection(groupKeyValue);
   if (!entries.length) return;
   bulkEditGroup = groupKeyValue;
+  bulkEditCampaign = null;
+  setBulkEditMode(false);
+  document.querySelector("#bulk-edit-title").textContent = "Edit selected lines";
   const hasRecords = entries.some(entry => entry.line.kind === "record");
   const hasItems = entries.some(entry => entry.line.kind !== "record");
   document.querySelector("#bulk-edit-form").reset();
@@ -454,6 +490,17 @@ document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
   const error = document.querySelector("#bulk-edit-error");
   if (Object.values(edits).every(field => field === "")) errors.push("Fill in at least one field to change.");
   if (errors.length) { error.textContent = errors.join(" "); error.hidden = false; return; }
+  if (bulkEditCampaign) {
+    const keys = campaigns.map((record, index) => groupKey(record) === bulkEditCampaign && !isCampaignArchived(record) ? lineKey(index, "record") : null).filter(Boolean);
+    const name = lastCampaignGroups.find(group => group.key === bulkEditCampaign)?.name || "the campaign";
+    writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${name}` }));
+    campaigns = applyBulkEdits(campaigns, keys, edits).campaigns;
+    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    bulkEditDialog.close();
+    refreshAfterDataChange();
+    showToast("Campaign updated", `${name} updated across ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
+    return;
+  }
   const entries = resolveSelection(bulkEditGroup);
   if (!entries.length) { bulkEditDialog.close(); return; }
   writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${describeSelection(entries)}` }));
@@ -501,6 +548,8 @@ document.querySelector("#campaign-list-rows").addEventListener("click", event =>
   if (edit) { openMetricPicker(edit.dataset.editMetrics); return; }
   const open = event.target.closest("[data-open-campaign]");
   if (open) { openCampaignDialog(Number(open.dataset.openCampaign)); return; }
+  const editCampaign = event.target.closest("[data-edit-campaign]");
+  if (editCampaign) { openCampaignEdit(editCampaign.dataset.editCampaign); return; }
   const move = event.target.closest("[data-move-campaign]");
   if (move) {
     // Only the campaigns on screen trade places; completed ones stay at the bottom.
@@ -963,6 +1012,24 @@ document.querySelectorAll(".segmented button").forEach(button => button.addEvent
   captureDashboardView();
   renderCampaigns(document.querySelector("#client-filter").value);
 }));
+
+// --- More filters: owner, channel, alert status, KPI view, and spend source sit in a dropdown so the bar fits ---
+const MORE_FILTER_DEFAULTS = { "#owner-filter": "all", "#channel-filter": "all", "#attention-filter": "all", "#kpi-view": "primary" };
+function updateMoreFiltersCount() {
+  const active = Object.entries(MORE_FILTER_DEFAULTS).filter(([id, value]) => (document.querySelector(id)?.value || value) !== value).length + (selectedSource !== "billing" ? 1 : 0);
+  const badge = document.querySelector("#more-filters-count");
+  badge.textContent = active;
+  badge.hidden = active === 0;
+}
+document.querySelector("#clear-more-filters").addEventListener("click", () => {
+  for (const [id, value] of Object.entries(MORE_FILTER_DEFAULTS)) document.querySelector(id).value = value;
+  // Going back to billing spend goes through the source buttons so the saved view follows; it re-renders.
+  document.querySelector('.segmented button[data-source="billing"]').click();
+});
+document.addEventListener("click", event => {
+  const panel = document.querySelector("#more-filters");
+  if (panel.open && !panel.contains(event.target)) panel.open = false;
+});
 
 const dialog = document.querySelector("#upload-dialog");
 const campaignDialog = document.querySelector("#campaign-dialog");
@@ -1859,10 +1926,10 @@ function renderClientIo() {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
     const tracking = `<div class="io-tracking"><span><small>Spend to date</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
-    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
+    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
     const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
-    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong></div>
+    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div>
       <div class="io-facts"><span><small>Total IO budget</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
       ${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
   };
@@ -1883,6 +1950,12 @@ document.querySelector("#client-io-done-list").addEventListener("toggle", event 
   if (card.open) openDoneIo.add(card.dataset.ioKey); else openDoneIo.delete(card.dataset.ioKey);
 }, true);
 document.querySelector("#client-io-upload").addEventListener("click", () => document.querySelector("#client-io-input").click());
+document.querySelector("#client-io").addEventListener("click", event => {
+  const edit = event.target.closest("[data-edit-campaign]");
+  if (!edit) return;
+  event.preventDefault();
+  openCampaignEdit(edit.dataset.editCampaign);
+});
 
 function renderClientDocuments() {
   const panel = document.querySelector("#client-documents");
