@@ -41,7 +41,7 @@ import { readIoPdf } from "./lib/io-reader.js";
 import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
-import { buildPacingDetail } from "./lib/pacing-detail.js";
+import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
@@ -679,53 +679,100 @@ const shortDate = value => new Date(`${value}T00:00:00Z`).toLocaleDateString([],
 const percentText = value => Number.isFinite(value) ? `${Math.round(value)}%` : "—";
 const perDay = value => Number.isFinite(value) ? `${formatMoney(value)}/day` : "—";
 
+let pacingRange = { preset: DEFAULT_PACING_RANGE, start: "", end: "" };
+try {
+  const saved = JSON.parse(localStorage.getItem("northstar-pacing-range"));
+  if (saved && PACING_RANGES.some(item => item.id === saved.preset)) pacingRange = { preset: saved.preset, start: String(saved.start ?? ""), end: String(saved.end ?? "") };
+} catch { /* the default period is used */ }
+const savePacingRange = () => { try { localStorage.setItem("northstar-pacing-range", JSON.stringify(pacingRange)); } catch { /* the choice lasts for this session */ } };
+const longDate = value => new Date(`${value}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
 function pacingChartSvg(days) {
   const width = 760, height = 250, left = 54, right = 8, top = 10, bottom = 26;
   const plotWidth = width - left - right, plotHeight = height - top - bottom;
-  const maximum = Math.max(...days.flatMap(day => [day.actual, day.baseline]), 1) * 1.05;
+  const maximum = Math.max(...days.flatMap(day => [day.actual ?? 0, day.baseline]), 1) * 1.05;
   const y = value => top + plotHeight - value / maximum * plotHeight;
   const step = plotWidth / days.length;
   const barWidth = Math.max(1, step * 0.72);
+  const centre = index => left + index * step + step / 2;
   const grid = [0, 1 / 3, 2 / 3, 1].map(fraction => { const value = maximum * fraction; return `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="axis" x="${left - 6}" y="${(y(value) + 3).toFixed(1)}" text-anchor="end">${escapeHtml(formatMoney(value))}</text>`; }).join("");
   const bars = days.map((day, index) => {
+    if (day.actual === null) return "";
     const percent = day.baseline > 0 ? day.actual / day.baseline * 100 : null;
     const band = percent === null ? "on-track" : pacingBand(percent, alertRules);
     const barTop = y(day.actual);
-    return `<rect class="daily-bar pace-bar-${band}${day.estimated ? " estimated" : ""}" x="${(left + index * step + (step - barWidth) / 2).toFixed(2)}" y="${barTop.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${(top + plotHeight - barTop).toFixed(2)}"><title>${escapeHtml(day.date)}: ${escapeHtml(formatExactMoney(day.actual))}${day.baseline > 0 ? ` vs ${escapeHtml(formatExactMoney(day.baseline))} at 100% pace (${Math.round(percent)}%)` : ""}${day.estimated ? " · averaged between reports" : ""}</title></rect>`;
+    return `<rect class="daily-bar pace-bar-${band}${day.estimated ? " estimated" : ""}" x="${(centre(index) - barWidth / 2).toFixed(2)}" y="${barTop.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${(top + plotHeight - barTop).toFixed(2)}"><title>${escapeHtml(day.date)}: ${escapeHtml(formatExactMoney(day.actual))}${day.baseline > 0 ? ` vs ${escapeHtml(formatExactMoney(day.baseline))} at 100% pace (${Math.round(percent)}%)` : ""}${day.estimated ? " · averaged between reports" : ""}</title></rect>`;
   }).join("");
-  const line = days.map((day, index) => `${index ? "L" : "M"}${(left + index * step + step / 2).toFixed(1)},${y(day.baseline).toFixed(1)}`).join(" ");
-  const labelDays = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])];
-  const labels = labelDays.map(index => `<text class="axis" x="${(left + index * step + step / 2).toFixed(1)}" y="${height - 8}" text-anchor="${index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}">${escapeHtml(shortDate(days[index].date))}</text>`).join("");
+  const line = days.some(day => day.baseline > 0) ? `<path class="pace-line" d="${days.map((day, index) => `${index ? "L" : "M"}${centre(index).toFixed(1)},${y(day.baseline).toFixed(1)}`).join(" ")}"/>` : "";
+  const labelCount = Math.min(5, days.length);
+  const labelIndexes = [...new Set(Array.from({ length: labelCount }, (_, position) => labelCount === 1 ? 0 : Math.round(position * (days.length - 1) / (labelCount - 1))))];
+  const labels = labelIndexes.map(index => `<text class="axis" x="${centre(index).toFixed(1)}" y="${height - 8}" text-anchor="${index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}">${escapeHtml(shortDate(days[index].date))}</text>`).join("");
   const todayIndex = days.findIndex(day => day.date === todayIso());
-  const today = todayIndex < 0 ? "" : `<line class="today" x1="${(left + todayIndex * step + step / 2).toFixed(1)}" x2="${(left + todayIndex * step + step / 2).toFixed(1)}" y1="${top}" y2="${top + plotHeight}"/>`;
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily spend from ${escapeHtml(days[0].date)} to ${escapeHtml(days.at(-1).date)} against the daily spend of a 100% pace">${grid}${bars}<path class="pace-line" d="${line}"/>${today}${labels}</svg>`;
+  const today = todayIndex < 0 ? "" : `<line class="today" x1="${centre(todayIndex).toFixed(1)}" x2="${centre(todayIndex).toFixed(1)}" y1="${top}" y2="${top + plotHeight}"/>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily spend from ${escapeHtml(days[0].date)} to ${escapeHtml(days.at(-1).date)} against the daily spend of a 100% pace">${grid}${bars}${line}${today}${labels}</svg>`;
+}
+
+function syncPacingRangeControls() {
+  const select = document.querySelector("#pacing-range");
+  if (!select.options.length) select.innerHTML = PACING_RANGES.map(item => `<option value="${item.id}">${escapeHtml(item.label)}</option>`).join("");
+  select.value = pacingRange.preset;
+  document.querySelector("#pacing-custom").hidden = pacingRange.preset !== "custom";
+  document.querySelector("#pacing-start").value = pacingRange.start;
+  document.querySelector("#pacing-end").value = pacingRange.end;
 }
 
 function renderPacingDetail() {
-  const detail = buildPacingDetail({ campaigns: lastPacingRows, totals: campaignTotals, spendView: "billing" });
+  syncPacingRangeControls();
+  const detail = buildPacingDetail({ campaigns: lastPacingRows, totals: campaignTotals, spendView: "billing", range: { preset: pacingRange.preset, custom: { start: pacingRange.start, end: pacingRange.end } } });
+  const { period, range } = detail;
   document.querySelector("#pacing-dialog-eyebrow").textContent = clientScope ? `${clientScope.toUpperCase()} · PACING DETAILS` : "PACING DETAILS";
   const status = detail.pacing === null ? "No pacing data" : detail.pacing > alertRules.overPacing ? "Above plan" : detail.pacing < alertRules.underPacing ? "Below plan" : "On track";
   const stat = (label, value, sub, cls = "") => `<div class="pacing-stat"><small>${escapeHtml(label)}</small><strong class="${cls}">${escapeHtml(value)}</strong><span>${escapeHtml(sub)}</span></div>`;
+  const periodSub = period.daysWithData === 0 ? "No reports cover this period yet"
+    : `${formatMoney(period.actualTotal)} over ${period.daysWithData} day${period.daysWithData === 1 ? "" : "s"}${period.baselineTotal > 0 ? ` · ${percentText(period.percent)} of a 100% pace (${perDay(period.avgBaseline)})` : ""}`;
   document.querySelector("#pacing-stats").innerHTML = [
     stat("Pacing", detail.pacing === null ? "—" : `${detail.pacing.toFixed(1)}%`, `${status} · target ${alertRules.underPacing}–${alertRules.overPacing}%`, paceClass(detail.pacing)),
     stat("Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
     stat("Expected at 100% pace", detail.expected > 0 ? formatMoney(detail.expected) : "—", detail.expected > 0 ? `${detail.spend >= detail.expected ? "ahead by" : "behind by"} ${formatMoney(Math.abs(detail.spend - detail.expected))}` : "Needs a budget and flight dates"),
-    stat("Last 7 days", perDay(detail.recentActual), detail.recentBaseline > 0 ? `${percentText(detail.recentPercent)} of the ${perDay(detail.recentBaseline)} a 100% pace needs` : "No daily history yet"),
+    stat(range.label, perDay(period.avgActual), periodSub),
     stat("Needed from today", perDay(detail.requiredDaily), detail.requiredDaily === null ? "No live flight with budget left" : "to spend the remaining budget by each flight's end")
   ].join("");
-  const chart = document.querySelector("#pacing-chart");
+  document.querySelector("#pacing-chart").innerHTML = pacingChartSvg(detail.days);
+  document.querySelector("#pacing-chart-context").textContent = `${longDate(range.start)} to ${longDate(range.end)} · ${period.totalDays} day${period.totalDays === 1 ? "" : "s"}`;
+  const error = document.querySelector("#pacing-range-error");
+  error.textContent = range.error ? `${range.error} Showing the last 30 days.` : "";
+  error.hidden = !range.error;
   const note = [];
-  if (detail.days.length) {
-    chart.innerHTML = pacingChartSvg(detail.days);
-    document.querySelector("#pacing-chart-context").textContent = `${shortDate(detail.days[0].date)} to ${shortDate(detail.days.at(-1).date)} · ${detail.days.length} days`;
-  } else {
-    chart.innerHTML = '<p class="chart-empty">Daily spend needs at least two dated reports for a campaign, or a report with monthly totals. Import another report to see the trend.</p>';
-    document.querySelector("#pacing-chart-context").textContent = "";
-  }
-  if (detail.days.length && detail.withoutHistory) note.push(`${detail.withoutHistory} campaign${detail.withoutHistory === 1 ? " has" : "s have"} only one dated report, so ${detail.withoutHistory === 1 ? "it is" : "they are"} left out of the daily bars. ${detail.withoutHistory === 1 ? "Its" : "Their"} spend still counts in the totals above.`);
+  if (period.daysWithData === 0) note.push("No dated reports cover this period, so there are no spend bars. Pick a longer period, or import a report that covers these days.");
+  else if (period.daysWithData < period.totalDays) note.push(`Reports cover ${period.daysWithData} of the ${period.totalDays} days in this period. Days with no bar have no report yet.`);
+  if (range.clipped) note.push("Showing the most recent 400 days.");
+  if (detail.withoutHistory && period.daysWithData) note.push(`${detail.withoutHistory} campaign${detail.withoutHistory === 1 ? " has" : "s have"} only one dated report, so ${detail.withoutHistory === 1 ? "it is" : "they are"} left out of the daily bars. ${detail.withoutHistory === 1 ? "Its" : "Their"} spend still counts in the totals above.`);
   if (detail.skippedUnits) note.push(`${detail.skippedUnits} campaign${detail.skippedUnits === 1 ? "" : "s"} without a budget or flight dates ${detail.skippedUnits === 1 ? "is" : "are"} left out of the 100% line. Upload an insertion order to add them.`);
   document.querySelector("#pacing-chart-note").textContent = note.join(" ");
   document.querySelector("#pacing-table").innerHTML = detail.rows.length ? `<table><thead><tr><th>Campaign</th><th>Flight</th><th>Budget</th><th>Spend</th><th>Expected</th><th>Pacing</th></tr></thead><tbody>${detail.rows.map(row => `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}${row.fromOrder ? " · budget and flight from IO" : ""}</small></td><td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td>${escapeHtml(formatMoney(row.spend))}</td><td>${row.expected > 0 ? escapeHtml(formatMoney(row.expected)) : "—"}</td><td class="${paceClass(row.pacing)}"><strong>${row.pacing === null ? "—" : `${row.pacing.toFixed(1)}%`}</strong></td></tr>`).join("")}</tbody></table>` : '<p class="history-empty">No live campaigns for the current filters.</p>';
+}
+
+document.querySelector("#pacing-range").addEventListener("change", event => {
+  pacingRange.preset = event.target.value;
+  if (pacingRange.preset === "custom" && !pacingRange.start) {
+    // Start the custom range from what is already on screen: the last 30 days.
+    const end = todayIso();
+    pacingRange.end = end;
+    pacingRange.start = new Date(Date.parse(`${end}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10);
+  }
+  savePacingRange();
+  renderPacingDetail();
+});
+for (const id of ["#pacing-start", "#pacing-end"]) {
+  const input = document.querySelector(id);
+  input.addEventListener("change", () => {
+    pacingRange.start = document.querySelector("#pacing-start").value;
+    pacingRange.end = document.querySelector("#pacing-end").value;
+    savePacingRange();
+    renderPacingDetail();
+  });
+  // Enter inside the dialog's form would close it; here it only applies the date.
+  input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); input.dispatchEvent(new Event("change")); } });
 }
 
 function openPacingDetail() {
