@@ -266,6 +266,7 @@ let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
+let autoExpandedClient = null;
 let lastCampaignGroups = [];
 let metricPickerTarget = null;
 
@@ -279,6 +280,11 @@ function renderCampaignList(rows, activeAlerts) {
   const manualOrder = (document.querySelector("#campaign-sort")?.value || "portfolio") === "portfolio";
   const groups = orderGroups(groupCampaigns(rows), campaignOrder, { manual: manualOrder });
   lastCampaignGroups = groups;
+  // Opening a client tab shows its current campaigns' line items right away. Once opened, your own collapsing sticks.
+  if (clientScope && autoExpandedClient !== clientScope) {
+    groups.filter(group => group.status !== "completed").forEach(group => expandedCampaigns.add(group.key));
+    autoExpandedClient = clientScope;
+  }
   const container = document.querySelector("#campaign-list-rows");
   const lineCount = groups.reduce((sum, group) => sum + group.lines.length, 0);
   document.querySelector("#campaign-list-context").textContent = groups.length ? `${groups.length} campaign${groups.length === 1 ? "" : "s"} · ${lineCount} line${lineCount === 1 ? "" : "s"} · select a row for line-item performance` : "No campaigns match the current filters";
@@ -308,9 +314,9 @@ function renderCampaignList(rows, activeAlerts) {
       const reportNames = line.records.map(record => recordLineLabel(record));
       const meta = [`${line.startDate} → ${line.endDate}`, line.placements.length > 1 ? `${line.placements.length} IO flights combined` : "", reportNames.length ? `report: ${reportNames.join(", ")}` : "no report data yet"].filter(Boolean).join(" · ");
       const index = line.records.length ? campaigns.indexOf(line.records[0]) : -1;
-      return `<div class="campaign-line io-line"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(meta)}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions">${index >= 0 ? `<button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button>` : ""}</span></div>`;
-    }).join("");
-    const lineRows = ioLineRows + shownLines.map(line => {
+      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line${lineStatus === "completed" ? " line-done" : ""}" title="${lineStatus === "completed" ? escapeHtml(meta) : ""}"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(meta)}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions">${index >= 0 ? `<button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button>` : ""}</span></div>` };
+    });
+    const reportLineRows = shownLines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
       const lineMetrics = line.kind === "flight" ? { budget: line.budget } : computeMetrics(line.kind === "record" ? line.record : line, { ...options, period: line.kind === "record" ? period : "current" });
       const index = campaigns.indexOf(line.record);
@@ -324,8 +330,12 @@ function renderCampaignList(rows, activeAlerts) {
       const meta = [planNote ? `<em class="plan-note">${planNote}</em>` : "", dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
       const lineSelectKey = stableLineKey(line);
       const lineChecked = selectionFor(group.key).has(lineSelectKey);
-      return `<div class="campaign-line${lineChecked ? " selected" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}`;
-    }).join("");
+      const done = lineStatus === "completed";
+      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
+    });
+    // Completed lines sit at the bottom of the campaign as compact rows, so live lines stay up front.
+    const allRows = [...ioLineRows, ...reportLineRows];
+    const lineRows = [...allRows.filter(row => !row.done), ...allRows.filter(row => row.done)].map(row => row.html).join("");
     const auditSummary = !auditMode ? "" : (() => {
       const gaps = group.lines.filter(line => auditLine(line, auditOptions(line)).missing.some(label => ["Spend", "Budget", "Impressions", "Clicks", "CTR"].includes(label))).length;
       return gaps ? ` · ${gaps} line${gaps === 1 ? "" : "s"} missing data` : " · all lines complete";

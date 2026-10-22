@@ -191,3 +191,4 @@ body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:no
 .control-bar .search-filter input[type="search"]{min-width:0;width:100%}
 .io-edit{margin-left:auto;font-size:11px}
 .client-back[hidden]{display:none}
+.campaign-line.line-done{padding-block:4px;color:#8d95a4;background:#fafafc}.campaign-line.line-done .campaign-title small{display:none}.campaign-line.line-done .campaign-title strong{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.campaign-line.line-done .metric-cell strong{font-weight:500;color:#8d95a4}.campaign-line.line-done .status-dot-label{font-size:9px}
