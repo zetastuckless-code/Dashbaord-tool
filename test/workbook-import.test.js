@@ -158,3 +158,27 @@ test("bills a flight block on DCM spend when some flights only report DCM", () =
   assert.deepEqual([one.spend, one.first_party_spend, one.third_party_spend, one.billing_source], [21_344.78, 9_399.86, 21_344.78, "CM360"]);
   assert.deepEqual([two.spend, two.billing_source], [30_655.23, "CM360"]);
 });
+
+test("reads a summary whose rows are named by media format, without its creative-size breakdown", () => {
+  const rows = [
+    [null, null], [null, null],
+    [null, "Note: This report is not intended to be used for billing."],
+    [null, "Acme Health 2026"],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, "CTR KPI", 0.0015],
+    [null, "Media Format", "Geos", "Impressions", "Clicks", "CTR", "Spend", "Cost", "Impressions Goal", "IO Budget", "Delivery", "AV Impressions", null, "Start Date", new Date("2026-02-05T00:00:00Z")],
+    [null, "Display", "Mexico City", 15089654, 51667, 0.00342, 75448.27, 5, 19380000, 100000, 0.754, 20600000, null, "End Date", new Date("2026-12-31T00:00:00Z")],
+    [null, "Total", null, 15089654, 51667, 0.00342, 75448.27, 5, 19380000, 100000, null, null, null, "Today", new Date("2026-10-22T00:00:00Z")],
+    [null, null],
+    [null, "Media Format", "Creative Size", "Impressions", "Clicks", "Spend", "CTR", null, null, null, null, null, null, "AV- Daily Imp Needed", 1088],
+    [null, "Display", "728x90", 1285635, 3073, 6428.18, 0.0024],
+    [null, "Display", "300x250", 8386720, 31316, 41933.6, 0.0037]
+  ];
+  const campaigns = extractPerformanceSummaryCampaigns(rows, { sheetName: "CTD- Performance Summary", fileName: "Zeta Global Performance Report-Example Agency- Acme Health-Campaign Report September.xlsx" });
+  assert.equal(campaigns.length, 1);
+  const [campaign] = campaigns;
+  assert.deepEqual([campaign.client, campaign.campaign, campaign.spend, campaign.budget, campaign.start_date, campaign.end_date], ["Acme Health", "Acme Health 2026 — Display", 75448.27, 100000, "2026-02-05", "2026-12-31"]);
+  assert.equal(campaign.kpi_target, "0.15%");
+  // No report date is stated, so the flight end only stands in until a raw daily tab supplies the last day.
+  assert.equal(campaign.as_of_from_end, true);
+  assert.equal(sheetPriority("Sep"), 2);
+});
