@@ -176,3 +176,28 @@ test("reads a Zeta IO whose placement row carries its own written-out flight dat
   ]);
   assert.equal(io.warnings.some(warning => /total \$0/.test(warning)), false);
 });
+
+test("names lines of flight packages by flight and tactic, and renumbers a repeated flight label", () => {
+  const io = parseInsertionOrder([[
+    "ADVERTISING INSERTION ORDER", "Agency: Example Agency", "Advertiser: Acme Foods", "Campaign: Acme Omnichannel 2026",
+    "Insertion Order Effective Dates: March 4, 2026 - December 31, 2026", "Budget: $200,000.00",
+    "March 4, 2026 - April 15, 2026 F1 Package Programmatic Tactics Reaching Your Target Audience - - - - - - - - -",
+    "- Cross-Screen Standard Display •Zeta Demographic Targeting:A18+ CPM Impressions $4.50 5,000,000 $22,500.00 Awareness",
+    "- Cross-Screen Standard Display •Look-a-like Modeling & Retargeting dCPM Impressions $1.75 - $11.00 3,000,000 $30,000.00 Clicks $0.55 CPC",
+    "May 25, 2026 - September 7, 2026 F2 Package Programmatic Tactics Reaching Your Target Audience - - - - - - - - -",
+    "- Cross-Screen Standard Display CPM Impressions $4.50 10,000,000 $45,000.00 Awareness",
+    "- Cross-Screen Pre-Roll Video VAST or VPAID, 30s Max CPM Impressions $14.00 5,000,000 $70,000.00 VCR",
+    "November 15, 2026 - December 31, 2026 F2 Package Programmatic Tactics Reaching Your Target Audience - - - - - - - - -",
+    "- Cross-Screen Pre-Roll Video VAST or VPAID, 30s Max CPM Impressions $14.00 2,321,429 $32,500.00 VCR",
+    "Totals $7.47 25,321,429 $200,000.00"
+  ]]);
+  assert.equal(io.valid, true);
+  assert.deepEqual(io.lineItems.map(item => [item.name, item.startDate, item.budget, item.kpi]), [
+    ["F1 Standard Display Awareness", "2026-03-04", 22500, null],
+    ["F1 Standard Display Clicks", "2026-03-04", 30000, "CPC"],
+    ["F2 Standard Display", "2026-05-25", 45000, null],
+    ["F2 Pre-Roll Video", "2026-05-25", 70000, "VCR"],
+    ["F3 Pre-Roll Video", "2026-11-15", 32500, "VCR"]
+  ]);
+  assert.equal(new Set(io.lineItems.map(item => item.id)).size, io.lineItems.length);
+});
