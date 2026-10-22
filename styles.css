@@ -158,3 +158,4 @@ body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:no
 .source-row .document-main{min-width:0}.source-row .document-main strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.source-row .document-main small{display:block;color:#8b92a2;font-size:11px;margin-top:2px}
 .source-when{font-size:11px;color:#596273;white-space:nowrap;text-align:right}.source-when.unknown{color:#a0a6b4;font-style:italic}
 @media(max-width:700px){.source-row{grid-template-columns:auto 1fr auto}.source-when{grid-column:2;grid-row:2;text-align:left}}
+.campaign-line.io-line{background:#fbfbfe}.plan-note{font-style:normal;font-weight:700;color:#b16a1f}

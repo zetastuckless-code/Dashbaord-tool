@@ -266,35 +266,11 @@
       <form method="dialog" class="dialog-card">
         <div class="dialog-header"><div><p class="eyebrow">DATA IMPORT</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Choose where the report goes, then the report itself. It is validated before any data is added to the dashboard, and your existing data stays unchanged until you confirm.</p>
-        <fieldset class="import-target" id="import-target">
-          <legend>Where does this report go?</legend>
-          <label><input type="radio" name="import-target" value="existing" checked /><span><strong>An existing campaign</strong><small>Add the report to a campaign you already track.</small></span></label>
-          <label><input type="radio" name="import-target" value="new" /><span><strong>A new campaign</strong><small>Set it up from the report, or fill in its setup yourself.</small></span></label>
-        </fieldset>
-        <label class="import-target-campaign" id="import-target-campaign-label">Campaign<select id="import-target-campaign" aria-label="Existing campaign"></select></label>
-        <section class="new-campaign-setup" id="new-campaign-setup" hidden aria-labelledby="new-campaign-setup-title">
-          <div class="detail-section-heading"><h3 id="new-campaign-setup-title">New campaign setup</h3><small>Choose a report below and its setup is read from it. Or fill this in, create the campaign, and add its report next.</small></div>
-          <div class="settings-grid campaign-create-grid">
-            <label>Client<input id="new-campaign-client" autocomplete="off" /></label><label>Campaign name<input id="new-campaign-name" autocomplete="off" /></label>
-            <label>Stable source campaign ID<input id="new-campaign-id" autocomplete="off" placeholder="CM360 or DSP campaign ID" /></label><label>Campaign owner<input id="new-campaign-owner" autocomplete="off" placeholder="Campaign manager" /></label>
-            <label class="wide">Channel<input id="new-campaign-channel" autocomplete="off" placeholder="Display, video, paid social…" /></label>
-            <label>Start date<input id="new-campaign-start" type="date" /></label><label>End date<input id="new-campaign-end" type="date" /></label>
-            <label>Budget source<select id="new-campaign-budget-source"><option value="manual">Enter manually</option><option value="report">Read from reports</option></select></label>
-            <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" autocomplete="off" placeholder="250000" /><small id="new-campaign-budget-hint" class="field-hint"></small></label>
-            <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
-            <label>Primary KPI<input id="new-campaign-kpi" autocomplete="off" placeholder="VCR" /></label><label>KPI target<input id="new-campaign-target" autocomplete="off" placeholder="70%" /></label>
-            <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-          </div>
-          
-          <p class="settings-error" id="create-campaign-error" hidden></p>
-          <div class="new-campaign-actions"><button class="secondary-button" id="create-campaign-submit" type="button">Create campaign</button></div>
-        </section>
         <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
         <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
         <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
         <div class="validation-result" id="validation-result" hidden role="status"></div>
         <button class="text-button validation-export-button" id="export-validation-issues" type="button" hidden>Download validation issues</button>
-        <fieldset class="import-mode"><legend>Import behavior</legend><label><input type="radio" name="import-mode" value="merge" checked /><span><strong>Merge with dashboard</strong><small>Add campaigns and reconcile matching source reports.</small></span></label><label><input type="radio" name="import-mode" value="replace" /><span><strong>Replace dashboard data</strong><small>Remove current campaign rows before importing this report.</small></span></label></fieldset>
         <section class="import-preview" id="import-preview" hidden aria-labelledby="import-preview-title"><div class="detail-section-heading"><h3 id="import-preview-title">Import impact preview</h3><small id="import-preview-mode"></small></div><div class="import-preview-summary" id="import-preview-summary"></div><div class="import-preview-list" id="import-preview-list"></div></section>
         <section class="import-assignments" id="import-assignments" hidden aria-labelledby="import-assignments-title">
           <div class="detail-section-heading"><h3 id="import-assignments-title">What should each campaign become?</h3><small>One block per campaign in the report: new, update a match, add to one you track, or skip</small></div>
@@ -304,11 +280,6 @@
         </section>
         <section class="mapping-review" id="mapping-review" hidden aria-labelledby="mapping-review-title"><div class="detail-section-heading"><h3 id="mapping-review-title">Source column mapping</h3><button class="text-button" id="export-mapping-review" type="button">Download mapping</button></div><div class="mapping-review-summary" id="mapping-review-summary"></div><div class="mapping-review-list" id="mapping-review-list"></div></section>
         <a class="template-link" href="templates/import/campaign-performance.csv" download>↓ Download CSV template</a>
-        <section class="folder-sync-section" id="folder-sync" aria-labelledby="folder-sync-title">
-          <div class="detail-section-heading"><h3 id="folder-sync-title">Report folder (auto-pull)</h3><div class="panel-actions"><button class="text-button" id="folder-connect" type="button">Connect folder</button><button class="text-button" id="folder-sync-now" type="button" hidden>Sync now</button><button class="text-button" id="folder-disconnect" type="button" hidden>Disconnect</button></div></div>
-          <p class="history-empty" id="folder-sync-status">Connect a OneDrive or SharePoint-synced folder and new reports are imported automatically.</p>
-          <div id="folder-review-list"></div>
-        </section>
         <section class="import-history-section" aria-labelledby="import-history-title">
           <div class="detail-section-heading"><h3 id="import-history-title">Recent import activity</h3><div class="panel-actions"><button class="text-button" id="view-import-audit" type="button">View all</button><button class="text-button" id="undo-last-import" type="button">Undo last import</button><button class="text-button" id="export-import-history" type="button">Export audit</button></div></div>
           <div id="import-history"></div>
@@ -369,19 +340,6 @@
       </form>
     </dialog>
 
-    <dialog id="multi-io-dialog" aria-labelledby="multi-io-title">
-      <form class="dialog-card" id="multi-io-form" method="dialog">
-        <div class="dialog-header"><div><p class="eyebrow">INSERTION ORDERS</p><h2 id="multi-io-title">Apply several orders</h2><p>Each order is matched to the campaign it names. Change a match, or skip an order.</p></div><button class="close-button close-multi-io" type="button" aria-label="Close">×</button></div>
-        <fieldset class="io-review-mode" id="multi-io-mode"><legend>Use each order as</legend>
-          <label><input type="radio" name="multi-io-mode" value="totals" checked /><span><strong>Campaign totals only</strong><small>Pace each campaign on its order's total budget and flight dates; report lines stay as imported.</small></span></label>
-          <label><input type="radio" name="multi-io-mode" value="flights" /><span><strong>Save placements as line-item flights</strong><small>Add each order's placements to its campaign as planned flights.</small></span></label>
-        </fieldset>
-        <div class="multi-io-list" id="multi-io-list"></div>
-        <p class="settings-error" id="multi-io-error" hidden></p>
-        <div class="dialog-actions"><button class="secondary-button close-multi-io" type="button">Cancel</button><button class="primary-button" type="submit">Apply orders</button></div>
-      </form>
-    </dialog>
-
     <dialog id="bulk-edit-dialog" aria-labelledby="bulk-edit-title">
       <form class="dialog-card" id="bulk-edit-form" method="dialog">
         <div class="dialog-header"><div><p class="eyebrow">BULK EDIT</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
@@ -402,20 +360,19 @@
 
     <dialog id="io-review-dialog" aria-labelledby="io-review-title">
       <form class="dialog-card io-review-card" id="io-review-form" method="dialog">
-        <div class="dialog-header"><div><p class="eyebrow">INSERTION ORDER</p><h2 id="io-review-title">Review insertion order</h2><p id="io-review-subtitle"></p></div><button class="close-button close-io-review" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow" id="io-review-eyebrow">INSERTION ORDER</p><h2 id="io-review-title">Review insertion order</h2><p id="io-review-subtitle"></p></div><button class="close-button close-io-review" type="button" aria-label="Close">×</button></div>
         <div class="source-summary component-summary io-review-facts" id="io-review-facts"></div>
         <ul class="io-review-warnings" id="io-review-warnings" hidden></ul>
-        <label class="io-review-target" id="io-review-target-label" hidden>Apply this order to<select id="io-review-target"></select></label>
-        <p class="io-review-note" id="io-review-match-note" hidden></p>
-        <fieldset class="io-review-mode" id="io-review-mode"><legend>How should this order be used?</legend>
-          <label><input type="radio" name="io-mode" value="totals" /><span><strong>Campaign totals only</strong><small>Pace the whole campaign on the order's total budget and flight dates. Your report lines stay as imported and no placements are saved.</small></span></label>
-          <label><input type="radio" name="io-mode" value="flights" /><span><strong>Save placements as line-item flights</strong><small>Add each placement as a planned flight with its own budget. Best when the order is uploaded before any reports.</small></span></label>
-        </fieldset>
-        <div class="io-review-toolbar"><label><input type="checkbox" id="io-review-select-all" checked /> Select all</label><small id="io-review-selection"></small></div>
+        <label class="io-review-target">Campaign<select id="io-review-target"></select></label>
+        <p class="io-review-note" id="io-review-match-note"></p>
+        <div class="settings-grid io-new-campaign" id="io-new-campaign" hidden>
+          <label>Client<input id="io-new-client" autocomplete="off" /></label>
+          <label>Campaign name<input id="io-new-name" autocomplete="off" /></label>
+        </div>
+        <div class="detail-section-heading"><span>IO lines</span><small id="io-review-selection"></small></div>
         <div class="io-review-lines" id="io-review-lines"></div>
-        <label class="io-review-budget"><input type="checkbox" id="io-review-set-budget" checked /> <span id="io-review-budget-label"></span></label>
         <p class="settings-error" id="io-review-error" hidden></p>
-        <div class="dialog-actions"><button class="secondary-button close-io-review" type="button">Cancel</button><button class="primary-button" id="io-review-apply" type="submit">Apply to campaign</button></div>
+        <div class="dialog-actions"><button class="secondary-button close-io-review" type="button" id="io-review-skip">Cancel</button><button class="primary-button" id="io-review-apply" type="submit">Apply to campaign</button></div>
       </form>
     </dialog>
 
@@ -480,18 +437,8 @@
           <label>KPI target<input id="campaign-kpi-target-input" required /></label>
         </div>
         <section class="line-item-section">
-          <div class="budget-revision-heading"><div><span>Line item flights</span><strong id="line-item-flight-count">No flights</strong><small id="line-item-budget-summary">One flight and total budget per line item</small></div><button type="button" class="text-button" id="export-line-items" disabled>Export CSV</button></div>
-          <div id="line-item-flight-list" class="line-item-flight-list"></div>
+          <div class="budget-revision-heading"><div><span>Insertion order</span><strong id="io-section-title">No IO uploaded</strong><small>Budget, flight dates, and lines come from the campaign's IO</small></div><label class="text-button" for="io-pdf-input">Upload / revise IO</label><input id="io-pdf-input" type="file" accept=".pdf,application/pdf" hidden /></div>
           <p class="io-totals-note" id="io-totals-note" hidden></p>
-          <div class="line-item-import-row"><label class="text-button" for="io-pdf-input">Upload IO (PDF)</label><input id="io-pdf-input" type="file" accept=".pdf,application/pdf" /><label class="text-button" for="line-item-import-input">Import CSV</label><input id="line-item-import-input" type="file" accept=".csv,text/csv" /><small>Use a previously exported line-item plan.</small></div>
-          <div class="settings-grid revision-fields">
-            <label>Line item ID<input id="line-item-id-input" autocomplete="off" /></label>
-            <label>Line item name<input id="line-item-name-input" autocomplete="off" /></label>
-            <label>Flight start<input id="line-item-start-input" type="date" /></label>
-            <label>Flight end<input id="line-item-end-input" type="date" /></label>
-            <label class="wide">Total line item budget<input id="line-item-budget-input" inputmode="decimal" placeholder="13285.30" /></label>
-            <button class="secondary-button wide" id="save-line-item-flight" type="button">Save line item flight</button>
-          </div>
         </section>
         <section class="budget-revision-section">
           <div class="budget-revision-heading"><div><span>Current approved budget</span><strong id="current-budget-value">—</strong><small id="budget-revision-meta">No budget revisions recorded</small></div><button type="button" class="text-button" id="toggle-budget-revision">+ Add budget revision</button></div>

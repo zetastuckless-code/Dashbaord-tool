@@ -118,3 +118,16 @@ test("flags stale dated data but not current or future-dated data", () => {
   assert.equal(alerts[0].title, "Data is stale");
   assert.match(alerts[0].detail, /Data through 2026-09-20/);
 });
+
+test("a campaign on an IO is flagged stale once and its IO-matched lines need no campaign ID", async () => {
+  const { setCampaignTotals } = await import("../lib/campaign-totals.js");
+  const { groupKey } = await import("../lib/campaign-groups.js");
+  const line = (name, dataAsOf) => ({ client: "Acme", name: `Spring — ${name}`, spend: 100, budget: null, startDate: "2026-07-01", endDate: "2026-12-31", source: "Zeta Global", billingSource: "reported", requiresMapping: true, ioLineStatus: "matched", dataAsOf, kpi: "CTR", value: "0.1%", target: "Target 0.1%", impressions: 0, clicks: 0 });
+  const rows = [{ client: "Acme", name: "Spring", source: "Manual", spend: 0, budget: 1000, startDate: "2026-07-01", endDate: "2026-12-31", kpi: "CTR", target: "Target Not provided" }, line("Chicago", "2026-09-01"), line("Phoenix", "2026-09-02")];
+  const totals = setCampaignTotals({}, groupKey(rows[0]), { orderNumber: "1", budget: 1000, startDate: "2026-07-01", endDate: "2026-12-31", lineItems: [] }, "io.pdf");
+  const alerts = evaluateCampaignAlerts(rows, DEFAULT_ALERT_RULES, new Date("2026-10-22T12:00:00Z"), { totals });
+  assert.equal(alerts.filter(alert => alert.title === "Campaign ID needs mapping").length, 0);
+  const stale = alerts.filter(alert => alert.title === "Data is stale");
+  assert.equal(stale.length, 1);
+  assert.equal(stale[0].campaign.name, "Spring — Phoenix");
+});
