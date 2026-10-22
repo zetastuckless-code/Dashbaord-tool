@@ -61,6 +61,8 @@ let selectedSource = "billing";
 let clientScope = new URLSearchParams(location.search).get("client");
 let sourcesView = new URLSearchParams(location.search).get("view") === "sources";
 if (sourcesView) clientScope = null;
+let alertsView = new URLSearchParams(location.search).get("view") === "alerts";
+if (alertsView) clientScope = null;
 let alertRules = loadAlertRules();
 let visibleColumns = readColumnPreferences(localStorage);
 let acknowledgedAlertIds = readAcknowledgedAlerts(localStorage);
@@ -93,7 +95,8 @@ function loadAlertRules() {
   }
 }
 
-const formatMoney = value => value >= 1_000_000 ? `$${(value / 1_000_000).toFixed(2)}M` : `$${(value / 1000).toFixed(1)}K`;
+// Under $1,000 shows whole dollars ($300), so small amounts never read as "$0.3K".
+const formatMoney = value => Math.abs(value) >= 1_000_000 ? `$${(value / 1_000_000).toFixed(2)}M` : Math.abs(value) >= 1000 ? `$${(value / 1000).toFixed(1)}K` : `$${Math.round(value).toLocaleString("en-US")}`;
 const formatExactMoney = value => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(value);
 const hasBudget = campaign => Number.isFinite(campaign.budget) && campaign.budget > 0;
 // Pacing numbers take their colour from the same thresholds the alerts use: red over, amber under, green on track.
@@ -118,6 +121,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   document.querySelector("#portfolio-kpi-label").textContent = portfolioKpi.metric;
   document.querySelector("#portfolio-kpi-value").textContent = portfolioKpi.formatted;
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
+  document.querySelector("#kpi-card-view").value = selectedKpiView;
   renderSpendChart(activeRows);
   lastPacingRows = activeRows;
   const activeUnits = budgetUnits(activeRows, campaignTotals);
@@ -150,6 +154,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientIo();
   renderClientDocuments();
   applySourcesView();
+  applyAlertsView();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -185,6 +190,7 @@ function setClientScope(name, { replace = false } = {}) {
   if ((name || null) !== clientScope) resetExpandedCampaigns();
   clientScope = name || null;
   sourcesView = false;
+  alertsView = false;
   const url = clientScope ? `?client=${encodeURIComponent(clientScope)}` : location.pathname;
   if (replace) history.replaceState({ client: clientScope }, "", url); else history.pushState({ client: clientScope }, "", url);
   renderCampaigns();
@@ -204,7 +210,7 @@ function applyClientScopeChrome() {
     eyebrow.textContent = "PERFORMANCE CENTER";
     subtitle.textContent = "Here’s how your campaigns are tracking today.";
     renderProfile();
-    document.title = "Northstar | Campaign overview";
+    document.title = "Zeta | Campaign overview";
     return;
   }
   const rows = campaigns.filter(campaign => campaign.client === clientScope && !isCampaignArchived(campaign));
@@ -213,7 +219,7 @@ function applyClientScopeChrome() {
   eyebrow.textContent = "CLIENT ACCOUNT";
   heading.textContent = clientScope;
   subtitle.textContent = `${groups.length} campaign${groups.length === 1 ? "" : "s"} · ${live} live · only ${clientScope} data is shown below.`;
-  document.title = `Northstar | ${clientScope}`;
+  document.title = `Zeta | ${clientScope}`;
 }
 
 function renderClientNav() {
@@ -221,8 +227,8 @@ function renderClientNav() {
   document.querySelector("#client-nav-label").hidden = clients.length === 0;
   document.querySelector("#client-nav").innerHTML = clients.map(campaign => `<a class="nav-item client-nav-item${campaign.client === clientScope ? " active" : ""}" href="?client=${encodeURIComponent(campaign.client)}" data-client-link="${escapeHtml(campaign.client)}"${campaign.client === clientScope ? ' aria-current="page"' : ""}><span class="client-nav-mark ${escapeHtml(campaign.className || "")}">${escapeHtml(campaign.short || "")}</span><span class="client-nav-name">${escapeHtml(campaign.client)}</span></a>`).join("");
   const overview = document.querySelector("#nav-overview");
-  overview.classList.toggle("active", !clientScope && !sourcesView);
-  if (clientScope || sourcesView) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
+  overview.classList.toggle("active", !clientScope && !sourcesView && !alertsView);
+  if (clientScope || sourcesView || alertsView) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
   const sourcesLink = document.querySelector("#nav-sources");
   sourcesLink.classList.toggle("active", sourcesView);
   if (sourcesView) sourcesLink.setAttribute("aria-current", "page"); else sourcesLink.removeAttribute("aria-current");
@@ -232,13 +238,15 @@ document.querySelector(".sidebar").addEventListener("click", event => {
   const link = event.target.closest("[data-client-link]");
   if (link) { event.preventDefault(); setClientScope(link.dataset.clientLink); document.querySelector(".sidebar").classList.remove("open"); return; }
   if (event.target.closest("#nav-sources")) { event.preventDefault(); setSourcesView(true); document.querySelector(".sidebar").classList.remove("open"); return; }
-  if (event.target.closest("#nav-overview") && (clientScope || sourcesView)) { event.preventDefault(); setClientScope(null); }
+  if (event.target.closest("#nav-alerts")) { event.preventDefault(); setAlertsView(true); document.querySelector(".sidebar").classList.remove("open"); return; }
+  if (event.target.closest("#nav-overview") && (clientScope || sourcesView || alertsView)) { event.preventDefault(); alertsView = false; setClientScope(null); }
 });
 document.querySelector("#client-back").addEventListener("click", event => { event.preventDefault(); setClientScope(null); });
 window.addEventListener("popstate", () => {
   sourcesView = new URLSearchParams(location.search).get("view") === "sources";
+  alertsView = new URLSearchParams(location.search).get("view") === "alerts";
   resetExpandedCampaigns();
-  clientScope = sourcesView ? null : new URLSearchParams(location.search).get("client");
+  clientScope = sourcesView || alertsView ? null : new URLSearchParams(location.search).get("client");
   renderCampaigns();
 });
 
@@ -886,6 +894,127 @@ function openPacingDetail() {
 document.querySelector("#pacing-card").addEventListener("click", openPacingDetail);
 document.querySelector("#pacing-card").addEventListener("keydown", event => {
   if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openPacingDetail(); }
+});
+
+// --- Budget, spend and KPI details: each summary card opens a breakdown by campaign, like the pacing card ---
+const metricDialog = document.querySelector("#metric-dialog");
+let metricDetailKind = null;
+const SOURCE_LABEL = { billing: "billing", first: "1st-party", third: "3rd-party" };
+const KPI_VIEW_LABEL = { primary: "Campaign primary", CTR: "CTR", VCR: "VCR", CPA: "CPA", ROAS: "ROAS" };
+const shareText = (part, whole) => whole > 0 ? `${(part / whole * 100).toFixed(1)}%` : "—";
+const rowCampaign = row => `<td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}</small></td>`;
+const metricStat = (label, value, sub, cls = "") => `<div class="pacing-stat"><small>${escapeHtml(label)}</small><strong class="${cls}">${escapeHtml(value)}</strong><span>${escapeHtml(sub)}</span></div>`;
+const metricTable = (head, rows, empty = "No live campaigns for the current filters.") => rows.length ? `<table><thead><tr>${head.map(label => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>` : `<p class="history-empty">${escapeHtml(empty)}</p>`;
+
+function metricDetailRows() {
+  return buildPacingDetail({ campaigns: lastPacingRows, totals: campaignTotals, spendView: "billing", range: { preset: "7", custom: {} } });
+}
+
+function setMetricExtra(title, note, html) {
+  document.querySelector("#metric-extra-section").hidden = !html;
+  document.querySelector("#metric-extra-title").textContent = title;
+  document.querySelector("#metric-extra-note").textContent = note;
+  document.querySelector("#metric-extra").innerHTML = html;
+}
+
+function renderBudgetDetail() {
+  const detail = metricDetailRows();
+  const rows = [...detail.rows].sort((a, b) => (b.budget ?? 0) - (a.budget ?? 0) || a.name.localeCompare(b.name));
+  const fromIo = rows.filter(row => row.fromOrder && row.budget);
+  const ioBudget = fromIo.reduce((sum, row) => sum + row.budget, 0);
+  const missing = rows.filter(row => !row.budget).length;
+  const largest = rows.find(row => row.budget);
+  document.querySelector("#metric-dialog-title").textContent = "Active media budget";
+  document.querySelector("#metric-stats").innerHTML = [
+    metricStat("Active media budget", formatMoney(detail.budget), `across ${rows.length} live campaign${rows.length === 1 ? "" : "s"}`),
+    metricStat("From insertion orders", formatMoney(ioBudget), `${fromIo.length} campaign${fromIo.length === 1 ? "" : "s"} · ${shareText(ioBudget, detail.budget)} of the budget`),
+    metricStat("From reports", formatMoney(Math.max(detail.budget - ioBudget, 0)), missing ? `${missing} campaign${missing === 1 ? " has" : "s have"} no budget yet` : "Every live campaign has a budget"),
+    metricStat("Largest campaign", largest ? formatMoney(largest.budget) : "—", largest ? largest.name : "No budgets yet")
+  ].join("");
+  document.querySelector("#metric-table-note").textContent = "Live campaigns, largest budget first";
+  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Flight", "Budget", "Share", "Budget from", "Days left"], rows.map(row => `<tr>${rowCampaign(row)}<td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatExactMoney(row.budget)) : "—"}</td><td>${row.budget ? shareText(row.budget, detail.budget) : "—"}</td><td>${row.budget ? (row.fromOrder ? "Insertion order" : "Report") : '<span class="warning-text">Needs a budget</span>'}</td><td>${row.daysLeft ?? "—"}</td></tr>`));
+  setMetricExtra("", "", "");
+}
+
+function renderSpendDetail() {
+  const detail = metricDetailRows();
+  const spendOf = row => row.records.reduce((sum, record) => sum + (Number(resolveSpend(record, selectedSource)) || 0), 0);
+  const rows = detail.rows.map(row => ({ ...row, shownSpend: spendOf(row) })).sort((a, b) => b.shownSpend - a.shownSpend || a.name.localeCompare(b.name));
+  const spend = rows.reduce((sum, row) => sum + row.shownSpend, 0);
+  const lastWeek = detail.period.daysWithData ? detail.period.actualTotal : null;
+  document.querySelector("#metric-dialog-title").textContent = "Spend to date";
+  document.querySelector("#metric-stats").innerHTML = [
+    metricStat("Spend to date", formatMoney(spend), `${SOURCE_LABEL[selectedSource]} spend across ${rows.length} live campaign${rows.length === 1 ? "" : "s"}`),
+    metricStat("Budget used", shareText(spend, detail.budget), detail.budget > 0 ? `of ${formatMoney(detail.budget)}` : "No budget set"),
+    metricStat("Remaining", detail.budget > 0 ? formatMoney(Math.max(detail.budget - spend, 0)) : "—", detail.requiredDaily ? `${perDay(detail.requiredDaily)} needed to finish on time` : "No live flight with budget left"),
+    metricStat("Last 7 days", lastWeek === null ? "—" : formatMoney(lastWeek), lastWeek === null ? "No reports cover the last 7 days" : `${perDay(detail.period.avgActual)} on average (billing)`)
+  ].join("");
+  document.querySelector("#metric-table-note").textContent = `Live campaigns, most spend first · ${SOURCE_LABEL[selectedSource]} spend`;
+  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Budget", "Spend", "Budget used", "Remaining", "Data through"], rows.map(row => {
+    const through = row.records.map(record => record.dataAsOf).filter(Boolean).sort().at(-1);
+    return `<tr>${rowCampaign(row)}<td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td><strong>${escapeHtml(formatExactMoney(row.shownSpend))}</strong></td><td>${row.budget ? shareText(row.shownSpend, row.budget) : "—"}</td><td>${row.budget ? escapeHtml(formatMoney(Math.max(row.budget - row.shownSpend, 0))) : "—"}</td><td>${escapeHtml(through || "—")}</td></tr>`;
+  }));
+  // On the overview, spend also rolls up by client.
+  const byClient = clientScope ? [] : [...rows.reduce((map, row) => map.set(row.client, { spend: (map.get(row.client)?.spend || 0) + row.shownSpend, budget: (map.get(row.client)?.budget || 0) + (row.budget || 0), count: (map.get(row.client)?.count || 0) + 1 }), new Map())].sort((a, b) => b[1].spend - a[1].spend);
+  setMetricExtra("By client", "Live campaigns only", byClient.length > 1 ? metricTable(["Client", "Campaigns", "Budget", "Spend", "Budget used"], byClient.map(([client, item]) => `<tr><td><strong>${escapeHtml(client)}</strong></td><td>${item.count}</td><td>${item.budget ? escapeHtml(formatMoney(item.budget)) : "—"}</td><td>${escapeHtml(formatMoney(item.spend))}</td><td>${shareText(item.spend, item.budget)}</td></tr>`)) : "");
+}
+
+function renderKpiDetail() {
+  const view = document.querySelector("#kpi-view").value || "primary";
+  const detail = metricDetailRows();
+  const overall = aggregateKpiView(lastPacingRows, view);
+  document.querySelector("#metric-dialog-title").textContent = view === "primary" ? "Primary KPIs" : view;
+  document.querySelector("#metric-dialog-controls").innerHTML = `<label>KPI shown<select id="metric-kpi-view">${Object.entries(KPI_VIEW_LABEL).map(([value, label]) => `<option value="${value}"${value === view ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><small>"Campaign primary" uses the KPI set on each campaign. Use Edit on a campaign to change its primary KPI and target.</small>`;
+  const rows = detail.rows.map(row => {
+    const first = row.records[0];
+    const kpis = [...new Set(row.records.map(record => record.kpi).filter(Boolean))];
+    const value = aggregateKpiView(row.records, view === "primary" ? (kpis.length === 1 ? kpis[0] : "primary") : view);
+    return { ...row, key: groupKey(first), kpi: kpis.join(", ") || "Not set", target: String(first.target ?? "").replace(/^target\s*/i, "") || "—", value };
+  });
+  const mix = [...rows.reduce((map, row) => map.set(row.kpi, (map.get(row.kpi) || 0) + 1), new Map())].sort((a, b) => b[1] - a[1]);
+  document.querySelector("#metric-stats").innerHTML = [
+    metricStat(overall.metric, overall.formatted, `${overall.coverage}/${overall.total} live lines with data`),
+    metricStat("Primary KPIs in use", String(mix.filter(([kpi]) => kpi !== "Not set").length), mix.map(([kpi, count]) => `${kpi} ${count}`).join(" · ") || "None set"),
+    metricStat("Campaigns without a KPI", String(rows.filter(row => row.kpi === "Not set").length), "Set one with Edit")
+  ].join("");
+  document.querySelector("#metric-table-note").textContent = view === "primary" ? "Each campaign's own primary KPI" : `${view} calculated from each campaign's reported numbers`;
+  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Primary KPI", "Target", view === "primary" ? "Actual" : view, ""], rows.map(row => `<tr>${rowCampaign(row)}<td>${escapeHtml(row.kpi)}</td><td>${escapeHtml(row.target)}</td><td><strong>${escapeHtml(row.value.formatted)}</strong></td><td><button class="text-button" type="button" data-metric-edit="${escapeHtml(row.key)}">Edit</button></td></tr>`));
+  setMetricExtra("", "", "");
+}
+
+function renderMetricDetail() {
+  document.querySelector("#metric-dialog-eyebrow").textContent = `${clientScope ? `${clientScope.toUpperCase()} · ` : ""}${{ budget: "BUDGET", spend: "SPEND", kpi: "KPI" }[metricDetailKind]} DETAILS`;
+  document.querySelector("#metric-dialog-controls").innerHTML = "";
+  ({ budget: renderBudgetDetail, spend: renderSpendDetail, kpi: renderKpiDetail })[metricDetailKind]();
+  document.querySelector("#metric-dialog-controls").hidden = !document.querySelector("#metric-dialog-controls").innerHTML;
+}
+
+function openMetricDetail(kind) {
+  metricDetailKind = kind;
+  renderMetricDetail();
+  metricDialog.showModal();
+}
+for (const card of document.querySelectorAll("[data-metric-detail]")) {
+  card.addEventListener("click", event => { if (!event.target.closest(".kpi-card-picker")) openMetricDetail(card.dataset.metricDetail); });
+  card.addEventListener("keydown", event => {
+    if (event.target !== card) return;
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openMetricDetail(card.dataset.metricDetail); }
+  });
+}
+// The KPI card, its dialog and the More filters menu all choose the same KPI view.
+function setKpiView(value) {
+  document.querySelector("#kpi-view").value = value;
+  document.querySelector("#kpi-view").dispatchEvent(new Event("change"));
+  if (metricDialog.open && metricDetailKind === "kpi") renderMetricDetail();
+}
+document.querySelector("#kpi-card-view").addEventListener("change", event => setKpiView(event.target.value));
+metricDialog.addEventListener("change", event => { if (event.target.id === "metric-kpi-view") setKpiView(event.target.value); });
+metricDialog.addEventListener("click", event => {
+  const edit = event.target.closest("[data-metric-edit]");
+  if (!edit) return;
+  event.preventDefault();
+  metricDialog.close();
+  openCampaignEdit(edit.dataset.metricEdit);
 });
 
 document.querySelector("#export-spend-trend").addEventListener("click", () => {
@@ -2056,17 +2185,133 @@ function applySourcesView() {
   document.querySelector("#greeting").textContent = "Data sources";
   document.querySelector("#page-subtitle").textContent = "Every report behind the dashboard, grouped by client or campaign, with when it was uploaded.";
   document.querySelector("#client-back").hidden = true;
-  document.title = "Northstar | Data sources";
+  document.title = "Zeta | Data sources";
   renderDataSources();
 }
 
 function setSourcesView(on) {
   sourcesView = on;
-  if (on) clientScope = null;
+  if (on) { clientScope = null; alertsView = false; }
   history.pushState({ view: on ? "sources" : null }, "", on ? "?view=sources" : location.pathname);
   renderCampaigns();
   window.scrollTo({ top: 0, behavior: "instant" });
 }
+
+// --- Alerts page: every active alert, what it is based on, and a way into the campaign behind it ---
+const ALERT_TYPES = {
+  over: { label: "Overpacing", explain: "The campaign has spent more than a straight-line pace says it should have by today. Left alone, it will run out of budget before the flight ends.", action: "Lower daily caps or bids, or confirm the budget on the IO is right." },
+  under: { label: "Underpacing", explain: "The campaign has spent less than a straight-line pace says it should have by today. Left alone, it will not spend its full budget by the end of the flight.", action: "Raise caps or bids, widen targeting, or check that the line is live in the platform." },
+  stale: { label: "Stale data", explain: "The newest report for this campaign is older than your stale-data limit, so the numbers here may be behind what the platform shows.", action: "Import a newer report for this campaign." },
+  "missing-report": { label: "Overdue report", explain: "This campaign is set to receive a report on a schedule, and the next one has not arrived.", action: "Import the latest report, or change the expected report cadence in Edit campaign." },
+  "no-budget": { label: "Budget needed", explain: "There is no budget for this line, so pacing cannot be worked out.", action: "Upload the insertion order, or enter a budget in the campaign details." },
+  unmapped: { label: "Needs mapping", explain: "This line has no stable campaign ID, so the next report might not land on it.", action: "Add the source campaign ID in the campaign details." },
+  source: { label: "Source discrepancy", explain: "1st-party and 3rd-party numbers for this line disagree by more than your limit.", action: "Compare the two reports and decide which spend to bill on." },
+  kpi: { label: "KPI off target", explain: "The campaign's primary KPI is outside the target range by more than your tolerance.", action: "Review creative, targeting and placements for this line." },
+  "kpi-decline": { label: "KPI declining", explain: "The primary KPI got worse between the last two reports by more than your limit.", action: "Check what changed between the two reports." }
+};
+const SEVERITY_LABEL = { critical: "Critical", warning: "Warning", info: "Info" };
+const alertsFilter = { client: "all", severity: "all", type: "all", query: "" };
+let alertsPageAlerts = [];
+
+function renderAlertsPage() {
+  const rows = filterCampaigns(campaigns, { client: "all", status: "all", owner: "all", channel: "all", query: "" });
+  const all = unacknowledgedAlerts(evaluateAlerts(rows), acknowledgedAlertIds);
+  const clients = [...new Set(all.map(alert => alert.campaign.client))].sort();
+  if (alertsFilter.client !== "all" && !clients.includes(alertsFilter.client)) alertsFilter.client = "all";
+  document.querySelector("#alerts-client").innerHTML = `<option value="all">All clients</option>${clients.map(client => `<option${client === alertsFilter.client ? " selected" : ""}>${escapeHtml(client)}</option>`).join("")}`;
+  const types = [...new Set(all.map(alert => alert.type))];
+  document.querySelector("#alerts-type").innerHTML = `<option value="all">All types</option>${types.map(type => `<option value="${type}"${type === alertsFilter.type ? " selected" : ""}>${escapeHtml(ALERT_TYPES[type]?.label || type)}</option>`).join("")}`;
+  document.querySelector("#alerts-severity").value = alertsFilter.severity;
+  const query = alertsFilter.query.trim().toLowerCase();
+  const shown = all.filter(alert => (alertsFilter.client === "all" || alert.campaign.client === alertsFilter.client)
+    && (alertsFilter.severity === "all" || alert.severity === alertsFilter.severity)
+    && (alertsFilter.type === "all" || alert.type === alertsFilter.type)
+    && (!query || [alert.title, alert.detail, alert.campaign.client, alert.campaign.name].some(text => String(text).toLowerCase().includes(query))));
+  alertsPageAlerts = shown;
+  const count = severity => all.filter(alert => alert.severity === severity).length;
+  document.querySelector("#alerts-page-context").textContent = all.length ? `${all.length} active alert${all.length === 1 ? "" : "s"} across ${new Set(all.map(alert => groupKey(alert.campaign))).size} campaign${new Set(all.map(alert => groupKey(alert.campaign))).size === 1 ? "" : "s"} · thresholds come from Alert rules` : "No active alerts. Everything is within your rules.";
+  document.querySelector("#alerts-page-summary").innerHTML = ["critical", "warning", "info"].map(severity => `<button type="button" class="alerts-summary-chip ${severity}${alertsFilter.severity === severity ? " active" : ""}" data-alert-severity="${severity}"><strong>${count(severity)}</strong><span>${SEVERITY_LABEL[severity]}</span></button>`).join("");
+  document.querySelector("#alerts-page-export").disabled = shown.length === 0;
+  document.querySelector("#alerts-page-list").innerHTML = shown.length ? shown.map((alert, position) => {
+    const record = alert.campaign;
+    const key = groupKey(record);
+    const info = ALERT_TYPES[alert.type] || { label: alert.title, explain: "", action: "" };
+    const metrics = computeMetrics(campaigns.filter(item => groupKey(item) === key && !isCampaignArchived(item)), { spendView: selectedSource, totals: campaignTotals[key] || null });
+    const facts = [
+      ["Campaign spend", Number.isFinite(metrics.spend) ? formatMoney(metrics.spend) : "—"],
+      ["Campaign budget", Number.isFinite(metrics.budget) && metrics.budget > 0 ? formatMoney(metrics.budget) : "—"],
+      ["Campaign pacing", Number.isFinite(metrics.pacing) ? `${metrics.pacing.toFixed(1)}%` : "—"],
+      ["Line flight", record.startDate && record.endDate ? `${record.startDate} → ${record.endDate}` : "Not set"],
+      ["Data through", record.dataAsOf || "—"]
+    ];
+    const line = recordLineLabel(record);
+    return `<article class="alert-detail ${alert.severity}">
+      <div class="alert-detail-head"><span class="alert-symbol ${alert.severity}">${alert.symbol}</span><div><p class="alert-detail-meta"><span class="severity-tag ${alert.severity}">${SEVERITY_LABEL[alert.severity]}</span>${escapeHtml(info.label)}</p><h3>${escapeHtml(alert.title)}</h3><p class="alert-detail-where">${escapeHtml(record.client)} · ${escapeHtml(campaignGroupName(record))}${line && line !== campaignGroupName(record) ? ` · ${escapeHtml(line)}` : ""}</p></div></div>
+      <p class="alert-detail-reading"><strong>What it shows:</strong> ${escapeHtml(alert.detail)}</p>
+      ${info.explain ? `<p class="alert-detail-explain">${escapeHtml(info.explain)}</p>` : ""}
+      <dl class="alert-detail-facts">${facts.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>
+      ${info.action ? `<p class="alert-detail-action"><strong>Next step:</strong> ${escapeHtml(info.action)}</p>` : ""}
+      <div class="alert-detail-buttons"><button class="primary-button" type="button" data-alert-open="${position}">Open campaign details</button><button class="secondary-button" type="button" data-alert-client="${escapeHtml(record.client)}">Go to ${escapeHtml(record.client)}</button><button class="text-button" type="button" data-alert-ack="${position}">Acknowledge</button></div>
+    </article>`;
+  }).join("") : `<p class="history-empty">${all.length ? "No alerts match these filters." : "No active alerts right now."}</p>`;
+}
+
+function applyAlertsView() {
+  document.body.classList.toggle("alerts-view", alertsView);
+  document.querySelector("#alerts-page").hidden = !alertsView;
+  const link = document.querySelector("#nav-alerts");
+  link.classList.toggle("active", alertsView);
+  if (alertsView) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+  if (!alertsView) return;
+  document.querySelector("#nav-overview").classList.remove("active");
+  document.querySelector("#nav-overview").removeAttribute("aria-current");
+  document.querySelector("#page-eyebrow").textContent = "MONITORING";
+  document.querySelector("#greeting").textContent = "Alerts";
+  document.querySelector("#page-subtitle").textContent = "Read each alert in full, see what it is based on, and jump into the campaign.";
+  document.querySelector("#client-back").hidden = true;
+  document.title = "Zeta | Alerts";
+  renderAlertsPage();
+}
+
+function setAlertsView(on) {
+  alertsView = on;
+  if (on) { clientScope = null; sourcesView = false; }
+  history.pushState({ view: on ? "alerts" : null }, "", on ? "?view=alerts" : location.pathname);
+  renderCampaigns();
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+document.querySelector("#alerts-client").addEventListener("change", event => { alertsFilter.client = event.target.value; renderAlertsPage(); });
+document.querySelector("#alerts-severity").addEventListener("change", event => { alertsFilter.severity = event.target.value; renderAlertsPage(); });
+document.querySelector("#alerts-type").addEventListener("change", event => { alertsFilter.type = event.target.value; renderAlertsPage(); });
+document.querySelector("#alerts-search").addEventListener("input", event => { alertsFilter.query = event.target.value; renderAlertsPage(); });
+document.querySelector("#alerts-page-rules").addEventListener("click", () => document.querySelector("#alert-settings-button").click());
+document.querySelector("#alerts-page-export").addEventListener("click", () => {
+  if (!alertsPageAlerts.length) return;
+  const url = URL.createObjectURL(new Blob([exportAlertsCsv(alertsPageAlerts)], { type: "text/csv;charset=utf-8" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: `zeta-alerts-${new Date().toISOString().slice(0, 10)}.csv` });
+  link.click();
+  URL.revokeObjectURL(url);
+});
+document.querySelector("#alerts-page").addEventListener("click", event => {
+  const chip = event.target.closest("[data-alert-severity]");
+  if (chip) { alertsFilter.severity = alertsFilter.severity === chip.dataset.alertSeverity ? "all" : chip.dataset.alertSeverity; renderAlertsPage(); return; }
+  const open = event.target.closest("[data-alert-open]");
+  if (open) { const alert = alertsPageAlerts[Number(open.dataset.alertOpen)]; if (alert) openCampaignDialog(campaigns.indexOf(alert.campaign), alert.id); return; }
+  const client = event.target.closest("[data-alert-client]");
+  if (client) { alertsView = false; setClientScope(client.dataset.alertClient); return; }
+  const ack = event.target.closest("[data-alert-ack]");
+  if (ack) {
+    const alert = alertsPageAlerts[Number(ack.dataset.alertAck)];
+    if (!alert) return;
+    acknowledgedAlertIds = acknowledgeAlert(acknowledgedAlertIds, alert);
+    writeAcknowledgedAlerts(localStorage, acknowledgedAlertIds);
+    renderCampaigns(document.querySelector("#client-filter").value);
+  }
+});
+document.querySelector("#alert-card").addEventListener("click", () => setAlertsView(true));
+document.querySelector("#alert-card").addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setAlertsView(true); } });
+document.querySelector("#view-all-alerts").addEventListener("click", () => setAlertsView(true));
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
 document.querySelector("#sources-kind").addEventListener("change", event => { sourcesFilter.kind = event.target.value; renderDataSources(); });
