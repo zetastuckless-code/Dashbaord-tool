@@ -40,6 +40,7 @@ import { applyLineItems } from "./lib/line-item-import.js";
 import { readIoPdf } from "./lib/io-reader.js";
 import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
+import { buildClientIoSummary } from "./lib/client-io.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
@@ -153,6 +154,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderCampaignList(matchingRows, activeAlerts);
   applyClientScopeChrome();
   renderClientNav();
+  renderClientIo();
   renderClientDocuments();
 }
 
@@ -2217,6 +2219,32 @@ function documentDetail(doc) {
   const unit = doc.kind === "io-flights" ? "flight" : doc.kind === "daily" ? "line" : doc.kind === "line-items" ? "line" : "line";
   return [`${doc.lines} ${unit}${doc.lines === 1 ? "" : "s"}`, campaignsText, doc.source && doc.kind !== "report" ? doc.source : "", doc.dataAsOf ? `data through ${doc.dataAsOf}` : "", when && `uploaded ${when}`, doc.legacy ? "added before uploads were tracked" : ""].filter(Boolean).join(" · ");
 }
+
+// --- Client account view: the insertion order(s) behind each campaign, so budget and flight are easy to find ---
+const IO_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const ioDate = value => value ? IO_DATE.format(new Date(`${value}T00:00:00Z`)) : "—";
+const ioRange = (start, end) => start && end ? `${ioDate(start)} → ${ioDate(end)}` : "Dates not set";
+
+function renderClientIo() {
+  const panel = document.querySelector("#client-io");
+  panel.hidden = !clientScope;
+  if (!clientScope) return;
+  const summary = buildClientIoSummary({ campaigns, totals: campaignTotals, client: clientScope });
+  const withIo = summary.filter(item => item.hasIo).length;
+  document.querySelector("#client-io-context").textContent = summary.length ? `${withIo} of ${summary.length} campaign${summary.length === 1 ? "" : "s"} paced on an insertion order · reports fill in spend and KPIs against these budgets and flights` : `No campaigns for ${clientScope} yet`;
+  document.querySelector("#client-io-list").innerHTML = summary.length ? summary.map(item => {
+    const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
+    const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
+    const tracking = `<div class="io-tracking"><span><small>Spend to date</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
+    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong>${escapeHtml(item.name)}</strong></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
+    const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
+    const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} flight${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
+    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong>${escapeHtml(item.name)}</strong></div>
+      <div class="io-facts"><span><small>Total IO budget</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
+      ${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
+  }).join("") : '<p class="history-empty">Upload an insertion order to see its budget and flight here.</p>';
+}
+document.querySelector("#client-io-upload").addEventListener("click", () => document.querySelector("#client-io-input").click());
 
 function renderClientDocuments() {
   const panel = document.querySelector("#client-documents");
