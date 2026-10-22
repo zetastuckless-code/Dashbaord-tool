@@ -158,3 +158,21 @@ test("reads a Zeta IO laid out as packages with written-out flight dates", () =>
   ]);
   assert.equal(io.lineItems.filter(item => item.addedValue).length, 1);
 });
+
+test("reads a Zeta IO whose placement row carries its own written-out flight dates and pricing", () => {
+  const io = parseInsertionOrder([[
+    "ADVERTISING INSERTION ORDER", "Agency: Example Agency", "Advertiser: Acme Health", "Campaign: Acme Health International 2026",
+    "Insertion Order Effective Dates: February 4, 2026 - December 31, 2026", "Budget: $100,000.00",
+    "February 4, 2026 - December 31, 2026 Package Programmatic Tactics Reaching Your Target Audience - - - - - - - - -",
+    "February 4, 2026 - December 31, 2026 Cross-Screen Standard Display CPM Impressions $5.00 20,000,000 $100,000.00 Awareness/CTR",
+    "Bonus Display IMPs 600,000",
+    "February 4, 2026 - December 31, 2026 Added Value Ad Serving Fees + - - - - - - - -",
+    "Totals $4.85 20,600,000 $100,000.00"
+  ]]);
+  assert.equal(io.valid, true);
+  const paid = io.lineItems.filter(item => !item.addedValue);
+  assert.deepEqual(paid.map(item => [item.name, item.startDate, item.endDate, item.budget, item.units, item.rate, item.kpi]), [
+    ["Standard Display", "2026-02-04", "2026-12-31", 100000, 20000000, 5, "CTR"]
+  ]);
+  assert.equal(io.warnings.some(warning => /total \$0/.test(warning)), false);
+});
