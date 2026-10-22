@@ -309,6 +309,11 @@
         <div class="pacing-stats" id="pacing-stats"></div>
         <section class="pacing-chart-section" aria-labelledby="pacing-chart-title">
           <div class="detail-section-heading"><h3 id="pacing-chart-title">Daily spend vs. a 100% pace</h3><small id="pacing-chart-context"></small></div>
+          <div class="pacing-range">
+            <label for="pacing-range">Period<select id="pacing-range"></select></label>
+            <span class="pacing-custom" id="pacing-custom" hidden><label for="pacing-start">From<input type="date" id="pacing-start" /></label><label for="pacing-end">To<input type="date" id="pacing-end" /></label></span>
+          </div>
+          <p class="settings-error" id="pacing-range-error" hidden role="alert"></p>
           <div class="pacing-chart-legend"><span><i class="bar"></i>Daily spend</span><span><i class="line"></i>Daily spend at 100% pace</span><span><i class="est"></i>Averaged between reports</span></div>
           <div class="pacing-chart" id="pacing-chart"></div>
           <p class="pacing-note" id="pacing-chart-note"></p>
