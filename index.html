@@ -32,7 +32,7 @@
         <p class="nav-label">Workspace</p>
         <nav class="nav-list">
           <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon">⇧</span>Data imports</button>
-          <a class="nav-item" href="#sources"><span class="nav-icon">⌁</span>Data sources</a>
+          <a class="nav-item" id="nav-sources" href="?view=sources"><span class="nav-icon">⌁</span>Data sources</a>
           <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>Settings</a>
         </nav>
 
@@ -70,6 +70,20 @@
             <button class="primary-button" id="upload-button"><span>＋</span> Import report</button>
           </div>
         </header>
+
+        <section class="data-sources" id="data-sources-page" aria-labelledby="data-sources-title" hidden>
+          <div class="client-rollup-header">
+            <div><h2 id="data-sources-title">Uploaded reports</h2><p id="data-sources-context">Everything behind the dashboard, by client and campaign</p></div>
+            <div class="panel-actions"><button class="text-button" id="sources-history" type="button">Import history</button><button class="secondary-button" id="sources-import" type="button">＋ Import report</button></div>
+          </div>
+          <div class="sources-controls">
+            <label>Client<select id="sources-client"></select></label>
+            <label>Group by<select id="sources-group"><option value="client">Client</option><option value="campaign">Campaign</option></select></label>
+            <label>Type<select id="sources-kind"></select></label>
+            <label class="sources-search">Search<input id="sources-search" type="search" placeholder="File, client, or campaign" autocomplete="off" /></label>
+          </div>
+          <div class="sources-list" id="data-sources-list"></div>
+        </section>
 
         <section class="control-bar" aria-label="Dashboard controls">
           <div class="filter-group search-filter">

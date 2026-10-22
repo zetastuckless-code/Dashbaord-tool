@@ -41,6 +41,7 @@ import { readIoPdf } from "./lib/io-reader.js";
 import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
+import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_KIND_OPTIONS } from "./lib/data-sources.js";
 import { buildPacingDetail } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
@@ -60,6 +61,8 @@ let campaigns = loadCampaigns();
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
 let clientScope = new URLSearchParams(location.search).get("client");
+let sourcesView = new URLSearchParams(location.search).get("view") === "sources";
+if (sourcesView) clientScope = null;
 let alertRules = loadAlertRules();
 let visibleColumns = readColumnPreferences(localStorage);
 let acknowledgedAlertIds = readAcknowledgedAlerts(localStorage);
@@ -157,6 +160,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientNav();
   renderClientIo();
   renderClientDocuments();
+  applySourcesView();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -184,6 +188,7 @@ document.querySelector("#client-grid").addEventListener("click", event => {
 // --- Client account view: ?client=Name shows only that client's campaigns, independent of the saved filters ---
 function setClientScope(name, { replace = false } = {}) {
   clientScope = name || null;
+  sourcesView = false;
   const url = clientScope ? `?client=${encodeURIComponent(clientScope)}` : location.pathname;
   if (replace) history.replaceState({ client: clientScope }, "", url); else history.pushState({ client: clientScope }, "", url);
   renderCampaigns();
@@ -220,18 +225,23 @@ function renderClientNav() {
   document.querySelector("#client-nav-label").hidden = clients.length === 0;
   document.querySelector("#client-nav").innerHTML = clients.map(campaign => `<a class="nav-item client-nav-item${campaign.client === clientScope ? " active" : ""}" href="?client=${encodeURIComponent(campaign.client)}" data-client-link="${escapeHtml(campaign.client)}"${campaign.client === clientScope ? ' aria-current="page"' : ""}><span class="client-nav-mark ${escapeHtml(campaign.className || "")}">${escapeHtml(campaign.short || "")}</span><span class="client-nav-name">${escapeHtml(campaign.client)}</span></a>`).join("");
   const overview = document.querySelector("#nav-overview");
-  overview.classList.toggle("active", !clientScope);
-  if (clientScope) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
+  overview.classList.toggle("active", !clientScope && !sourcesView);
+  if (clientScope || sourcesView) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
+  const sourcesLink = document.querySelector("#nav-sources");
+  sourcesLink.classList.toggle("active", sourcesView);
+  if (sourcesView) sourcesLink.setAttribute("aria-current", "page"); else sourcesLink.removeAttribute("aria-current");
 }
 
 document.querySelector(".sidebar").addEventListener("click", event => {
   const link = event.target.closest("[data-client-link]");
   if (link) { event.preventDefault(); setClientScope(link.dataset.clientLink); document.querySelector(".sidebar").classList.remove("open"); return; }
-  if (event.target.closest("#nav-overview") && clientScope) { event.preventDefault(); setClientScope(null); }
+  if (event.target.closest("#nav-sources")) { event.preventDefault(); setSourcesView(true); document.querySelector(".sidebar").classList.remove("open"); return; }
+  if (event.target.closest("#nav-overview") && (clientScope || sourcesView)) { event.preventDefault(); setClientScope(null); }
 });
 document.querySelector("#client-back").addEventListener("click", event => { event.preventDefault(); setClientScope(null); });
 window.addEventListener("popstate", () => {
-  clientScope = new URLSearchParams(location.search).get("client");
+  sourcesView = new URLSearchParams(location.search).get("view") === "sources";
+  clientScope = sourcesView ? null : new URLSearchParams(location.search).get("client");
   renderCampaigns();
 });
 
@@ -2255,17 +2265,91 @@ const DOCUMENT_REMOVAL_NOTES = {
   "io-flights": "The flights saved from this order are removed."
 };
 
-document.querySelector("#client-document-list").addEventListener("click", event => {
-  const button = event.target.closest("[data-remove-document]");
-  const doc = button ? lastClientDocuments.find(item => item.id === button.dataset.removeDocument) : null;
-  if (!doc) return;
-  applyRemoval(`removing ${doc.fileName} from ${clientScope}`, `Remove “${doc.fileName}” and the data it added for ${clientScope}?\n\n${DOCUMENT_REMOVAL_NOTES[doc.kind] || ""}`, () => {
-    const result = removeClientDocument({ campaigns, totals: campaignTotals, importHistory, client: clientScope, document: doc });
+/** Removes one uploaded document and the data it added for a client, with a restore point (Undo). */
+function removeUploadedDocument(client, doc) {
+  const feeds = doc.campaigns?.length ? `\n\nThis file feeds: ${doc.campaigns.join(", ")}.` : "";
+  return applyRemoval(`removing ${doc.fileName} from ${client}`, `Remove “${doc.fileName}” and the data it added for ${client}?${feeds}\n\n${DOCUMENT_REMOVAL_NOTES[doc.kind] || ""}`, () => {
+    const result = removeClientDocument({ campaigns, totals: campaignTotals, importHistory, client, document: doc });
     campaigns = result.campaigns;
     campaignTotals = writeCampaignTotals(localStorage, result.totals);
     importHistory = result.importHistory;
     writeImportHistory(localStorage, importHistory);
   });
+}
+
+document.querySelector("#client-document-list").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-document]");
+  const doc = button ? lastClientDocuments.find(item => item.id === button.dataset.removeDocument) : null;
+  if (doc) removeUploadedDocument(clientScope, doc);
+});
+
+// --- Data sources: every uploaded report, by client or campaign, with when it was uploaded ---
+const sourcesFilter = { client: "all", kind: "all", query: "", by: "client" };
+let lastSourceDocs = [];
+const uploadedText = doc => doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Upload time not recorded";
+
+function sourceDetail(doc) {
+  const others = doc.campaigns;
+  if (doc.kind === "io-order") return [doc.order, Number.isFinite(doc.budget) ? formatExactMoney(doc.budget) : "", doc.startDate && doc.endDate ? `${doc.startDate} → ${doc.endDate}` : "", others.join(", ")].filter(Boolean).join(" · ");
+  const unit = doc.kind === "io-flights" ? "flight" : "line";
+  return [`${doc.lines} ${unit}${doc.lines === 1 ? "" : "s"}`, others.join(", "), doc.source && doc.kind !== "report" ? doc.source : "", doc.dataAsOf ? `data through ${doc.dataAsOf}` : "", doc.legacy ? "added before uploads were tracked" : ""].filter(Boolean).join(" · ");
+}
+
+function renderDataSources() {
+  lastSourceDocs = listAllUploads({ campaigns, totals: campaignTotals, importHistory });
+  const clients = [...new Set(lastSourceDocs.map(doc => doc.client))];
+  if (sourcesFilter.client !== "all" && !clients.includes(sourcesFilter.client)) sourcesFilter.client = "all";
+  const clientSelect = document.querySelector("#sources-client");
+  clientSelect.innerHTML = `<option value="all">All clients</option>${clients.map(client => `<option value="${escapeHtml(client)}">${escapeHtml(client)}</option>`).join("")}`;
+  clientSelect.value = sourcesFilter.client;
+  const kindSelect = document.querySelector("#sources-kind");
+  if (!kindSelect.options.length) kindSelect.innerHTML = UPLOAD_KIND_OPTIONS.map(item => `<option value="${item.id}">${escapeHtml(item.label)}</option>`).join("");
+  kindSelect.value = sourcesFilter.kind;
+  document.querySelector("#sources-group").value = sourcesFilter.by;
+  const filtered = filterUploads(lastSourceDocs, sourcesFilter);
+  const summary = summarizeUploads(lastSourceDocs);
+  const filteredNote = filtered.length === lastSourceDocs.length ? "" : ` · showing ${filtered.length}`;
+  document.querySelector("#data-sources-context").textContent = summary.total
+    ? `${summary.total} upload${summary.total === 1 ? "" : "s"} across ${summary.clients} client${summary.clients === 1 ? "" : "s"}${summary.latest ? ` · last upload ${uploadedText({ uploadedAt: summary.latest })}` : ""}${filteredNote} · remove anything uploaded by mistake`
+    : "Nothing has been uploaded yet";
+  const groups = groupUploads(filtered, sourcesFilter.by);
+  const row = doc => `<div class="source-row"><span class="document-kind kind-${escapeHtml(doc.kind)}">${escapeHtml(DOCUMENT_KINDS[doc.kind] || doc.kind)}</span><span class="document-main"><strong>${escapeHtml(doc.fileName)}</strong><small>${escapeHtml(sourceDetail(doc))}</small></span><span class="source-when${doc.uploadedAt ? "" : " unknown"}">${escapeHtml(uploadedText(doc))}</span><button class="text-button destructive-text" type="button" data-remove-source="${escapeHtml(`${doc.client}||${doc.id}`)}" aria-label="Remove ${escapeHtml(doc.fileName)} from ${escapeHtml(doc.client)}">Remove</button></div>`;
+  document.querySelector("#data-sources-list").innerHTML = groups.length
+    ? groups.map(group => `<section class="source-group" aria-label="${escapeHtml(group.label)}"><div class="source-group-head"><h3>${escapeHtml(group.label)}</h3><small>${sourcesFilter.by === "campaign" ? `${escapeHtml(group.client)} · ` : ""}${group.docs.length} upload${group.docs.length === 1 ? "" : "s"}</small></div>${group.docs.map(row).join("")}</section>`).join("")
+    : `<p class="history-empty">${summary.total ? "No uploads match these filters." : "Reports, daily files, DSP line items, and insertion orders you upload are listed here."}</p>`;
+}
+
+function applySourcesView() {
+  document.body.classList.toggle("sources-view", sourcesView);
+  document.querySelector("#data-sources-page").hidden = !sourcesView;
+  if (!sourcesView) return;
+  document.querySelector("#page-eyebrow").textContent = "WORKSPACE";
+  document.querySelector("#greeting").textContent = "Data sources";
+  document.querySelector("#page-subtitle").textContent = "Every report behind the dashboard, grouped by client or campaign, with when it was uploaded.";
+  document.querySelector("#client-back").hidden = true;
+  document.title = "Northstar | Data sources";
+  renderDataSources();
+}
+
+function setSourcesView(on) {
+  sourcesView = on;
+  if (on) clientScope = null;
+  history.pushState({ view: on ? "sources" : null }, "", on ? "?view=sources" : location.pathname);
+  renderCampaigns();
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
+document.querySelector("#sources-kind").addEventListener("change", event => { sourcesFilter.kind = event.target.value; renderDataSources(); });
+document.querySelector("#sources-group").addEventListener("change", event => { sourcesFilter.by = event.target.value; renderDataSources(); });
+document.querySelector("#sources-search").addEventListener("input", event => { sourcesFilter.query = event.target.value; renderDataSources(); });
+document.querySelector("#sources-import").addEventListener("click", () => document.querySelector("#upload-nav").click());
+document.querySelector("#sources-history").addEventListener("click", () => document.querySelector("#view-import-audit").click());
+document.querySelector("#data-sources-list").addEventListener("click", event => {
+  const button = event.target.closest("[data-remove-source]");
+  if (!button) return;
+  const doc = lastSourceDocs.find(item => `${item.client}||${item.id}` === button.dataset.removeSource);
+  if (doc) removeUploadedDocument(doc.client, doc);
 });
 
 // --- Undo (multi-step) and removals ---
