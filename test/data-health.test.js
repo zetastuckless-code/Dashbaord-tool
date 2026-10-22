@@ -6,7 +6,7 @@ const now = new Date("2026-09-24T12:00:00Z");
 const record = (status, importedAt) => ({ status, importedAt });
 
 test("reports an empty state before the first import", () => {
-  assert.deepEqual(evaluateDataHealth([], now), { state: "empty", title: "Demo data", detail: "No reports imported", lastSync: "Not available" });
+  assert.deepEqual(evaluateDataHealth([], now), { state: "empty", title: "No data yet", detail: "Import a report to begin", lastSync: "Not available" });
 });
 
 test("reports healthy and stale successful imports", () => {

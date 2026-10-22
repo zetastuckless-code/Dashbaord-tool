@@ -53,13 +53,6 @@ import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { addLedgerEntries, clearFolderHandle, folderSyncSupported, isProcessed, ledgerKey, listReportFiles, loadFolderHandle, planAutoImport, readLedger, resolveFileHandle, reviewItems, saveFolderHandle, SYNC_INTERVAL_MS, writeLedger } from "./lib/folder-sync.js";
 
-const sampleCampaigns = [
-  { client: "Apex Athletics", owner: "Jordan Davis", channel: "Display", short: "AA", className: "apex", name: "Always On · Retargeting", spend: 184200, firstPartySpend: 184200, thirdPartySpend: 179600, billingSource: "1st party", budget: 240000, pacing: 112, kpi: "CPA", value: "$48.20", target: "Target $36.50", source: "1st party", updated: "8 min ago" },
-  { client: "Apex Athletics", owner: "Jordan Davis", channel: "Video", short: "AA", className: "apex", name: "Fall Video · Prospecting", spend: 221400, firstPartySpend: 216800, thirdPartySpend: 221400, billingSource: "CM360", budget: 380000, pacing: 101, kpi: "VCR", value: "74.8%", target: "Target 70%", source: "CM360", updated: "8 min ago" },
-  { client: "Lumon Home", owner: "Morgan Lee", channel: "Display", short: "LH", className: "lumon", name: "Fall Product Launch", spend: 146800, firstPartySpend: 128500, thirdPartySpend: 146800, billingSource: "CM360", budget: 280000, pacing: 79, kpi: "ROAS", value: "4.2×", target: "Target 3.5×", source: "CM360", updated: "1 hr ago" },
-  { client: "Nova Finance", owner: "Taylor Kim", channel: "Display", short: "NF", className: "nova", name: "Q3 Brand Awareness", spend: 131800, firstPartySpend: 131800, thirdPartySpend: 113100, billingSource: "1st party", budget: 340000, pacing: 96, kpi: "CTR", value: "0.82%", target: "Target 0.75%", source: "1st party", updated: "24 min ago" }
-];
-
 let campaigns = loadCampaigns();
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
@@ -80,9 +73,9 @@ let savedViews = readSavedViews(localStorage);
 function loadCampaigns() {
   try {
     const stored = JSON.parse(localStorage.getItem("northstar-campaigns"));
-    return Array.isArray(stored) && stored.length ? stored : sampleCampaigns;
+    return Array.isArray(stored) ? stored : [];
   } catch {
-    return sampleCampaigns;
+    return [];
   }
 }
 
