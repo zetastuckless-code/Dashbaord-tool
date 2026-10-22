@@ -183,3 +183,22 @@ test("parses a Slingshot internet order across page breaks, with rates, added-va
   assert.deepEqual(io.lineItems.map(item => Boolean(item.addedValue)), [false, false, true, true]);
   assert.match(io.warnings.join(" "), /2 added-value placements have no budget/);
 });
+
+test("reads a Zeta IO laid out as packages with written-out flight dates", () => {
+  const io = parseInsertionOrder([[
+    "ADVERTISING INSERTION ORDER", "Agency: Dieste Dallas", "Advertiser: Carter BloodCare", "Campaign: Carter BloodCare 2H 2026",
+    "Insertion Order Effective Dates: July 27, 2026 - December 20, 2026", "Budget: $29,938.00",
+    "July 27, 2026 - December 20, 2026 AA Package Programmatic Tactics Reaching Carter Bloodcare's Target Audience - - - - - - - - -",
+    "- Cross-Screen Streaming Audio Zeta Demographic Targeting Desktop I Mobile I TabletStreaming Audio 1x1, 30s Max CPM Impressions $22.00 724,455 $15,938.00 ACR",
+    "August 31, 2026 - October 25, 2026 USH Package Programmatic Tactics Reaching Carter Bloodcare's Target Audience - - - - - - - - -",
+    "- Cross-Screen Streaming Audio Preference, Spanish Bilingual, A18+ Streaming Audio 1x1, 30s Max CPM Impressions $22.00 636,364 $14,000.00 ACR",
+    "July 27, 2026 - December 20, 2026 Added Value Zeta Post-Campaign Insights & Analytics Reports - - - - - - - - -",
+    "Totals $22.00 1,360,818 $29,938.00"
+  ]]);
+  assert.equal(io.valid, true);
+  assert.deepEqual([io.startDate, io.endDate, io.budget], ["2026-07-27", "2026-12-20", 29938]);
+  assert.deepEqual(io.lineItems.filter(item => !item.addedValue).map(item => [item.name, item.startDate, item.endDate, item.budget]), [
+    ["AA Package", "2026-07-27", "2026-12-20", 15938], ["USH Package", "2026-08-31", "2026-10-25", 14000]
+  ]);
+  assert.equal(io.lineItems.filter(item => item.addedValue).length, 1);
+});
