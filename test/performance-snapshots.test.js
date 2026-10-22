@@ -53,10 +53,11 @@ test("returns selected-period spend only when comparable snapshots exist", () =>
     campaignSnapshot({ dataAsOf: "2026-09-18", source: "CM360", spend: 300 }),
     campaignSnapshot({ dataAsOf: "2026-09-25", source: "CM360", spend: 475 })
   ] };
-  assert.equal(periodSpend(campaign, "7"), 175);
+  const today = "2026-09-25";
+  assert.equal(periodSpend(campaign, "7", { today }), 175);
   assert.equal(periodSpend(campaign, "current"), null);
-  assert.equal(periodSpend({}, "7"), null);
-  assert.equal(periodMetrics(campaign, "7").spend, 175);
+  assert.equal(periodSpend({}, "7", { today }), null);
+  assert.equal(periodMetrics(campaign, "7", { today }).spend, 175);
 });
 
 test("calculates a KPI from selected-period component deltas", () => {
@@ -64,7 +65,7 @@ test("calculates a KPI from selected-period component deltas", () => {
     campaignSnapshot({ dataAsOf: "2026-09-18", source: "CM360", impressions: 1000, clicks: 10 }),
     campaignSnapshot({ dataAsOf: "2026-09-25", source: "CM360", impressions: 2500, clicks: 40 })
   ] };
-  assert.equal(periodKpi(campaign, "7").formatted, "2%");
+  assert.equal(periodKpi(campaign, "7", { today: "2026-09-25" }).formatted, "2%");
   assert.equal(periodKpi(campaign, "current"), null);
 });
 
@@ -91,4 +92,22 @@ test("lists newest snapshots first and exports an auditable CSV", () => {
   assert.equal(latest[headers.indexOf("clicks")], "20");
   assert.equal(previous[headers.indexOf("client")], "Apex, Inc.");
   assert.equal(previous[headers.indexOf("impressions")], "1000");
+});
+
+test("measures any reporting period from dated totals, filling in between reports", () => {
+  const campaign = { startDate: "2026-06-15", source: "DSP", performanceSnapshots: [
+    { date: "2026-05-31", source: "DSP", spend: 0, impressions: 0 },
+    { date: "2026-06-30", source: "DSP", spend: 1600, impressions: 16_000 },
+    { date: "2026-07-31", source: "DSP", spend: 4700, impressions: 47_000 },
+    { date: "2026-08-31", source: "DSP", spend: 7800, impressions: 78_000 }
+  ] };
+  const today = "2026-09-15";
+  assert.equal(periodSpend(campaign, "ytd", { today }), 7800);
+  assert.equal(periodSpend(campaign, "last-month", { today }), 3100);
+  assert.equal(periodSpend(campaign, "custom:2026-07-01:2026-07-31", { today }), 3100);
+  assert.equal(periodSpend(campaign, "all", { today }), 7800);
+  // Half of July: totals between two reports fill in evenly by day.
+  assert.equal(Math.round(periodSpend(campaign, "custom:2026-07-01:2026-07-16", { today })), 1600);
+  // Nothing reported reaches this month yet.
+  assert.equal(periodSpend(campaign, "this-month", { today }), null);
 });

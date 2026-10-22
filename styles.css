@@ -216,3 +216,4 @@ body.alerts-view .main-content>:not(.topbar):not(#alerts-page){display:none!impo
 #metric-dialog{width:min(940px,calc(100% - 30px));max-height:calc(100vh - 40px)}
 .metric-more{display:block;margin:3px 0 0}
 #kpi-card .metric-detail{flex-direction:column;align-items:flex-start;gap:4px}
+.period-custom[hidden]{display:none}.period-custom{display:flex;align-items:center;gap:4px;margin-top:4px;font-size:10px;color:var(--muted)}.period-custom input{font:600 11px "DM Sans";border:1px solid var(--line);border-radius:6px;padding:2px 4px;color:#30384b;width:118px}

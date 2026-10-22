@@ -32,7 +32,7 @@ test("exports spend for the selected snapshot reporting period", () => {
     { date: "2026-09-18", source: "CM360", spend: 300, impressions: 1000, clicks: 10 },
     { date: "2026-09-25", source: "CM360", spend: 475, impressions: 2500, clicks: 40 }
   ];
-  const csv = exportCampaignsCsv([{ client: "Apex", name: "Launch", source: "CM360", spend: 475, budget: 1000, pacing: 100, kpi: "CTR", value: "1.6%", performanceSnapshots }], { period: "7" });
+  const csv = exportCampaignsCsv([{ client: "Apex", name: "Launch", source: "CM360", spend: 475, budget: 1000, pacing: 100, kpi: "CTR", value: "1.6%", performanceSnapshots }], { period: "7" }, new Date("2026-09-25T12:00:00Z"));
   const [headers, row] = parseCsv(csv);
   assert.equal(row[headers.indexOf("reporting_period")], "7");
   assert.equal(row[headers.indexOf("spend_view")], "reported snapshot");

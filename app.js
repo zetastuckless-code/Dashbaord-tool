@@ -114,7 +114,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matchingRows), acknowledgedAlertIds);
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
   const rows = sortCampaigns(filteredRows, { mode: document.querySelector("#campaign-sort")?.value, spendView: selectedSource });
-  const period = document.querySelector("#period-filter")?.value || "current";
+  const period = currentPeriod();
   const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
   const selectedKpiView = document.querySelector("#kpi-view")?.value || "primary";
   const portfolioKpi = aggregateKpiView(activeRows, selectedKpiView);
@@ -129,12 +129,13 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
-  document.querySelector("#spend-value").textContent = formatMoney(spend);
-  document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · last ${period} days`;
+  // A period no report reaches (data through Oct 12, "last 7 days" ending Oct 22) has no spend to show, not $0.
+  document.querySelector("#spend-value").textContent = period !== "current" && !comparablePeriodRows.length ? "—" : formatMoney(spend);
+  document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · ${periodText(period)}`;
   const utilization = spend / budget * 100 || 0;
   document.querySelector("#spend-progress").style.width = period === "current" ? `${Math.min(utilization, 100)}%` : "0%";
-  document.querySelector("#utilization-value").textContent = period === "current" ? `${utilization.toFixed(1)}% utilized` : `${comparablePeriodRows.length} campaign${comparablePeriodRows.length === 1 ? "" : "s"} with history`;
-  document.querySelector("#remaining-value").textContent = period === "current" ? `${formatMoney(Math.max(budget - spend, 0))} remaining` : "Reported-source change";
+  document.querySelector("#utilization-value").textContent = period === "current" ? `${utilization.toFixed(1)}% utilized` : comparablePeriodRows.length ? `${comparablePeriodRows.length} campaign${comparablePeriodRows.length === 1 ? "" : "s"} with data` : "No reports cover this period";
+  document.querySelector("#remaining-value").textContent = period === "current" ? `${formatMoney(Math.max(budget - spend, 0))} remaining` : "";
   const portfolio = { pacing: unitsPacing(activeUnits) };
   const portfolioValue = document.querySelector("#portfolio-pacing-value");
   const portfolioStatus = document.querySelector("#portfolio-pacing-status");
@@ -158,7 +159,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
-  const period = document.querySelector("#period-filter")?.value || "current";
+  const period = currentPeriod();
   const kpiView = document.querySelector("#kpi-view")?.value || "primary";
   const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules, totals: campaignTotals });
   const grid = document.querySelector("#client-grid");
@@ -166,7 +167,7 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
   grid.innerHTML = rollup.map(client => `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
     <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
-    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)} budget` : "budget needed") : `last ${period} days`}</span></div>
+    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)} budget` : "budget needed") : escapeHtml(periodText(period))}</span></div>
     ${client.utilization === null ? "" : `<div class="progress-track"><span style="width:${Math.min(client.utilization, 100)}%"></span></div>`}
     <div class="client-kpi-row"><span>${escapeHtml(client.kpi.metric)} <strong>${escapeHtml(client.kpi.formatted)}</strong></span><span class="${client.criticalCount ? "warning-text" : ""}">${client.alertCount ? `${client.alertCount} alert${client.alertCount === 1 ? "" : "s"}` : "No alerts"}</span></div>
     <ul class="client-campaigns">${client.campaigns.slice(0, 4).map(campaign => `<li><span>${escapeHtml(campaign.name)}</span><span class="${campaign.pacingBand}">${campaign.pacing === null ? "—" : `${campaign.pacing.toFixed(0)}%`}${campaign.kpi ? ` · ${escapeHtml(campaign.kpi)}` : ""}</span></li>`).join("")}${client.campaigns.length > 4 ? `<li><span>+${client.campaigns.length - 4} more</span><span></span></li>` : ""}</ul>
@@ -291,7 +292,7 @@ function lineStatusLabel(status) {
 }
 
 function renderCampaignList(rows, activeAlerts) {
-  const period = document.querySelector("#period-filter")?.value || "current";
+  const period = currentPeriod();
   // Your order applies in portfolio order; completed campaigns always sit at the bottom.
   const manualOrder = (document.querySelector("#campaign-sort")?.value || "portfolio") === "portfolio";
   const groups = orderGroups(groupCampaigns(rows), campaignOrder, { manual: manualOrder });
@@ -1047,10 +1048,37 @@ function refreshClientFilter() {
   channelSelect.value = channels.includes(selectedChannel) ? selectedChannel : "all";
 }
 
+// --- Reporting period: the current flight, or any of the pacing periods, including a custom range ---
+const periodSelect = document.querySelector("#period-filter");
+periodSelect.innerHTML = `<option value="current">Current flight</option>${PACING_RANGES.map(range => `<option value="${range.id}">${escapeHtml(range.label.replace("…", ""))}</option>`).join("")}`;
+/** The selected period as one value: a preset id, or "custom:start:end" once both dates are set. */
+function currentPeriod() {
+  if (periodSelect.value !== "custom") return periodSelect.value || "current";
+  const start = document.querySelector("#period-start").value;
+  const end = document.querySelector("#period-end").value;
+  return start && end && start <= end ? `custom:${start}:${end}` : "current";
+}
+/** How the period reads in labels: "last 30 days", "this quarter", "Oct 1 – Oct 15". */
+function periodText(period = currentPeriod()) {
+  if (period.startsWith("custom:")) { const [, start, end] = period.split(":"); return `${shortDate(start)} – ${shortDate(end)}`; }
+  const label = PACING_RANGES.find(range => range.id === period)?.label || period;
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+function syncPeriodCustom() {
+  const custom = periodSelect.value === "custom";
+  document.querySelector("#period-custom").hidden = !custom;
+  if (custom && !document.querySelector("#period-start").value) {
+    const end = todayIso();
+    document.querySelector("#period-end").value = end;
+    document.querySelector("#period-start").value = new Date(Date.parse(`${end}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10);
+  }
+}
+for (const id of ["#period-start", "#period-end"]) document.querySelector(id).addEventListener("change", () => { captureDashboardView(); renderCampaigns(document.querySelector("#client-filter").value); });
+
 function captureDashboardView() {
   dashboardView = writeDashboardView(localStorage, {
     client: document.querySelector("#client-filter").value,
-    period: document.querySelector("#period-filter").value,
+    period: currentPeriod(),
     status: document.querySelector("#status-filter").value,
     owner: document.querySelector("#owner-filter").value,
     channel: document.querySelector("#channel-filter").value,
@@ -1068,7 +1096,13 @@ function applyDashboardView(view) {
     select.value = [...select.options].some(option => option.value === value) ? value : "all";
   };
   assignOption("#client-filter", view.client);
-  assignOption("#period-filter", view.period);
+  if (String(view.period).startsWith("custom:")) {
+    const [, start, end] = view.period.split(":");
+    periodSelect.value = "custom";
+    document.querySelector("#period-start").value = start;
+    document.querySelector("#period-end").value = end;
+  } else periodSelect.value = [...periodSelect.options].some(option => option.value === view.period) ? view.period : "current";
+  syncPeriodCustom();
   assignOption("#status-filter", view.status);
   assignOption("#owner-filter", view.owner);
   assignOption("#channel-filter", view.channel);
@@ -1093,7 +1127,7 @@ document.querySelector("#campaign-sort").addEventListener("change", () => render
 document.querySelector("#attention-filter").addEventListener("change", () => renderCampaigns(document.querySelector("#client-filter").value));
 document.querySelector("#kpi-view").addEventListener("change", () => renderCampaigns(document.querySelector("#client-filter").value));
 document.querySelector('[aria-label="Search"]').addEventListener("click", () => document.querySelector("#campaign-search").focus());
-document.querySelector("#period-filter").addEventListener("change", () => renderCampaigns(document.querySelector("#client-filter").value));
+document.querySelector("#period-filter").addEventListener("change", () => { syncPeriodCustom(); renderCampaigns(document.querySelector("#client-filter").value); });
 document.querySelector(".control-bar").addEventListener("change", captureDashboardView);
 document.querySelector("#campaign-search").addEventListener("input", captureDashboardView);
 document.querySelector("#reset-dashboard-view").addEventListener("click", () => {
@@ -1145,7 +1179,7 @@ document.querySelector("#export-dashboard-button").addEventListener("click", () 
   const matching = filterCampaigns(campaigns, { client: document.querySelector("#client-filter").value, status: document.querySelector("#status-filter").value, owner: document.querySelector("#owner-filter").value, channel: document.querySelector("#channel-filter").value, query: document.querySelector("#campaign-search").value });
   const activeAlerts = unacknowledgedAlerts(evaluateAlerts(matching), acknowledgedAlertIds);
   const exportRows = filterCampaignsByAttention(matching, activeAlerts, document.querySelector("#attention-filter").value);
-  const csv = exportCampaignsCsv(exportRows, { sort: document.querySelector("#campaign-sort").value, spendView: selectedSource, period: document.querySelector("#period-filter").value, kpiView: document.querySelector("#kpi-view").value });
+  const csv = exportCampaignsCsv(exportRows, { sort: document.querySelector("#campaign-sort").value, spendView: selectedSource, period: currentPeriod(), kpiView: document.querySelector("#kpi-view").value });
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-campaigns-${new Date().toISOString().slice(0, 10)}.csv` });
   link.click();
