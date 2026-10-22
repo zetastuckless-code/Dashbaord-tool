@@ -19,7 +19,7 @@ import { campaignSnapshotHistory, compareLatestSnapshots, exportPerformanceSnaps
 import { sortCampaigns } from "./lib/campaign-sort.js";
 import { filterCampaignsByAttention } from "./lib/campaign-attention.js";
 import { DEFAULT_DASHBOARD_VIEW, readDashboardView, writeDashboardView } from "./lib/dashboard-view.js";
-import { aggregateKpiView, resolveKpiView } from "./lib/kpi-view.js";
+import { aggregateKpiView, kpiBreakdown, resolveKpiView } from "./lib/kpi-view.js";
 import { buildPortfolioSpendTrend, exportPortfolioSpendTrendCsv } from "./lib/portfolio-trend.js";
 import { exportAlertsCsv } from "./lib/alert-export.js";
 import { exportValidationIssuesCsv } from "./lib/validation-export.js";
@@ -118,8 +118,12 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
   const selectedKpiView = document.querySelector("#kpi-view")?.value || "primary";
   const portfolioKpi = aggregateKpiView(activeRows, selectedKpiView);
-  document.querySelector("#portfolio-kpi-label").textContent = portfolioKpi.metric;
-  document.querySelector("#portfolio-kpi-value").textContent = portfolioKpi.formatted;
+  // Campaigns on different primary KPIs show each KPI with its own value instead of "2 KPIs".
+  const kpiMix = selectedKpiView === "primary" && portfolioKpi.metric === "Primary KPI mix" ? kpiBreakdown(activeRows) : [];
+  document.querySelector("#portfolio-kpi-label").textContent = kpiMix.length ? "Primary KPIs" : portfolioKpi.metric;
+  const kpiValue = document.querySelector("#portfolio-kpi-value");
+  kpiValue.classList.toggle("kpi-mix", kpiMix.length > 0);
+  kpiValue.innerHTML = kpiMix.length ? kpiMix.slice(0, 3).map(item => `<span><b>${escapeHtml(item.formatted)}</b> ${escapeHtml(item.metric)}</span>`).join("") : escapeHtml(portfolioKpi.formatted);
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
   document.querySelector("#kpi-card-view").value = selectedKpiView;
   renderSpendChart(activeRows);
@@ -960,26 +964,43 @@ function renderSpendDetail() {
   setMetricExtra("By client", "Live campaigns only", byClient.length > 1 ? metricTable(["Client", "Campaigns", "Budget", "Spend", "Budget used"], byClient.map(([client, item]) => `<tr><td><strong>${escapeHtml(client)}</strong></td><td>${item.count}</td><td>${item.budget ? escapeHtml(formatMoney(item.budget)) : "—"}</td><td>${escapeHtml(formatMoney(item.spend))}</td><td>${shareText(item.spend, item.budget)}</td></tr>`)) : "");
 }
 
+const KPI_CHOICES = ["CTR", "VCR", "CPA", "ROAS"];
+let kpiEditGroups = [];
+
 function renderKpiDetail() {
   const view = document.querySelector("#kpi-view").value || "primary";
   const detail = metricDetailRows();
   const overall = aggregateKpiView(lastPacingRows, view);
+  const mix = kpiBreakdown(lastPacingRows);
   document.querySelector("#metric-dialog-title").textContent = view === "primary" ? "Primary KPIs" : view;
-  document.querySelector("#metric-dialog-controls").innerHTML = `<label>KPI shown<select id="metric-kpi-view">${Object.entries(KPI_VIEW_LABEL).map(([value, label]) => `<option value="${value}"${value === view ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><small>"Campaign primary" uses the KPI set on each campaign. Use Edit on a campaign to change its primary KPI and target.</small>`;
-  const rows = detail.rows.map(row => {
-    const first = row.records[0];
-    const kpis = [...new Set(row.records.map(record => record.kpi).filter(Boolean))];
-    const value = aggregateKpiView(row.records, view === "primary" ? (kpis.length === 1 ? kpis[0] : "primary") : view);
-    return { ...row, key: groupKey(first), kpi: kpis.join(", ") || "Not set", target: String(first.target ?? "").replace(/^target\s*/i, "") || "—", value };
-  });
-  const mix = [...rows.reduce((map, row) => map.set(row.kpi, (map.get(row.kpi) || 0) + 1), new Map())].sort((a, b) => b[1] - a[1]);
+  document.querySelector("#metric-dialog-controls").innerHTML = `<label>KPI shown<select id="metric-kpi-view">${Object.entries(KPI_VIEW_LABEL).map(([value, label]) => `<option value="${value}"${value === view ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><small>Set each campaign's primary KPI and goal below. A campaign whose lines use different KPIs has a row for each.</small>`;
+  const unset = lastPacingRows.filter(record => !record.kpi).length;
+  const targetOf = record => String(record.target ?? "").replace(/^target\s*/i, "").replace(/^not provided$/i, "");
   document.querySelector("#metric-stats").innerHTML = [
-    metricStat(overall.metric, overall.formatted, `${overall.coverage}/${overall.total} live lines with data`),
-    metricStat("Primary KPIs in use", String(mix.filter(([kpi]) => kpi !== "Not set").length), mix.map(([kpi, count]) => `${kpi} ${count}`).join(" · ") || "None set"),
-    metricStat("Campaigns without a KPI", String(rows.filter(row => row.kpi === "Not set").length), "Set one with Edit")
-  ].join("");
-  document.querySelector("#metric-table-note").textContent = view === "primary" ? "Each campaign's own primary KPI" : `${view} calculated from each campaign's reported numbers`;
-  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Primary KPI", "Target", view === "primary" ? "Actual" : view, ""], rows.map(row => `<tr>${rowCampaign(row)}<td>${escapeHtml(row.kpi)}</td><td>${escapeHtml(row.target)}</td><td><strong>${escapeHtml(row.value.formatted)}</strong></td><td><button class="text-button" type="button" data-metric-edit="${escapeHtml(row.key)}">Edit</button></td></tr>`));
+    ...(view === "primary" ? mix.map(item => {
+      const targets = [...new Set(lastPacingRows.filter(record => record.kpi === item.metric).map(targetOf).filter(Boolean))];
+      return metricStat(item.metric, item.formatted, `${item.lines} live line${item.lines === 1 ? "" : "s"}${targets.length === 1 ? ` · goal ${targets[0]}` : targets.length ? " · several goals" : " · no goal set"}`);
+    }) : [metricStat(overall.metric, overall.formatted, `${overall.coverage}/${overall.total} live lines with data`)]),
+    ...(unset ? [metricStat("Lines without a KPI", String(unset), "Set one below")] : [])
+  ].join("") || metricStat("Primary KPI", "—", "No live lines");
+  // One editable row per campaign and primary KPI, so a campaign with display on CTR and video on VCR gets two.
+  kpiEditGroups = detail.rows.flatMap(row => {
+    const byKpi = new Map();
+    for (const record of row.records) byKpi.set(record.kpi || "", [...(byKpi.get(record.kpi || "") || []), record]);
+    return [...byKpi.entries()].map(([kpi, records]) => ({ name: row.name, client: row.client, kpi, records, split: byKpi.size > 1 }));
+  });
+  document.querySelector("#metric-table-title").textContent = "Campaigns";
+  document.querySelector("#metric-table-note").textContent = view === "primary" ? "Actual uses each row's primary KPI" : `Actual shows ${view} for every row`;
+  document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Primary KPI", "Goal", "Actual", ""], kpiEditGroups.map((group, index) => {
+    const targets = [...new Set(group.records.map(targetOf).filter(Boolean))];
+    const actual = aggregateKpiView(group.records, view === "primary" ? group.kpi || "primary" : view).formatted;
+    const lineNames = group.split ? ` · ${group.records.map(record => recordLineLabel(record)).slice(0, 3).join(", ")}${group.records.length > 3 ? "…" : ""}` : "";
+    return `<tr><td><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)} · ${group.records.length} line${group.records.length === 1 ? "" : "s"}${escapeHtml(lineNames)}</small></td>
+      <td><select class="kpi-edit-select" data-kpi-group="${index}" aria-label="Primary KPI for ${escapeHtml(group.name)}"><option value="">Not set</option>${KPI_CHOICES.map(kpi => `<option${kpi === group.kpi ? " selected" : ""}>${kpi}</option>`).join("")}${group.kpi && !KPI_CHOICES.includes(group.kpi) ? `<option selected>${escapeHtml(group.kpi)}</option>` : ""}</select></td>
+      <td><input class="kpi-edit-goal" data-kpi-goal="${index}" value="${escapeHtml(targets.length === 1 ? targets[0] : "")}" placeholder="${targets.length > 1 ? "Several" : "e.g. 0.15%"}" aria-label="Goal for ${escapeHtml(group.name)}" /></td>
+      <td><strong>${escapeHtml(actual)}</strong></td>
+      <td><button class="text-button" type="button" data-kpi-save="${index}">Save</button></td></tr>`;
+  }));
   setMetricExtra("", "", "");
 }
 
@@ -1011,6 +1032,24 @@ function setKpiView(value) {
 document.querySelector("#kpi-card-view").addEventListener("change", event => setKpiView(event.target.value));
 metricDialog.addEventListener("change", event => { if (event.target.id === "metric-kpi-view") setKpiView(event.target.value); });
 metricDialog.addEventListener("click", event => {
+  const save = event.target.closest("[data-kpi-save]");
+  if (save) {
+    event.preventDefault();
+    const index = Number(save.dataset.kpiSave);
+    const group = kpiEditGroups[index];
+    if (!group) return;
+    const kpi = metricDialog.querySelector(`[data-kpi-group="${index}"]`).value;
+    const target = metricDialog.querySelector(`[data-kpi-goal="${index}"]`).value.trim();
+    if (!kpi && !target) return;
+    const keys = group.records.map(record => campaigns.indexOf(record)).filter(position => position >= 0).map(position => lineKey(position, "record"));
+    writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `setting the KPI for ${group.name}` }));
+    campaigns = applyBulkEdits(campaigns, keys, { kpi, target }).campaigns;
+    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    refreshAfterDataChange();
+    renderMetricDetail();
+    showToast("KPI updated", `${group.name}: ${kpi || group.kpi || "KPI"}${target ? ` with a goal of ${target}` : ""} on ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
+    return;
+  }
   const edit = event.target.closest("[data-metric-edit]");
   if (!edit) return;
   event.preventDefault();
