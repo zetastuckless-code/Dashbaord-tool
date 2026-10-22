@@ -1855,18 +1855,33 @@ function renderClientIo() {
   const summary = buildClientIoSummary({ campaigns, totals: campaignTotals, client: clientScope });
   const withIo = summary.filter(item => item.hasIo).length;
   document.querySelector("#client-io-context").textContent = summary.length ? `${withIo} of ${summary.length} campaign${summary.length === 1 ? "" : "s"} paced on an insertion order · reports fill in spend and KPIs against these budgets and flights` : `No campaigns for ${clientScope} yet`;
-  document.querySelector("#client-io-list").innerHTML = summary.length ? summary.map(item => {
+  const cardFor = item => {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
     const tracking = `<div class="io-tracking"><span><small>Spend to date</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
-    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong>${escapeHtml(item.name)}</strong></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
+    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
     const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
-    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong>${escapeHtml(item.name)}</strong></div>
+    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong></div>
       <div class="io-facts"><span><small>Total IO budget</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
       ${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
-  }).join("") : '<p class="history-empty">Upload an insertion order to see its budget and flight here.</p>';
+  };
+  // Completed campaigns stay out of the way: a collapsed card (status and name) in a side column, opened on click.
+  const collapse = (html, key) => html
+    .replace(/^<article class="([^"]*)"([^>]*)><div class="io-card-head">([\s\S]*?)<\/div>/, (_, classes, attributes, head) => `<details class="${classes} io-card-done"${attributes}${openDoneIo.has(key) ? " open" : ""}><summary class="io-card-head">${head}</summary>`)
+    .replace(/<\/article>$/, "</details>");
+  const active = summary.filter(item => item.status !== "completed");
+  const done = summary.filter(item => item.status === "completed");
+  document.querySelector("#client-io-list").innerHTML = active.length ? active.map(cardFor).join("") : summary.length ? '<p class="history-empty">No current campaigns. Completed ones are listed alongside.</p>' : '<p class="history-empty">Upload an insertion order to see its budget and flight here.</p>';
+  document.querySelector("#client-io-done").hidden = done.length === 0;
+  document.querySelector("#client-io-done-list").innerHTML = done.map(item => collapse(cardFor(item), item.key)).join("");
 }
+const openDoneIo = new Set();
+document.querySelector("#client-io-done-list").addEventListener("toggle", event => {
+  const card = event.target.closest?.(".io-card-done");
+  if (!card) return;
+  if (card.open) openDoneIo.add(card.dataset.ioKey); else openDoneIo.delete(card.dataset.ioKey);
+}, true);
 document.querySelector("#client-io-upload").addEventListener("click", () => document.querySelector("#client-io-input").click());
 
 function renderClientDocuments() {

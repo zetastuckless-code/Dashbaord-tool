@@ -164,3 +164,13 @@ body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:no
 .campaign-lines-footer{display:flex;align-items:center;justify-content:flex-end;gap:14px;flex-wrap:wrap}
 .campaign-status-control{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:#596273;margin-right:auto}
 .campaign-status-control select{height:30px;border:1px solid #dfe2ea;border-radius:7px;background:#fff;padding:0 8px;font:600 12px "DM Sans",sans-serif;color:#30384b}
+.client-io-body{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.client-io-body .client-io-list{flex:1 1 0;min-width:min(100%,560px)}
+.client-io-done[hidden]{display:none}.client-io-done{flex:0 0 260px;max-width:100%;min-width:0;display:grid;gap:8px;align-content:start}
+.io-done-label{margin:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#8b92a2}
+.client-io-done-list{display:grid;gap:8px}
+.io-card-done{padding:10px 12px;gap:10px;background:#fafbfd}
+.io-card-done>summary{cursor:pointer;list-style:none;min-width:0}.io-card-done{min-width:0;overflow:hidden}.io-card-done>summary::-webkit-details-marker{display:none}
+.io-card-done>summary:after{content:"›";margin-left:auto;color:#8b92a2;transition:transform .15s}.io-card-done[open]>summary:after{transform:rotate(90deg)}
+.io-card-done>summary strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.io-card-done[open]{padding:14px}
