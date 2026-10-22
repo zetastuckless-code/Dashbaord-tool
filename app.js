@@ -41,6 +41,7 @@ import { readIoPdf } from "./lib/io-reader.js";
 import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
+import { buildPacingDetail } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
@@ -96,14 +97,13 @@ const formatExactMoney = value => new Intl.NumberFormat("en-US", { style: "curre
 const hasBudget = campaign => Number.isFinite(campaign.budget) && campaign.budget > 0;
 const BUDGET_HINTS = {
   manual: "Type the approved amount. Reports will not overwrite it.",
-  io: "Attach the IO and enter its total. Reports will not overwrite it.",
+  io: "Taken from the insertion order you uploaded. Reports will not overwrite it.",
   report: "Optional. Leave blank to take the budget from the first report that includes one."
 };
 
 function syncBudgetSourceFields() {
   const source = document.querySelector("#new-campaign-budget-source").value;
   document.querySelector("#new-campaign-budget-hint").textContent = BUDGET_HINTS[source];
-  document.querySelector("#new-campaign-io-label").firstChild.textContent = source === "io" ? "Approved insertion order (required)" : "Insertion order (optional)";
 }
 document.querySelector("#new-campaign-budget-source").addEventListener("change", syncBudgetSourceFields);
 syncBudgetSourceFields();
@@ -128,6 +128,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   document.querySelector("#portfolio-kpi-value").textContent = portfolioKpi.formatted;
   document.querySelector("#portfolio-kpi-coverage").textContent = `${portfolioKpi.coverage}/${portfolioKpi.total} with data`;
   renderSpendChart(activeRows);
+  lastPacingRows = activeRows;
   const activeUnits = budgetUnits(activeRows, campaignTotals);
   const budget = unitsBudget(activeUnits);
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
@@ -573,6 +574,7 @@ document.querySelector("#metric-picker-form").addEventListener("submit", event =
 // --- Spend chart: cumulative vs. plan, or daily spend against the baseline daily budget ---
 let chartMode = "cumulative";
 let currentDailyView = null;
+let lastPacingRows = [];
 try { chartMode = localStorage.getItem("northstar-chart-mode") === "daily" ? "daily" : "cumulative"; } catch { chartMode = "cumulative"; }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -670,6 +672,70 @@ function renderSpendChart(visibleCampaigns) {
   document.querySelector("#spend-chart-x-axis").innerHTML = labels.map(point => `<span>${new Date(`${point.date}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" })}</span>`).join("");
   chart.setAttribute("aria-label", `Actual and planned cumulative spend from ${points[0].date} to ${points.at(-1).date}`);
 }
+
+// --- Pacing details: click the Overall pacing card for daily spend against a 100% pace ---
+const pacingDialog = document.querySelector("#pacing-dialog");
+const shortDate = value => new Date(`${value}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" });
+const percentText = value => Number.isFinite(value) ? `${Math.round(value)}%` : "—";
+const perDay = value => Number.isFinite(value) ? `${formatMoney(value)}/day` : "—";
+
+function pacingChartSvg(days) {
+  const width = 760, height = 250, left = 54, right = 8, top = 10, bottom = 26;
+  const plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const maximum = Math.max(...days.flatMap(day => [day.actual, day.baseline]), 1) * 1.05;
+  const y = value => top + plotHeight - value / maximum * plotHeight;
+  const step = plotWidth / days.length;
+  const barWidth = Math.max(1, step * 0.72);
+  const grid = [0, 1 / 3, 2 / 3, 1].map(fraction => { const value = maximum * fraction; return `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="axis" x="${left - 6}" y="${(y(value) + 3).toFixed(1)}" text-anchor="end">${escapeHtml(formatMoney(value))}</text>`; }).join("");
+  const bars = days.map((day, index) => {
+    const percent = day.baseline > 0 ? day.actual / day.baseline * 100 : null;
+    const band = percent === null ? "on-track" : pacingBand(percent, alertRules);
+    const barTop = y(day.actual);
+    return `<rect class="daily-bar pace-bar-${band}${day.estimated ? " estimated" : ""}" x="${(left + index * step + (step - barWidth) / 2).toFixed(2)}" y="${barTop.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${(top + plotHeight - barTop).toFixed(2)}"><title>${escapeHtml(day.date)}: ${escapeHtml(formatExactMoney(day.actual))}${day.baseline > 0 ? ` vs ${escapeHtml(formatExactMoney(day.baseline))} at 100% pace (${Math.round(percent)}%)` : ""}${day.estimated ? " · averaged between reports" : ""}</title></rect>`;
+  }).join("");
+  const line = days.map((day, index) => `${index ? "L" : "M"}${(left + index * step + step / 2).toFixed(1)},${y(day.baseline).toFixed(1)}`).join(" ");
+  const labelDays = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])];
+  const labels = labelDays.map(index => `<text class="axis" x="${(left + index * step + step / 2).toFixed(1)}" y="${height - 8}" text-anchor="${index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}">${escapeHtml(shortDate(days[index].date))}</text>`).join("");
+  const todayIndex = days.findIndex(day => day.date === todayIso());
+  const today = todayIndex < 0 ? "" : `<line class="today" x1="${(left + todayIndex * step + step / 2).toFixed(1)}" x2="${(left + todayIndex * step + step / 2).toFixed(1)}" y1="${top}" y2="${top + plotHeight}"/>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily spend from ${escapeHtml(days[0].date)} to ${escapeHtml(days.at(-1).date)} against the daily spend of a 100% pace">${grid}${bars}<path class="pace-line" d="${line}"/>${today}${labels}</svg>`;
+}
+
+function renderPacingDetail() {
+  const detail = buildPacingDetail({ campaigns: lastPacingRows, totals: campaignTotals, spendView: "billing" });
+  document.querySelector("#pacing-dialog-eyebrow").textContent = clientScope ? `${clientScope.toUpperCase()} · PACING DETAILS` : "PACING DETAILS";
+  const status = detail.pacing === null ? "No pacing data" : detail.pacing > alertRules.overPacing ? "Above plan" : detail.pacing < alertRules.underPacing ? "Below plan" : "On track";
+  const stat = (label, value, sub, cls = "") => `<div class="pacing-stat"><small>${escapeHtml(label)}</small><strong class="${cls}">${escapeHtml(value)}</strong><span>${escapeHtml(sub)}</span></div>`;
+  document.querySelector("#pacing-stats").innerHTML = [
+    stat("Pacing", detail.pacing === null ? "—" : `${detail.pacing.toFixed(1)}%`, `${status} · target ${alertRules.underPacing}–${alertRules.overPacing}%`, paceClass(detail.pacing)),
+    stat("Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
+    stat("Expected at 100% pace", detail.expected > 0 ? formatMoney(detail.expected) : "—", detail.expected > 0 ? `${detail.spend >= detail.expected ? "ahead by" : "behind by"} ${formatMoney(Math.abs(detail.spend - detail.expected))}` : "Needs a budget and flight dates"),
+    stat("Last 7 days", perDay(detail.recentActual), detail.recentBaseline > 0 ? `${percentText(detail.recentPercent)} of the ${perDay(detail.recentBaseline)} a 100% pace needs` : "No daily history yet"),
+    stat("Needed from today", perDay(detail.requiredDaily), detail.requiredDaily === null ? "No live flight with budget left" : "to spend the remaining budget by each flight's end")
+  ].join("");
+  const chart = document.querySelector("#pacing-chart");
+  const note = [];
+  if (detail.days.length) {
+    chart.innerHTML = pacingChartSvg(detail.days);
+    document.querySelector("#pacing-chart-context").textContent = `${shortDate(detail.days[0].date)} to ${shortDate(detail.days.at(-1).date)} · ${detail.days.length} days`;
+  } else {
+    chart.innerHTML = '<p class="chart-empty">Daily spend needs at least two dated reports for a campaign, or a report with monthly totals. Import another report to see the trend.</p>';
+    document.querySelector("#pacing-chart-context").textContent = "";
+  }
+  if (detail.days.length && detail.withoutHistory) note.push(`${detail.withoutHistory} campaign${detail.withoutHistory === 1 ? " has" : "s have"} only one dated report, so ${detail.withoutHistory === 1 ? "it is" : "they are"} left out of the daily bars. ${detail.withoutHistory === 1 ? "Its" : "Their"} spend still counts in the totals above.`);
+  if (detail.skippedUnits) note.push(`${detail.skippedUnits} campaign${detail.skippedUnits === 1 ? "" : "s"} without a budget or flight dates ${detail.skippedUnits === 1 ? "is" : "are"} left out of the 100% line. Upload an insertion order to add them.`);
+  document.querySelector("#pacing-chart-note").textContent = note.join(" ");
+  document.querySelector("#pacing-table").innerHTML = detail.rows.length ? `<table><thead><tr><th>Campaign</th><th>Flight</th><th>Budget</th><th>Spend</th><th>Expected</th><th>Pacing</th></tr></thead><tbody>${detail.rows.map(row => `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}${row.fromOrder ? " · budget and flight from IO" : ""}</small></td><td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td>${escapeHtml(formatMoney(row.spend))}</td><td>${row.expected > 0 ? escapeHtml(formatMoney(row.expected)) : "—"}</td><td class="${paceClass(row.pacing)}"><strong>${row.pacing === null ? "—" : `${row.pacing.toFixed(1)}%`}</strong></td></tr>`).join("")}</tbody></table>` : '<p class="history-empty">No live campaigns for the current filters.</p>';
+}
+
+function openPacingDetail() {
+  renderPacingDetail();
+  pacingDialog.showModal();
+}
+document.querySelector("#pacing-card").addEventListener("click", openPacingDetail);
+document.querySelector("#pacing-card").addEventListener("keydown", event => {
+  if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openPacingDetail(); }
+});
 
 document.querySelector("#export-spend-trend").addEventListener("click", () => {
   const daily = chartMode === "daily" && currentDailyView?.days.length;
@@ -941,6 +1007,7 @@ validateButton.addEventListener("click", async () => {
     return;
   }
   const result = validateCampaignCsv(report.csvText);
+  if (result.valid && report.notes?.length) result.warnings.push(...report.notes);
   validateButton.textContent = "Validate report";
   if (!result.valid) {
     recordImport(file.name, fingerprint, "Rejected", 0, result.errors);
@@ -948,7 +1015,7 @@ validateButton.addEventListener("click", async () => {
     validateButton.disabled = false;
     return;
   }
-  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: defaultImportChoices(result.campaigns), groupEdits: {}, groupIo: {}, unmatchedIos: [], skippedLines: new Set() };
+  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: defaultImportChoices(result.campaigns), groupEdits: {}, skippedLines: new Set() };
   // A report started as a new campaign opens each campaign's setup for review.
   if (importTargetMode() === "new") pendingValidatedImport.openSetup = new Set(importGroups().map(group => group.key));
   normalizeLineSkips();
@@ -976,13 +1043,12 @@ confirmImportButton.addEventListener("click", () => {
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
   // Lines that join a campaign set up beforehand do not own it, so removing their report keeps the campaign.
   campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows).map(record => shellGroups.has(groupKey(record)) && record.uploads ? { ...record, uploads: record.uploads.map(upload => upload.fileName === fileName ? { ...upload, created: false } : upload) } : record);
-  const appliedOrders = applyAttachedImportIos(fileName);
   localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
   const importStatus = result.warnings.length ? "Imported with warnings" : "Imported";
   recordImport(fileName, fingerprint, importStatus, effectiveRows.length, [], effectiveRows.map(campaignImportKey), result.warnings);
   refreshClientFilter();
   renderCampaigns();
-  document.querySelector("#toast-message").textContent = `${effectiveRows.length} campaign row${effectiveRows.length === 1 ? "" : "s"} imported successfully${appliedOrders.length ? `, with ${appliedOrders.length} insertion order${appliedOrders.length === 1 ? "" : "s"} applied` : ""}.`;
+  document.querySelector("#toast-message").textContent = `${effectiveRows.length} campaign row${effectiveRows.length === 1 ? "" : "s"} imported successfully.`;
   document.querySelector("#toast-title").textContent = "Report imported";
   setTimeout(() => {
     dialog.close();
@@ -1203,7 +1269,6 @@ function renderImportAssignments() {
   section.hidden = !groups.length;
   if (!groups.length) return;
   pending.openSetup ??= new Set(groups.length === 1 ? [groups[0].key] : []);
-  pending.groupIo ??= {};
   const sizes = new Map(groups.map(group => [group.key, group.rows.length]));
   const targetOptions = selected => `<option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this campaign</option>${existing.map(group => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`).join("")}`;
   document.querySelector("#import-assign-all").innerHTML = `<option value="__mixed" selected disabled>Choose…</option><option value="${KEEP}">New or matching campaigns</option>${targetOptions("")}`;
@@ -1225,20 +1290,10 @@ function renderImportAssignments() {
       const open = pending.openSetup.has(group.key) ? " open" : "";
       setup = `<details class="import-setup" data-setup-details="${escapeHtml(group.key)}"${open}><summary>Review campaign setup</summary><div class="settings-grid import-setup-grid">${fields.map(([field, label, type]) => `<label>${label}<input type="${type}" data-setup-key="${escapeHtml(group.key)}" data-setup-field="${field}" value="${escapeHtml(values[field] ?? "")}" autocomplete="off" /></label>`).join("")}<label>Billing source<select data-setup-key="${escapeHtml(group.key)}" data-setup-field="billingSource">${[["first", "1st party"], ["third", "3rd party"], ["reported", "Reported spend"]].map(([value, label]) => `<option value="${value}"${values.billingSource === value ? " selected" : ""}>${label}</option>`).join("")}</select></label><label>Expected report<select data-setup-key="${escapeHtml(group.key)}" data-setup-field="reportCadence">${[["none", "Not monitored"], ["daily", "Daily"], ["weekly", "Weekly"]].map(([value, label]) => `<option value="${value}"${values.reportCadence === value ? " selected" : ""}>${label}</option>`).join("")}</select></label></div><small class="field-hint">Pulled from the report; correct anything that is wrong. ${group.rows.length > 1 ? "Budgets and dates stay per line, as reported." : ""}</small></details>`;
     }
-    const attached = pending.groupIo[group.key];
-    const ioRow = choice === SKIP ? "" : `<div class="import-group-io"><span>Insertion order</span>${attached
-      ? `<span class="import-io-summary"><strong>${escapeHtml([attached.io.orderNumber, attached.io.revision].filter(Boolean).join(" ") || attached.fileName)}</strong> · ${escapeHtml(formatExactMoney(attached.io.budget))} · ${attached.io.lineItems.length} placements</span><select data-group-io-mode="${escapeHtml(group.key)}" aria-label="How to use the order for ${escapeHtml(group.name)}"><option value="totals"${attached.mode === "totals" ? " selected" : ""}>Use order totals</option><option value="flights"${attached.mode === "flights" ? " selected" : ""}>Save placements as flights</option></select><button type="button" class="text-button" data-group-io-remove="${escapeHtml(group.key)}">Remove</button>`
-      : `<label class="text-button import-io-attach">Attach IO (PDF)<input type="file" accept=".pdf,application/pdf" data-group-io-file="${escapeHtml(group.key)}" hidden /></label>`}</div>`;
     const skippedHere = group.rows.filter(row => pending.skippedLines.has(assignmentKey(row))).length;
     const lines = `<details class="import-group-lines"${skippedHere ? " open" : ""}><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} in this report${skippedHere ? ` · ${skippedHere} skipped` : ""} <small>(untick a line to leave it out)</small></summary>${group.rows.map(row => `<label class="import-line-include"><input type="checkbox" data-line-include="${escapeHtml(assignmentKey(row))}"${pending.skippedLines.has(assignmentKey(row)) ? "" : " checked"} /><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></label>`).join("")}</details>`;
-    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}${ioRow}${lines}</div>`;
+    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}${lines}</div>`;
   }).join("");
-  const unmatched = pending.unmatchedIos || [];
-  document.querySelector("#import-unmatched-ios").innerHTML = unmatched.map((entry, index) => `<div class="import-assignment-row"><span><strong>${escapeHtml(entry.fileName)}</strong><small>${escapeHtml(entry.io.campaign)} · no matching campaign — choose one</small></span><select data-unmatched-io="${index}"><option value="">Choose a campaign…</option>${groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join("")}</select></div>`).join("");
-}
-
-function attachImportIo(groupKeyValue, io, fileName) {
-  pendingValidatedImport.groupIo[groupKeyValue] = { io, fileName, mode: "totals" };
 }
 
 async function readIoFiles(files) {
@@ -1273,49 +1328,6 @@ document.querySelector("#import-assignment-list").addEventListener("change", asy
     refreshImportAfterAssignment();
     return;
   }
-  const mode = event.target.closest("[data-group-io-mode]");
-  if (mode) { pending.groupIo[mode.dataset.groupIoMode].mode = mode.value; return; }
-  const file = event.target.closest("[data-group-io-file]");
-  if (file) {
-    const [entry] = await readIoFiles([...file.files]);
-    if (!entry) return;
-    if (entry.error) { showToast("Insertion order", `${entry.file.name}: ${entry.error}`); return; }
-    attachImportIo(file.dataset.groupIoFile, entry.io, entry.file.name);
-    renderImportAssignments();
-    return;
-  }
-  const unmatched = event.target.closest("[data-unmatched-io]");
-  if (unmatched && unmatched.value) {
-    const [entry] = pending.unmatchedIos.splice(Number(unmatched.dataset.unmatchedIo), 1);
-    attachImportIo(unmatched.value, entry.io, entry.fileName);
-    renderImportAssignments();
-  }
-});
-
-document.querySelector("#import-assignment-list").addEventListener("click", event => {
-  const remove = event.target.closest("[data-group-io-remove]");
-  if (!remove || !pendingValidatedImport?.result) return;
-  delete pendingValidatedImport.groupIo[remove.dataset.groupIoRemove];
-  renderImportAssignments();
-});
-
-// Several IOs at once: each is matched to the campaign it names; the rest can be assigned by hand.
-document.querySelector("#import-io-multi").addEventListener("change", async event => {
-  const pending = pendingValidatedImport;
-  const files = [...event.target.files];
-  event.target.value = "";
-  if (!pending?.result || !files.length) return;
-  const groups = groupCampaigns(pending.result.campaigns);
-  pending.unmatchedIos = pending.unmatchedIos || [];
-  let matched = 0;
-  for (const entry of await readIoFiles(files)) {
-    if (entry.error) { showToast("Insertion order", `${entry.file.name}: ${entry.error}`); continue; }
-    const match = findCampaignForIo(groups, {}, entry.io);
-    if (match) { attachImportIo(match.key, entry.io, entry.file.name); matched += 1; }
-    else pending.unmatchedIos.push({ io: entry.io, fileName: entry.file.name });
-  }
-  renderImportAssignments();
-  showToast("Insertion orders read", `${matched} of ${files.length} matched to a campaign${pending.unmatchedIos.length ? "; choose a campaign for the rest below" : ""}.`);
 });
 
 document.querySelector("#import-assignment-list").addEventListener("input", event => {
@@ -1338,25 +1350,6 @@ document.querySelector("#import-assign-all").addEventListener("change", event =>
   renderImportAssignments();
   refreshImportAfterAssignment();
 });
-
-/** After the report's rows are merged, apply each attached order to the campaign its lines ended up in. */
-function applyAttachedImportIos(fileName) {
-  const pending = pendingValidatedImport;
-  const sizes = new Map();
-  pending.result.campaigns.forEach(row => sizes.set(groupKey(row), (sizes.get(groupKey(row)) || 0) + 1));
-  const applied = [];
-  for (const group of importGroups()) {
-    const attached = pending.groupIo?.[group.key];
-    if (!attached) continue;
-    const choice = groupChoice(group);
-    if (choice === SKIP) continue;
-    const target = choice || groupKey(rowWithGroupEdits(group.rows[0], pending.groupEdits[group.key], sizes.get(group.key)));
-    const placementIds = attached.io.lineItems.filter(item => !item.addedValue).map(item => item.id);
-    const result = applyIoToGroup(attached.io, attached.fileName, target, attached.mode, { selectedIds: placementIds });
-    if (result) applied.push(`${result.name} (${[attached.io.orderNumber, attached.io.revision].filter(Boolean).join(" ") || attached.fileName})`);
-  }
-  return applied;
-}
 
 /** Applies a parsed order to a campaign, with no dialog and no restore point of its own (callers take one). */
 function applyIoToGroup(io, fileName, key, mode, { selectedIds = null, setBudget = true } = {}) {
@@ -1544,6 +1537,7 @@ document.querySelector("#mobile-menu").addEventListener("click", event => {
   event.currentTarget.setAttribute("aria-expanded", String(open));
 });
 function clearNewCampaignFields() {
+  document.querySelector('#new-campaign-budget-source option[value="io"]')?.remove();
   document.querySelectorAll("#new-campaign-setup input, #new-campaign-setup select").forEach(control => {
     if (control.tagName === "SELECT") control.selectedIndex = 0; else control.value = "";
   });
@@ -1553,13 +1547,12 @@ function clearNewCampaignFields() {
 
 /** Creates a campaign from the setup form (no report yet) and carries on to the report step with it selected. */
 function createCampaignFromSetup() {
-  const ioFile = document.querySelector("#new-campaign-io").files[0];
   const field = id => document.querySelector(id).value;
   const result = createCampaign({
     client: field("#new-campaign-client"), name: field("#new-campaign-name"), campaignId: field("#new-campaign-id"), owner: field("#new-campaign-owner"), channel: field("#new-campaign-channel"),
     startDate: field("#new-campaign-start"), endDate: field("#new-campaign-end"),
     budget: field("#new-campaign-budget"), budgetSource: field("#new-campaign-budget-source"), billingSource: field("#new-campaign-billing-source"),
-    kpi: field("#new-campaign-kpi"), target: field("#new-campaign-target"), reportCadence: field("#new-campaign-report-cadence"), ioFileName: ioFile?.name || pendingIoForCreate?.fileName
+    kpi: field("#new-campaign-kpi"), target: field("#new-campaign-target"), reportCadence: field("#new-campaign-report-cadence"), ioFileName: pendingIoForCreate?.fileName
   });
   const error = document.querySelector("#create-campaign-error");
   if (!result.valid) { error.textContent = result.errors.join(" "); error.hidden = false; return; }
@@ -1970,7 +1963,9 @@ function prefillCreateFromIo(io, fileName, selectedIds, ioMode, client = null) {
   set("#new-campaign-start", fields.startDate);
   set("#new-campaign-end", fields.endDate);
   set("#new-campaign-budget", fields.budget);
-  set("#new-campaign-budget-source", "io");
+  const budgetSource = document.querySelector("#new-campaign-budget-source");
+  if (!budgetSource.querySelector('option[value="io"]')) budgetSource.insertAdjacentHTML("beforeend", '<option value="io">From the uploaded insertion order</option>');
+  budgetSource.value = "io";
   syncBudgetSourceFields();
   pendingIoForCreate = { io, fileName, selectedIds, mode: ioMode };
 }
@@ -2078,11 +2073,6 @@ document.querySelector("#io-pdf-input").addEventListener("change", async event =
   const file = event.target.files[0];
   event.target.value = "";
   if (file) await startIoReview(file, "details");
-});
-document.querySelector("#new-campaign-io").addEventListener("change", async event => {
-  pendingIoForCreate = null;
-  const file = event.target.files[0];
-  if (file) await startIoReview(file, "create");
 });
 
 function renderBudgetRevisionHistory(campaign) {

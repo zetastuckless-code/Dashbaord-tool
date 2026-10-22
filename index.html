@@ -147,8 +147,8 @@
             <div class="progress-track"><span id="spend-progress" style="width:55%"></span></div>
             <div class="progress-copy"><span id="utilization-value">55.2% utilized</span><span id="remaining-value">$555.8K remaining</span></div>
           </article>
-          <article class="metric-card">
-            <div class="metric-heading"><span>Overall pacing</span><span class="metric-icon green">◷</span></div>
+          <article class="metric-card metric-card-action" id="pacing-card" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Overall pacing. Open pacing details">
+            <div class="metric-heading"><span>Overall pacing <em class="metric-more">Details ›</em></span><span class="metric-icon green">◷</span></div>
             <strong class="metric-value" id="portfolio-pacing-value">—</strong>
             <div class="metric-detail"><span class="status-pill good" id="portfolio-pacing-status">On track</span><span id="portfolio-pacing-target">Target: 85–110%</span></div>
           </article>
@@ -265,14 +265,13 @@
             <label>Stable source campaign ID<input id="new-campaign-id" autocomplete="off" placeholder="CM360 or DSP campaign ID" /></label><label>Campaign owner<input id="new-campaign-owner" autocomplete="off" placeholder="Campaign manager" /></label>
             <label class="wide">Channel<input id="new-campaign-channel" autocomplete="off" placeholder="Display, video, paid social…" /></label>
             <label>Start date<input id="new-campaign-start" type="date" /></label><label>End date<input id="new-campaign-end" type="date" /></label>
-            <label>Budget source<select id="new-campaign-budget-source"><option value="manual">Enter manually</option><option value="io">From an insertion order</option><option value="report">Read from reports</option></select></label>
+            <label>Budget source<select id="new-campaign-budget-source"><option value="manual">Enter manually</option><option value="report">Read from reports</option></select></label>
             <label>Approved budget<input id="new-campaign-budget" inputmode="decimal" autocomplete="off" placeholder="250000" /><small id="new-campaign-budget-hint" class="field-hint"></small></label>
             <label>Billing source<select id="new-campaign-billing-source"><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>
             <label>Primary KPI<input id="new-campaign-kpi" autocomplete="off" placeholder="VCR" /></label><label>KPI target<input id="new-campaign-target" autocomplete="off" placeholder="70%" /></label>
             <label class="wide">Expected report<select id="new-campaign-report-cadence"><option value="none">Not monitored</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-            <label class="wide" id="new-campaign-io-label">Approved insertion order<input id="new-campaign-io" type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" /></label>
           </div>
-          <p class="revision-disclaimer">The prototype retains the IO filename and setup metadata locally; production will store the document securely.</p>
+          
           <p class="settings-error" id="create-campaign-error" hidden></p>
           <div class="new-campaign-actions"><button class="secondary-button" id="create-campaign-submit" type="button">Create campaign</button></div>
         </section>
@@ -285,10 +284,8 @@
         <section class="import-preview" id="import-preview" hidden aria-labelledby="import-preview-title"><div class="detail-section-heading"><h3 id="import-preview-title">Import impact preview</h3><small id="import-preview-mode"></small></div><div class="import-preview-summary" id="import-preview-summary"></div><div class="import-preview-list" id="import-preview-list"></div></section>
         <section class="import-assignments" id="import-assignments" hidden aria-labelledby="import-assignments-title">
           <div class="detail-section-heading"><h3 id="import-assignments-title">What should each campaign become?</h3><small>One block per campaign in the report: new, update a match, add to one you track, or skip</small></div>
-          <div class="import-io-bar"><span>Insertion orders</span><label class="text-button">Attach IOs (PDF)…<input id="import-io-multi" type="file" accept=".pdf,application/pdf" multiple hidden /></label><small>Add several at once; each is matched to the campaign it names.</small></div>
           <label class="import-assign-all"><span>All campaigns</span><select id="import-assign-all" aria-label="Apply one choice to every row"></select></label>
           <div id="import-assignment-list"></div>
-          <div id="import-unmatched-ios"></div>
           <p class="settings-error" id="import-setup-error" hidden></p>
         </section>
         <section class="mapping-review" id="mapping-review" hidden aria-labelledby="mapping-review-title"><div class="detail-section-heading"><h3 id="mapping-review-title">Source column mapping</h3><button class="text-button" id="export-mapping-review" type="button">Download mapping</button></div><div class="mapping-review-summary" id="mapping-review-summary"></div><div class="mapping-review-list" id="mapping-review-list"></div></section>
@@ -303,6 +300,24 @@
           <div id="import-history"></div>
         </section>
         <div class="dialog-actions"><button class="secondary-button" value="cancel">Cancel</button><button class="secondary-button" id="validate-button" type="button" disabled>Validate report</button><button class="primary-button" id="confirm-import-button" type="button" disabled>Import validated report</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="pacing-dialog" aria-labelledby="pacing-dialog-title">
+      <form method="dialog" class="dialog-card pacing-detail-card">
+        <div class="dialog-header"><div><p class="eyebrow" id="pacing-dialog-eyebrow">PACING DETAILS</p><h2 id="pacing-dialog-title">Overall pacing</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="pacing-stats" id="pacing-stats"></div>
+        <section class="pacing-chart-section" aria-labelledby="pacing-chart-title">
+          <div class="detail-section-heading"><h3 id="pacing-chart-title">Daily spend vs. a 100% pace</h3><small id="pacing-chart-context"></small></div>
+          <div class="pacing-chart-legend"><span><i class="bar"></i>Daily spend</span><span><i class="line"></i>Daily spend at 100% pace</span><span><i class="est"></i>Averaged between reports</span></div>
+          <div class="pacing-chart" id="pacing-chart"></div>
+          <p class="pacing-note" id="pacing-chart-note"></p>
+        </section>
+        <section class="pacing-table-section" aria-labelledby="pacing-table-title">
+          <div class="detail-section-heading"><h3 id="pacing-table-title">Campaigns</h3><small>Pacing = billing spend ÷ the spend a 100% pace would have reached by today</small></div>
+          <div class="pacing-table" id="pacing-table"></div>
+        </section>
+        <div class="dialog-actions"><button class="secondary-button" value="cancel">Close</button></div>
       </form>
     </dialog>
 
