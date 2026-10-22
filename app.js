@@ -169,13 +169,26 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   const grid = document.querySelector("#client-grid");
   document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to open its account` : "No clients have live campaigns for the current filters";
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
-  grid.innerHTML = rollup.map(client => `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
-    <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
-    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)} budget` : "budget needed") : escapeHtml(periodText(period))}</span></div>
+  const kpiText = kpis => kpis.map(kpi => `${escapeHtml(kpi.metric)} <strong>${escapeHtml(kpi.formatted)}</strong>`).join(" · ");
+  const paceText = { over: "above plan", under: "below plan", "on-track": "on track", unknown: "" };
+  // Each alert as a short sentence: what it is, which line, and the number behind it.
+  const alertLine = alert => {
+    const line = recordLineLabel(alert.campaign);
+    const where = line && line !== campaignGroupName(alert.campaign) ? line : campaignGroupName(alert.campaign);
+    return `<li class="${alert.severity}"><span class="client-alert-dot"></span><span><b>${escapeHtml(ALERT_TYPES[alert.type]?.label || alert.title)}</b> · ${escapeHtml(where)}<small>${escapeHtml(String(alert.detail).replace(/ · /g, ", "))}</small></span></li>`;
+  };
+  grid.innerHTML = rollup.map(client => {
+    const kpis = client.kpiMix.length ? client.kpiMix : client.kpi.formatted !== "—" ? [client.kpi] : [];
+    return `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
+    <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"} · ${client.lineCount} line${client.lineCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
+    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `spent of ${formatMoney(client.budget)} budget` : "budget needed") : escapeHtml(periodText(period))}</span></div>
     ${client.utilization === null ? "" : `<div class="progress-track"><span style="width:${Math.min(client.utilization, 100)}%"></span></div>`}
-    <div class="client-kpi-row"><span>${escapeHtml(client.kpi.metric)} <strong>${escapeHtml(client.kpi.formatted)}</strong></span><span class="${client.criticalCount ? "warning-text" : ""}">${client.alertCount ? `${client.alertCount} alert${client.alertCount === 1 ? "" : "s"}` : "No alerts"}</span></div>
-    <ul class="client-campaigns">${client.campaigns.slice(0, 4).map(campaign => `<li><span>${escapeHtml(campaign.name)}</span><span class="${campaign.pacingBand}">${campaign.pacing === null ? "—" : `${campaign.pacing.toFixed(0)}%`}${campaign.kpi ? ` · ${escapeHtml(campaign.kpi)}` : ""}</span></li>`).join("")}${client.campaigns.length > 4 ? `<li><span>+${client.campaigns.length - 4} more</span><span></span></li>` : ""}</ul>
-  </button>`).join("");
+    <div class="client-kpi-row"><span>${kpis.length ? kpiText(kpis) : "No KPI data yet"}</span></div>
+    <p class="client-section-label">Campaigns</p>
+    <ul class="client-campaigns">${client.campaigns.slice(0, 3).map(campaign => `<li><span class="client-campaign-name">${escapeHtml(campaign.name)}</span><span class="client-campaign-facts"><span class="${campaign.pacingBand}">${campaign.pacing === null ? "No pacing yet" : `${campaign.pacing.toFixed(0)}% paced${paceText[campaign.pacingBand] ? `, ${paceText[campaign.pacingBand]}` : ""}`}</span>${campaign.kpis.length ? ` · ${kpiText(campaign.kpis)}` : ""}${campaign.alertCount ? ` · <span class="warning-text">${campaign.alertCount} alert${campaign.alertCount === 1 ? "" : "s"}</span>` : ""}</span></li>`).join("")}${client.campaigns.length > 3 ? `<li class="client-more">+${client.campaigns.length - 3} more campaign${client.campaigns.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>
+    ${client.alerts.length ? `<p class="client-section-label">Needs attention</p><ul class="client-alerts">${client.alerts.slice(0, 2).map(alertLine).join("")}${client.alerts.length > 2 ? `<li class="client-more">+${client.alerts.length - 2} more on the Alerts page</li>` : ""}</ul>` : '<p class="client-all-clear">No alerts</p>'}
+  </button>`;
+  }).join("");
 }
 
 document.querySelector("#client-grid").addEventListener("click", event => {
