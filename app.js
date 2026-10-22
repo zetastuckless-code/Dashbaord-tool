@@ -33,6 +33,7 @@ import { buildMappingReview, exportMappingReviewCsv } from "./lib/mapping-review
 import { filterImportAudit, summarizeImportAudit } from "./lib/import-audit.js";
 import { readSavedViews, removeNamedView, saveNamedView, writeSavedViews } from "./lib/saved-views.js";
 import { resetWorkspaceStorage } from "./lib/workspace-reset.js";
+import { purgeDemoCampaigns } from "./lib/demo-purge.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { applyLineItems } from "./lib/line-item-import.js";
@@ -72,6 +73,7 @@ let savedViews = readSavedViews(localStorage);
 
 function loadCampaigns() {
   try {
+    purgeDemoCampaigns(localStorage);
     const stored = JSON.parse(localStorage.getItem("northstar-campaigns"));
     return Array.isArray(stored) ? stored : [];
   } catch {
