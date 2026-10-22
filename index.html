@@ -187,6 +187,14 @@
           <div class="client-grid" id="client-grid"></div>
         </section>
 
+        <section class="campaign-list" id="campaign-list" aria-labelledby="campaign-list-title">
+          <div class="client-rollup-header campaign-list-header">
+            <div><h2 id="campaign-list-title">Campaigns</h2><p id="campaign-list-context">Select a campaign to see its line items</p></div>
+            <div class="panel-actions"><button class="text-button" id="toggle-audit" type="button" aria-pressed="false" title="Show where each line's numbers came from and what is missing">Audit data</button><button class="text-button" id="toggle-all-campaigns" type="button">Expand all</button><button class="text-button" id="customize-all-metrics" type="button">Metrics for all</button></div>
+          </div>
+          <div id="campaign-list-rows" class="campaign-list-rows"></div>
+        </section>
+
         <section class="panel client-io" id="client-io" aria-labelledby="client-io-title" hidden>
           <div class="panel-header">
             <div><h2 id="client-io-title">Insertion orders</h2><p id="client-io-context">The IO each campaign is paced against</p></div>
@@ -196,14 +204,6 @@
             <div class="client-io-list" id="client-io-list"></div>
             <div class="client-io-done" id="client-io-done" hidden><p class="io-done-label">Completed</p><div class="client-io-done-list" id="client-io-done-list"></div></div>
           </div>
-        </section>
-
-        <section class="campaign-list" id="campaign-list" aria-labelledby="campaign-list-title">
-          <div class="client-rollup-header campaign-list-header">
-            <div><h2 id="campaign-list-title">Campaigns</h2><p id="campaign-list-context">Select a campaign to see its line items</p></div>
-            <div class="panel-actions"><button class="text-button" id="toggle-audit" type="button" aria-pressed="false" title="Show where each line's numbers came from and what is missing">Audit data</button><button class="text-button" id="toggle-all-campaigns" type="button">Expand all</button><button class="text-button" id="customize-all-metrics" type="button">Metrics for all</button></div>
-          </div>
-          <div id="campaign-list-rows" class="campaign-list-rows"></div>
         </section>
 
         <section class="content-grid">
