@@ -76,7 +76,7 @@ if (sourcesView) clientScope = null;
 let alertsView = new URLSearchParams(location.search).get("view") === "alerts";
 if (alertsView) clientScope = null;
 // Full pages reached from the sidebar: the daily brief and the automation setup guide.
-const PAGE_VIEWS = ["brief", "automation", "review", "billing"];
+const PAGE_VIEWS = ["brief", "automation", "review", "billing", "settings"];
 // The "new campaign" choice shared by the IO and report dialogs.
 const NEW_CAMPAIGN = "__new";
 let pageView = PAGE_VIEWS.includes(new URLSearchParams(location.search).get("view")) ? new URLSearchParams(location.search).get("view") : null;
@@ -349,14 +349,7 @@ function renderProfile() {
   document.querySelector("#profile-avatar").textContent = name ? name.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase() : "?";
 }
 
-document.querySelector("#edit-profile").addEventListener("click", () => {
-  const current = localStorage.getItem("northstar-profile-name") || "";
-  const next = window.prompt("Display name for the dashboard greeting", current);
-  if (next === null) return;
-  if (next.trim()) localStorage.setItem("northstar-profile-name", next.trim().slice(0, 60));
-  else localStorage.removeItem("northstar-profile-name");
-  renderProfile();
-});
+document.querySelector("#edit-profile").addEventListener("click", () => setPageView("settings"));
 renderProfile();
 
 // --- Campaign list: one expandable row per campaign with per-campaign metrics ---
@@ -2745,15 +2738,17 @@ function applyPageView() {
   document.querySelector("#automation-page").hidden = pageView !== "automation";
   document.querySelector("#review-page").hidden = pageView !== "review";
   document.querySelector("#billing-page").hidden = pageView !== "billing";
+  document.querySelector("#settings-page").hidden = pageView !== "settings";
   if (!pageView) return;
   document.querySelector("#client-back").hidden = true;
-  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review", billing: "Billing" };
-  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look.", billing: "Monthly billing for each client, filled from DCM and DSP." };
+  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review", billing: "Billing", settings: "Settings" };
+  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look.", billing: "Monthly billing for each client, filled from DCM and DSP.", settings: "Every setting and workspace tool in one place." };
   document.querySelector("#greeting").textContent = titles[pageView];
   document.querySelector("#page-subtitle").textContent = subtitles[pageView];
   document.title = `Zeta | ${titles[pageView]}`;
   if (pageView === "brief") renderBriefPage();
   else if (pageView === "billing") renderBillingPage();
+  else if (pageView === "settings") renderSettingsPage();
   else if (pageView === "automation") { renderAutomationPage(); renderReportAutomation(); }
   else renderReportAutomation();
 }
@@ -3335,7 +3330,8 @@ function paintSky() {
   document.body.dataset.skyTime = skyTime(new Date().getHours());
   document.body.dataset.skyWeather = skyCondition;
   const button = document.querySelector("#sky-weather");
-  button.textContent = sky.coords ? `${SKY_LABEL[skyCondition]} sky · stop` : "Match my weather";
+  button.textContent = sky.coords ? "Stop matching weather" : "Match my weather";
+  document.querySelector("#settings-sky-detail").textContent = sky.coords ? `Following your local weather: ${SKY_LABEL[skyCondition].toLowerCase()} right now. Only a rounded location is sent to Open-Meteo.` : "The sky follows the time of day. Turn on weather to follow your local weather too; it asks for your location once.";
   button.title = sky.coords ? "Stop matching the sky to your local weather" : "Ask once for your location so the background follows your weather";
 }
 async function refreshWeather() {
@@ -3778,3 +3774,45 @@ function updateBillingReminder() {
   badge.title = due ? `${monthLabel(month)} billing to download for ${due} client${due === 1 ? "" : "s"}` : "";
 }
 updateBillingReminder();
+
+// --- Settings: every setting and workspace tool in one place; most open the screen where that setting already lives ---
+function renderSettingsPage() {
+  let name = "";
+  try { name = localStorage.getItem("northstar-profile-name") || ""; } catch { name = ""; }
+  const nameInput = document.querySelector("#settings-name");
+  if (document.activeElement !== nameInput) nameInput.value = name;
+  document.querySelector("#settings-alert-summary").textContent = `Underpacing below ${alertRules.underPacing}%, overpacing above ${alertRules.overPacing}%, KPI tolerance ${alertRules.kpiTolerance}%, DCM gap above ${alertRules.discrepancy}%, data stale after ${alertRules.staleHours} hours.`;
+  const watch = lastKpiWatch;
+  document.querySelector("#settings-kpi-summary").textContent = watch ? `${watch.watched} live line${watch.watched === 1 ? "" : "s"} with a goal, ${watch.noGoal.length} without one. Set each campaign's KPI and goal in the KPI watcher.` : "Set each campaign's KPI and goal in the KPI watcher.";
+  document.querySelector("#settings-metrics-summary").textContent = `Every campaign shows ${metricPrefs.defaults.map(metricLabel).join(", ")} unless you change it on that campaign.`;
+  const viewCount = Array.isArray(savedViews) ? savedViews.length : Object.keys(savedViews?.views || savedViews || {}).length;
+  document.querySelector("#settings-views-summary").textContent = viewCount ? `${viewCount} saved filter view${viewCount === 1 ? "" : "s"}.` : "Save the filters you use often and switch back to them in one click.";
+  document.querySelector("#settings-brief-status").textContent = todoFolder ? `Watching “${todoFolder.name}”.` : brief ? `Last brief ${shortDate(brief.date)}; no folder connected.` : "Not set up yet.";
+  document.querySelector("#settings-report-status").textContent = reportFolder ? `Watching “${reportFolder.name}”${reportState.lastChecked ? `, checked ${reportState.lastChecked.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}.` : "Not connected.";
+  document.querySelector("#settings-dcm-status").textContent = dcmFolder ? `Watching “${dcmFolder.name}”.` : "Not connected.";
+  const waiting = readReportInbox(localStorage).length + pendingImports().length;
+  document.querySelector("#settings-review-status").textContent = waiting ? `${waiting} item${waiting === 1 ? "" : "s"} waiting.` : "Nothing waiting.";
+  document.querySelector("#settings-history-status").textContent = importHistory.length ? `${importHistory.length} import${importHistory.length === 1 ? "" : "s"} recorded; the last on ${new Date(importHistory[0].importedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}.` : "No imports yet.";
+  const setUp = Object.values(billing).filter(config => config.rows?.length).length;
+  document.querySelector("#settings-billing-status").textContent = setUp ? `${setUp} client${setUp === 1 ? "" : "s"} set up.` : "No clients set up yet. Upload a past billing file on a client's tab.";
+  let bytes = 0;
+  try { for (let index = 0; index < localStorage.length; index += 1) { const key = localStorage.key(index); bytes += (key.length + (localStorage.getItem(key) || "").length) * 2; } } catch { bytes = 0; }
+  const storage = document.querySelector("#settings-storage");
+  storage.textContent = `${campaigns.length} line${campaigns.length === 1 ? "" : "s"} and their settings use ${(bytes / 1_048_576).toFixed(1)} MB of this browser’s local storage (about 5 MB).`;
+  navigator.storage?.estimate?.().then(estimate => { storage.textContent += ` DCM and DSP rows and folder links use ${((estimate.usage || 0) / 1_048_576).toFixed(1)} MB more.`; }).catch(() => {});
+}
+document.querySelector("#settings-name").addEventListener("change", event => {
+  const name = event.target.value.trim().slice(0, 60);
+  try { if (name) localStorage.setItem("northstar-profile-name", name); else localStorage.removeItem("northstar-profile-name"); } catch { /* keeps the default greeting */ }
+  renderProfile();
+  applyPageView();
+});
+document.querySelector("#settings-page").addEventListener("click", event => {
+  const open = event.target.closest("[data-settings-open]");
+  if (open) { document.querySelector(open.dataset.settingsOpen)?.click(); return; }
+  if (event.target.closest("[data-settings-kpi]")) { openMetricDetail("kpi"); return; }
+  if (event.target.closest("[data-settings-welcome]")) { onboarding = writeOnboarding(localStorage, { ...onboarding, dismissed: false }); setPageView(null); return; }
+  if (event.target.closest("[data-settings-sources]")) { event.preventDefault(); setSourcesView(true); return; }
+  const page = event.target.closest("[data-page-view]");
+  if (page) { event.preventDefault(); setPageView(page.dataset.pageView); }
+});
