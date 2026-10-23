@@ -59,9 +59,10 @@ import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
+import { applyDcmTopUps, applyDelivery, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
-let campaigns = loadCampaigns();
+let campaigns = applyDcmTopUps(loadCampaigns());
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
 let clientScope = new URLSearchParams(location.search).get("client");
@@ -87,6 +88,12 @@ let pendingWorkspaceBackup = null;
 let pendingValidatedImport = null;
 let selectedFile = null;
 let savedViews = readSavedViews(localStorage);
+
+/** Saves campaigns, first bringing each line's DCM top-up in line with its latest report. */
+function saveCampaigns() {
+  campaigns = applyDcmTopUps(campaigns);
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+}
 
 function loadCampaigns() {
   try {
@@ -118,7 +125,7 @@ const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDig
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
   // The insertion order decides each line's dates and IO line; keep the stored lines in step with it.
   const planned = applyCampaignStatus(applyIoPlan(campaigns, campaignTotals), campaignStatus);
-  if (planned !== campaigns) { campaigns = planned; localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns)); }
+  if (planned !== campaigns) { campaigns = planned; saveCampaigns(); }
   // The client account view ignores the saved client filter and always shows that client only.
   if (clientScope && !campaigns.some(campaign => campaign.client === clientScope)) { clientScope = null; history.replaceState({}, "", location.pathname); }
   filter = clientScope ?? filter;
@@ -273,7 +280,11 @@ function applyClientScopeChrome() {
   const throughDates = groups.filter(group => group.status !== "completed").map(group => group.records.map(record => record.dataAsOf).filter(Boolean).sort().at(-1)).filter(Boolean).sort();
   const through = document.querySelector("#client-data-through");
   through.hidden = !throughDates.length;
-  through.innerHTML = throughDates.length ? `<span class="data-through-dot"></span>Data through <strong>${escapeHtml(longDate(throughDates.at(-1)))}</strong>${throughDates[0] !== throughDates.at(-1) ? ` · oldest campaign through ${escapeHtml(longDate(throughDates[0]))}` : ""}` : "";
+  // When DCM carries a line past its last report, say so and name the report date it builds on.
+  const toppedUp = rows.filter(record => record.dcmTopUp);
+  const reportThrough = toppedUp.map(record => record.dcmTopUp.reportAsOf).sort().at(-1);
+  const dcmNote = toppedUp.length ? ` · <span class="dcm-through">DCM after the ${escapeHtml(shortDate(reportThrough))} report</span>` : "";
+  through.innerHTML = throughDates.length ? `<span class="data-through-dot"></span>Data through <strong>${escapeHtml(longDate(throughDates.at(-1)))}</strong>${dcmNote}${throughDates[0] !== throughDates.at(-1) ? ` · oldest campaign through ${escapeHtml(longDate(throughDates[0]))}` : ""}` : "";
   const live = groups.filter(group => group.status === "live").length;
   eyebrow.textContent = "CLIENT ACCOUNT";
   heading.textContent = clientScope;
@@ -346,6 +357,8 @@ try { auditMode = localStorage.getItem("northstar-audit-mode") === "on"; } catch
 let campaignTotals = readCampaignTotals(localStorage);
 let onboarding = readOnboarding(localStorage);
 let reviewedImports = readReviewedImports(localStorage);
+let thirdPartyLinks = readThirdPartyLinks(localStorage);
+const SKIP_DELIVERY = "__skip";
 const CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 // Campaigns marked paused or completed by hand, and the order you put campaigns in (both views share it).
 let campaignStatus = readCampaignStatus(localStorage);
@@ -593,7 +606,7 @@ document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
     const name = lastCampaignGroups.find(group => group.key === bulkEditCampaign)?.name || "the campaign";
     writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${name}` }));
     campaigns = applyBulkEdits(campaigns, keys, edits).campaigns;
-    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    saveCampaigns();
     bulkEditDialog.close();
     refreshAfterDataChange();
     showToast("Campaign updated", `${name} updated across ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
@@ -603,7 +616,7 @@ document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
   if (!entries.length) { bulkEditDialog.close(); return; }
   writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${describeSelection(entries)}` }));
   campaigns = applyBulkEdits(campaigns, entries.map(entry => entry.key), edits).campaigns;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   bulkEditDialog.close();
   refreshAfterDataChange();
   showToast("Lines updated", `${describeSelection(entries)} updated. Use Undo to revert.`);
@@ -1111,7 +1124,7 @@ metricDialog.addEventListener("click", event => {
     const keys = group.records.map(record => campaigns.indexOf(record)).filter(position => position >= 0).map(position => lineKey(position, "record"));
     writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `setting the KPI for ${group.name}` }));
     campaigns = applyBulkEdits(campaigns, keys, { kpi, target }).campaigns;
-    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    saveCampaigns();
     refreshAfterDataChange();
     renderMetricDetail();
     showToast("KPI updated", `${group.name}: ${kpi || group.kpi || "KPI"}${target ? ` with a goal of ${target}` : ""} on ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
@@ -1421,9 +1434,18 @@ async function prepareImport(file, { allowDuplicate = false } = {}) {
     recordImport(file.name, fingerprint, "Rejected", 0, [error.message]);
     return { status: "rejected", messages: [error.message] };
   }
+  // A CM360 (DCM) delivery report is ad-server data: it sits beside each line's own report, compared over the same days.
+  if (report.kind === "daily-delivery" && report.parsed.source === "CM360") {
+    if (!report.parsed.records.length) {
+      const messages = report.parsed.errors.length ? report.parsed.errors : ["No dated delivery rows were found in this DCM report."];
+      recordImport(file.name, fingerprint, "Rejected", 0, messages);
+      return { status: "rejected", messages };
+    }
+    return { status: "ready", pending: { kind: "delivery", fileName: file.name, fingerprint, report, parsed: report.parsed, targets: {} } };
+  }
   if (report.kind === "daily-delivery" || report.kind === "line-items") {
-    // Daily files and DSP line-item exports are no longer imported on their own; campaign reports carry the lines.
-    const message = "This file is a daily delivery or DSP line-item export. Import the campaign's performance report instead; its line breakdown is read automatically.";
+    // Flashtalking daily files and DSP line-item exports are not imported on their own; campaign reports carry the lines.
+    const message = "This file is a Flashtalking daily file or a DSP line-item export. Import the campaign's performance report instead; its line breakdown is read automatically.";
     recordImport(file.name, fingerprint, "Rejected", 0, [message]);
     return { status: "rejected", messages: [message] };
   }
@@ -1441,6 +1463,7 @@ async function prepareImport(file, { allowDuplicate = false } = {}) {
 
 /** Saves the prepared import (`pendingValidatedImport`) into the dashboard. Returns how many lines it brought in. */
 function commitPendingImport({ automatic = false } = {}) {
+  if (pendingValidatedImport.kind === "delivery") return commitDeliveryImport({ automatic });
   const { fileName, fingerprint, result } = pendingValidatedImport;
   const effectiveRows = effectiveImport().campaigns;
   rememberAssignments(localStorage, result.campaigns, { ...pendingValidatedImport.choices, ...Object.fromEntries([...pendingValidatedImport.skippedLines].map(key => [key, SKIP])) });
@@ -1450,7 +1473,7 @@ function commitPendingImport({ automatic = false } = {}) {
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
   // Lines that join a campaign set up beforehand do not own it, so removing their report keeps the campaign.
   campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows).map(record => shellGroups.has(groupKey(record)) && record.uploads ? { ...record, uploads: record.uploads.map(upload => upload.fileName === fileName ? { ...upload, created: false } : upload) } : record);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   const warnings = automatic ? [...result.warnings, "Imported automatically from the watched report folder."] : result.warnings;
   recordImport(fileName, fingerprint, result.warnings.length ? "Imported with warnings" : "Imported", effectiveRows.length, [], effectiveRows.map(campaignImportKey), warnings);
   return effectiveRows.length;
@@ -1473,6 +1496,7 @@ validateButton.addEventListener("click", async () => {
     return;
   }
   pendingValidatedImport = prepared.pending;
+  if (pendingValidatedImport.kind === "delivery") { showDeliveryImport(); return; }
   const { report, result } = pendingValidatedImport;
   normalizeLineSkips();
   renderImportAssignments();
@@ -1485,14 +1509,15 @@ validateButton.addEventListener("click", async () => {
 });
 confirmImportButton.addEventListener("click", () => {
   if (!pendingValidatedImport) return;
-  if (setupErrors().length) return;
+  const delivery = pendingValidatedImport.kind === "delivery";
+  if (!delivery && setupErrors().length) return;
   const count = commitPendingImport();
   // A report held for review is done once it is imported by hand.
   if (reviewingReportKey) { localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== reviewingReportKey))); reviewingReportKey = null; renderReportAutomation(); }
   refreshClientFilter();
   renderCampaigns();
-  document.querySelector("#toast-message").textContent = `${count} campaign row${count === 1 ? "" : "s"} imported successfully.`;
-  document.querySelector("#toast-title").textContent = "Report imported";
+  document.querySelector("#toast-message").textContent = delivery ? `DCM delivery added to ${count} line${count === 1 ? "" : "s"}.` : `${count} campaign row${count === 1 ? "" : "s"} imported successfully.`;
+  document.querySelector("#toast-title").textContent = delivery ? "DCM report imported" : "Report imported";
   setTimeout(() => {
     dialog.close();
     const toast = document.querySelector("#toast");
@@ -1881,7 +1906,7 @@ document.querySelector("#campaign-settings-form").addEventListener("submit", eve
   if (datesChanged) writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `changing the flight dates of ${updatedCampaign.name}` }));
   if (flightEdited) campaignTotals = writeCampaignTotals(localStorage, setTotalsFlight(campaignTotals, totalsKey, pacingStart, pacingEnd));
   campaigns[activeCampaignIndex] = updatedCampaign;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   renderCampaigns(document.querySelector("#client-filter").value);
   renderUndoButton();
   campaignDialog.close();
@@ -1897,7 +1922,7 @@ document.querySelector("#archive-campaign-button").addEventListener("click", () 
   const campaign = campaigns[activeCampaignIndex];
   const archived = !isCampaignArchived(campaign);
   campaigns[activeCampaignIndex] = setCampaignArchived(campaign, archived);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   campaignDialog.close();
   renderCampaigns(document.querySelector("#client-filter").value);
   document.querySelector("#toast-title").textContent = archived ? "Campaign archived" : "Campaign restored";
@@ -1922,7 +1947,7 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#billing-cpm-input").value = Number.isFinite(campaign.billingCpm) ? campaign.billingCpm : "";
   document.querySelector("#campaign-kpi-input").value = campaign.kpi;
   document.querySelector("#campaign-kpi-value-input").value = campaign.value;
-  document.querySelector("#campaign-kpi-target-input").value = campaign.target.replace(/^Target\s*/i, "");
+  document.querySelector("#campaign-kpi-target-input").value = String(campaign.target || "").replace(/^Target\s*/i, "");
   document.querySelector("#archive-campaign-button").textContent = isCampaignArchived(campaign) ? "Restore campaign" : "Archive campaign";
   document.querySelector("#detail-first-spend").textContent = formatMoney(resolveSpend(campaign, "first"));
   document.querySelector("#detail-third-spend").textContent = formatMoney(resolveSpend(campaign, "third"));
@@ -1949,6 +1974,7 @@ function openCampaignDialog(index, alertId = null) {
   renderSnapshotComparison(campaign);
   renderSnapshotHistory(campaign);
   renderDailyDelivery(campaign);
+  renderDcmComparison(campaign);
   const latestRevision = latestBudgetRevision(campaign);
   const revisions = campaign.budgetRevisions?.length || 0;
   document.querySelector("#current-budget-value").textContent = hasBudget(campaign) ? formatMoney(campaign.budget) : "Not set";
@@ -2060,7 +2086,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, key, io, fileName));
   const index = campaigns.findIndex(record => groupKey(record) === key);
   campaigns[index] = { ...campaigns[index], ioFileName: fileName, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || null };
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   const entry = campaignTotals[key];
   refreshAfterDataChange();
   if (activeCampaignIndex !== null && campaigns[activeCampaignIndex] && groupKey(campaigns[activeCampaignIndex]) === key) renderIoTotalsNote(campaigns[activeCampaignIndex]);
@@ -2383,6 +2409,7 @@ const ALERT_TYPES = {
   unmapped: { label: "Needs mapping", explain: "This line has no stable campaign ID, so the next report might not land on it.", action: "Add the source campaign ID in the campaign details." },
   source: { label: "Source discrepancy", explain: "1st-party and 3rd-party numbers for this line disagree by more than your limit.", action: "Compare the two reports and decide which spend to bill on." },
   kpi: { label: "KPI off target", explain: "The campaign's primary KPI is outside the target range by more than your tolerance.", action: "Review creative, targeting and placements for this line." },
+  delivery: { label: "DCM gap", explain: "The line’s own report and DCM (CM360) disagree on impressions or clicks by more than your limit, over the same days.", action: "Check the tracking tags and the placements DCM counts for this line." },
   "kpi-decline": { label: "KPI declining", explain: "The primary KPI got worse between the last two reports by more than your limit.", action: "Check what changed between the two reports." }
 };
 const SEVERITY_LABEL = { critical: "Critical", warning: "Warning", info: "Info" };
@@ -2835,6 +2862,8 @@ document.querySelector("#automation-page").addEventListener("change", event => {
   if (event.target.id === "auto-slack") { automation.slack = event.target.checked; saveAutomation(); renderAutomationPage(); }
 });
 document.querySelector("#automation-page").addEventListener("click", async event => {
+  const page = event.target.closest(".automation-review-inline");
+  if (page) { event.preventDefault(); setPageView("review"); return; }
   const copy = event.target.closest("[data-copy-target]");
   if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", "Folder name copied."); } catch { /* the name stays visible to copy by hand */ } }
 });
@@ -2865,12 +2894,25 @@ document.querySelector("#step-schedule-done").addEventListener("click", () => {
 const REPORT_FOLDER_KEY = "report-folder";
 const REPORT_ACTIVITY_KEY = "northstar-report-activity";
 let reportFolder = null;
+// A second, personal folder for DCM emails that Power Automate saves, kept apart from the team's shared report folder.
+const DCM_FOLDER_KEY = "dcm-folder";
+const DCM_PREFIX = "DCM:";
+let dcmFolder = null;
+const watchedFolders = () => [[reportFolder, ""], [dcmFolder, DCM_PREFIX]].filter(([folder]) => folder);
+const folderForKey = key => key.startsWith(DCM_PREFIX) ? [dcmFolder, key.slice(DCM_PREFIX.length)] : [reportFolder, key];
 let reportState = { lastChecked: null, needsClick: false, running: false, scanned: 0, truncated: false };
 let reportSettings = readReportSettings(localStorage);
 const readReportActivity = () => { try { const value = JSON.parse(localStorage.getItem(REPORT_ACTIVITY_KEY)); return Array.isArray(value) ? value : []; } catch { return []; } };
 
 /** Whether a prepared import can go in without a person: every campaign in it lands on one already on the dashboard. */
 function importIsClear() {
+  if (pendingValidatedImport.kind === "delivery") {
+    const plan = deliveryPlan();
+    const unmatched = plan.find(item => !item.target);
+    if (unmatched) return { clear: false, reason: `DCM campaign “${unmatched.entry.sourceCampaignName || unmatched.entry.sourceCampaignId}” doesn't match a campaign on the dashboard. Pick the campaign once and later reports follow it.` };
+    if (!plan.some(item => item.assigned.size)) return { clear: false, reason: "None of its placements matched a line. Review it to check the campaign." };
+    return { clear: true };
+  }
   const existing = new Set(groupCampaigns(campaigns.filter(record => !isCampaignArchived(record))).map(group => group.key));
   if (!effectiveImport().campaigns.length) return { clear: false, reason: "Every line in it is skipped" };
   for (const group of importGroups()) {
@@ -2884,10 +2926,14 @@ function importIsClear() {
 }
 
 async function checkReportFolder({ ask = false } = {}) {
-  if (!reportFolder || reportState.running || dialog.open) return;
-  let permission = await reportFolder.queryPermission({ mode: "read" });
-  if (permission !== "granted" && ask) permission = await reportFolder.requestPermission({ mode: "read" });
-  reportState.needsClick = permission !== "granted";
+  if (!watchedFolders().length || reportState.running || dialog.open) return;
+  let granted = true;
+  for (const [folder] of watchedFolders()) {
+    let permission = await folder.queryPermission({ mode: "read" });
+    if (permission !== "granted" && ask) permission = await folder.requestPermission({ mode: "read" });
+    if (permission !== "granted") granted = false;
+  }
+  reportState.needsClick = !granted;
   if (reportState.needsClick) { renderReportAutomation(); return; }
   reportState.running = true;
   renderReportAutomation();
@@ -2896,10 +2942,18 @@ async function checkReportFolder({ ask = false } = {}) {
     let ledger = readReportLedger(localStorage);
     let inbox = readReportInbox(localStorage);
     const activity = readReportActivity();
-    const scan = await findNewReports(reportFolder, ledger, reportSettings);
-    reportState.scanned = scan.scanned;
-    reportState.truncated = scan.truncated;
-    for (const entry of scan.files) {
+    const files = [];
+    reportState.scanned = 0;
+    reportState.truncated = false;
+    for (const [folder, prefix] of watchedFolders()) {
+      // Each folder sees its own part of the ledger; the DCM folder takes every file, whatever its folder is called.
+      const view = Object.fromEntries(Object.entries(ledger).filter(([key]) => prefix ? key.startsWith(prefix) : !key.startsWith(DCM_PREFIX)).map(([key, value]) => [key.slice(prefix.length), value]));
+      const scan = await findNewReports(folder, view, prefix ? { ...reportSettings, onlyReportFolders: false } : reportSettings);
+      reportState.scanned += scan.scanned;
+      reportState.truncated ||= scan.truncated;
+      files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix ? ["DCM folder", ...entry.path] : entry.path })));
+    }
+    for (const entry of files.sort((a, b) => a.lastModified - b.lastModified)) {
       let outcome;
       let reason = "";
       const prepared = await prepareImport(entry.file);
@@ -2907,7 +2961,7 @@ async function checkReportFolder({ ask = false } = {}) {
       else if (prepared.status === "rejected") { outcome = "couldn't read"; reason = prepared.messages[0]; }
       else {
         pendingValidatedImport = prepared.pending;
-        normalizeLineSkips();
+        if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
         const check = importIsClear();
         if (check.clear) {
           const lines = commitPendingImport({ automatic: true });
@@ -2926,14 +2980,15 @@ async function checkReportFolder({ ask = false } = {}) {
     localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(inbox));
     localStorage.setItem(REPORT_ACTIVITY_KEY, JSON.stringify(activity.slice(0, 40)));
     reportState.lastChecked = new Date();
-  } catch {
+  } catch (error) {
+    console.warn("Report folder check failed", error);
     reportState.needsClick = true;
   } finally {
     reportState.running = false;
   }
   if (imported.length) {
     refreshAfterDataChange();
-    showToast("Reports imported", `${imported.length} new report${imported.length === 1 ? "" : "s"} from “${reportFolder.name}”: ${imported.slice(0, 2).join(", ")}${imported.length > 2 ? "…" : ""}`);
+    showToast("Reports imported", `${imported.length} new report${imported.length === 1 ? "" : "s"}: ${imported.slice(0, 2).join(", ")}${imported.length > 2 ? "…" : ""}`);
   } else renderCampaigns(document.querySelector("#client-filter").value);
   renderReportAutomation();
 }
@@ -2944,12 +2999,20 @@ function renderReportAutomation() {
   const chip = document.querySelector("#report-review-chip");
   chip.hidden = !inbox.length;
   chip.textContent = `${inbox.length} report${inbox.length === 1 ? "" : "s"} to review`;
-  document.querySelector("#report-folder-reconnect").hidden = !(reportFolder && reportState.needsClick);
+  document.querySelector("#report-folder-reconnect").hidden = !(watchedFolders().length && reportState.needsClick);
   updateReviewBadge();
   if (pageView === "review") renderReviewPage(inbox);
   if (pageView !== "automation") return;
   document.querySelector("#automation-review-link").textContent = inbox.length ? `Open Report review · ${inbox.length} waiting` : "Open Report review";
   stepStatus("rfolder", reportFolder ? "done" : "todo");
+  const dcmSeen = Object.keys(readReportLedger(localStorage)).some(key => key.startsWith(DCM_PREFIX));
+  stepStatus("dfolder", dcmFolder || dcmSeen ? "done" : "todo");
+  stepStatus("dflow", dcmSeen ? "done" : "todo");
+  stepStatus("dconnect", dcmFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
+  document.querySelector("#dcm-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : !dcmFolder ? "Not connected yet." : `Watching “${dcmFolder.name}”.${dcmSeen ? " DCM files have come through." : " Waiting for the first DCM email."}`;
+  document.querySelector("#dcm-connect-button").textContent = dcmFolder ? "Change folder…" : "Connect DCM folder…";
+  document.querySelector("#dcm-connect-button").disabled = !folderSupported;
+  document.querySelector("#dcm-disconnect").hidden = !dcmFolder;
   stepStatus("rconnect", reportFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
   stepStatus("rreview", !reportFolder ? "todo" : inbox.length ? "warn" : "done");
   document.querySelector("#report-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : !reportFolder ? "Not connected yet." : reportState.needsClick ? `Connected to “${reportFolder.name}”. Chrome needs one click this visit: press Check now.` : reportState.running ? `Checking “${reportFolder.name}”…` : `Watching “${reportFolder.name}”${reportState.lastChecked ? ` · checked ${reportState.lastChecked.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}, ${reportState.scanned.toLocaleString()} items looked at` : ""}${reportState.truncated ? ". That folder is very large; pick a narrower one so nothing is missed" : ""}.`;
@@ -2976,6 +3039,20 @@ document.querySelector("#report-disconnect").addEventListener("click", async () 
   await saveFolderHandle(indexedDB, REPORT_FOLDER_KEY, null).catch(() => {});
   renderReportAutomation();
 });
+document.querySelector("#dcm-connect-button").addEventListener("click", async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ id: "northstar-dcm", mode: "read" });
+    dcmFolder = handle;
+    await saveFolderHandle(indexedDB, DCM_FOLDER_KEY, handle);
+    await checkReportFolder({ ask: true });
+  } catch { /* the picker was closed */ }
+  renderReportAutomation();
+});
+document.querySelector("#dcm-disconnect").addEventListener("click", async () => {
+  dcmFolder = null;
+  await saveFolderHandle(indexedDB, DCM_FOLDER_KEY, null).catch(() => {});
+  renderReportAutomation();
+});
 document.querySelector("#report-check-now").addEventListener("click", () => checkReportFolder({ ask: true }));
 document.querySelector("#report-folder-reconnect").addEventListener("click", () => checkReportFolder({ ask: true }));
 document.querySelector("#report-review-chip").addEventListener("click", () => setPageView("review"));
@@ -2990,9 +3067,11 @@ document.querySelector("#report-inbox").addEventListener("click", async event =>
   const dismiss = event.target.closest("[data-report-dismiss]");
   if (dismiss) { localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== dismiss.dataset.reportDismiss))); renderReportAutomation(); return; }
   const review = event.target.closest("[data-report-review]");
-  if (!review || !reportFolder) return;
+  if (!review) return;
+  const [folder, path] = folderForKey(review.dataset.reportReview);
+  if (!folder) return;
   try {
-    const file = await openReportAt(reportFolder, review.dataset.reportReview);
+    const file = await openReportAt(folder, path);
     reviewingReportKey = review.dataset.reportReview;
     openImportDialog();
     const transfer = new DataTransfer();
@@ -3006,13 +3085,14 @@ document.querySelector("#report-inbox").addEventListener("click", async event =>
   }
 });
 if (folderSupported) {
-  loadFolderHandle(indexedDB, REPORT_FOLDER_KEY).then(handle => {
+  Promise.all([loadFolderHandle(indexedDB, REPORT_FOLDER_KEY), loadFolderHandle(indexedDB, DCM_FOLDER_KEY)]).then(([handle, dcmHandle]) => {
     reportFolder = handle;
+    dcmFolder = dcmHandle;
     renderReportAutomation();
     return checkReportFolder();
   }).catch(() => renderReportAutomation());
-  setInterval(() => { if (reportFolder && !reportState.needsClick && document.visibilityState === "visible") checkReportFolder(); }, 10 * 60_000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && reportFolder && !reportState.needsClick) checkReportFolder(); });
+  setInterval(() => { if (watchedFolders().length && !reportState.needsClick && document.visibilityState === "visible") checkReportFolder(); }, 10 * 60_000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && watchedFolders().length && !reportState.needsClick) checkReportFolder(); });
 } else renderReportAutomation();
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
@@ -3065,7 +3145,7 @@ function performUndo() {
   campaigns = restored.campaigns;
   importHistory = restored.importHistory;
   if (restored.campaignTotals) campaignTotals = writeCampaignTotals(localStorage, restored.campaignTotals);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   writeImportHistory(localStorage, importHistory);
   clearImportRollback(localStorage);
   refreshAfterDataChange();
@@ -3081,7 +3161,7 @@ function applyRemoval(label, confirmText, mutate) {
   if (!window.confirm(`${confirmText}\n\nYou can undo this from the Undo button.`)) return false;
   writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label }));
   mutate();
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   refreshAfterDataChange();
   showToast("Removed", `${label.charAt(0).toUpperCase()}${label.slice(1)}. Use Undo to bring it back.`);
   return true;
@@ -3333,7 +3413,7 @@ document.querySelector("#welcome-name").addEventListener("change", event => {
 renderWelcome();
 
 // --- Report review: what the folder automation held back, and imports with warnings, in one place ---
-const pendingImports = () => pendingImportReviews(importHistory, reviewedImports);
+function pendingImports() { return pendingImportReviews(importHistory, reviewedImports); }
 function updateReviewBadge() {
   const count = readReportInbox(localStorage).length + pendingImports().length;
   const badge = document.querySelector("#nav-review-count");
@@ -3368,3 +3448,106 @@ document.querySelector("#automation-review-link").addEventListener("click", even
 document.querySelector("#data-health-card").addEventListener("click", () => { if (["warning", "error"].includes(document.querySelector("#data-health-card").dataset.state)) setPageView("review"); });
 document.querySelector("#data-health-card").addEventListener("keydown", event => { if ((event.key === "Enter" || event.key === " ") && ["warning", "error"].includes(event.currentTarget.dataset.state)) { event.preventDefault(); setPageView("review"); } });
 updateReviewBadge();
+
+// --- DCM (CM360) delivery reports: matched to a campaign, split across its lines by placement, kept beside the report ---
+function deliveryPlan() {
+  const pending = pendingValidatedImport;
+  const targets = Object.fromEntries(Object.entries(pending.targets).filter(([, value]) => value !== SKIP_DELIVERY));
+  const plan = planDelivery(campaigns.filter(record => !isCampaignArchived(record)), pending.parsed, thirdPartyLinks, targets);
+  return plan.map(item => pending.targets[item.entry.key] === SKIP_DELIVERY ? { ...item, target: null, skipped: true } : item);
+}
+function showDeliveryImport() {
+  const { parsed, report } = pendingValidatedImport;
+  const first = parsed.records[0]?.date;
+  const last = parsed.records.at(-1)?.date;
+  renderDeliveryAssignments();
+  document.querySelector("#mapping-review").hidden = true;
+  showValidationResult([`DCM delivery report: ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"}, ${parsed.placements.length ? `${new Set(parsed.placements.map(row => row.placement)).size} placements, ` : ""}${first} to ${last}, from header row ${report.headerRow}. It fills in spend and delivery for the days after each line's latest report, and is compared to the report where both cover the same days.`], "success");
+}
+function renderDeliveryAssignments() {
+  const plan = deliveryPlan();
+  const section = document.querySelector("#import-assignments");
+  section.hidden = false;
+  document.querySelector("#import-assign-all").closest("label").hidden = true;
+  const groups = groupCampaigns(campaigns.filter(record => !isCampaignArchived(record)));
+  document.querySelector("#import-assignment-list").innerHTML = plan.map(item => {
+    const chosen = pendingValidatedImport.targets[item.entry.key];
+    const undecided = !item.target && !item.skipped;
+    const options = `${undecided ? '<option value="" selected disabled>Choose a campaign (required)</option>' : ""}<option value="${SKIP_DELIVERY}"${item.skipped ? " selected" : ""}>Skip this campaign</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${item.target === group.key ? " selected" : ""}>${escapeHtml(group.client)} · ${escapeHtml(group.name)}${!chosen && item.target === group.key ? " (matched)" : ""}</option>`).join("")}`;
+    const perLine = item.lines.map((name, index) => [name, [...item.assigned.values()].filter(value => value === index).length]);
+    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} placement${count === 1 ? "" : "s"}` : '<em class="muted">no placements</em>'}</span></li>`).join("")}</ul>${item.unassigned.length ? `<p class="delivery-note">${item.unassigned.length} placement${item.unassigned.length === 1 ? "" : "s"} didn’t match a line and will be left out: ${escapeHtml(item.unassigned.slice(0, 4).join(", "))}${item.unassigned.length > 4 ? "…" : ""}</p>` : ""}` : "";
+    return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>DCM campaign ${escapeHtml(item.entry.sourceCampaignId || "")} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? '<small class="import-required-note">Pick the dashboard campaign this DCM campaign belongs to. Later reports follow your choice.</small>' : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${lines}</div>`;
+  }).join("");
+  const undecided = plan.filter(item => !item.target && !item.skipped).length;
+  const assigned = plan.some(item => item.target && item.assigned.size);
+  const errorBox = document.querySelector("#import-setup-error");
+  const message = undecided ? `Pick the campaign for ${undecided === 1 ? "the highlighted DCM campaign" : `the ${undecided} highlighted DCM campaigns`} before importing, or skip it.` : !assigned ? "None of the placements match a line in the chosen campaign." : "";
+  errorBox.hidden = !message;
+  errorBox.textContent = message;
+  document.querySelector("#import-preview").hidden = true;
+  confirmImportButton.disabled = Boolean(message);
+}
+document.querySelector("#import-assignment-list").addEventListener("change", event => {
+  const select = event.target.closest("[data-delivery-target]");
+  if (!select || pendingValidatedImport?.kind !== "delivery") return;
+  pendingValidatedImport.targets[select.dataset.deliveryTarget] = select.value;
+  renderDeliveryAssignments();
+});
+function commitDeliveryImport({ automatic = false } = {}) {
+  const { fileName, fingerprint, parsed } = pendingValidatedImport;
+  const plan = deliveryPlan();
+  const result = applyDelivery(campaigns, parsed, plan, { fileName });
+  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: result.lineCount, campaignKeys: [], campaignTotals }));
+  campaigns = result.campaigns;
+  saveCampaigns();
+  thirdPartyLinks = rememberThirdPartyLinks(localStorage, thirdPartyLinks, plan, parsed.source);
+  const touched = campaigns.filter(record => plan.some(item => item.target && groupKey(record) === item.target) && record.thirdPartyFiles?.[0] === fileName);
+  const warnings = [
+    ...plan.filter(item => item.target && item.unassigned.length).map(item => `${item.unassigned.length} DCM placement${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
+    ...plan.filter(item => item.skipped).map(item => `DCM campaign “${item.entry.sourceCampaignName}” was skipped.`),
+    ...(automatic ? ["Imported automatically from the watched report folder."] : [])
+  ];
+  const flagged = warnings.filter(warning => !warning.startsWith("Imported automatically"));
+  // Keys carry ::cm360 so a DCM import never counts as a newer copy of the line's own report.
+  recordImport(fileName, fingerprint, flagged.length ? "Imported with warnings" : "Imported", result.lineCount, [], touched.map(record => `${campaignImportKey(record)}::cm360`), warnings);
+  return result.lineCount;
+}
+
+function renderDcmComparison(campaign) {
+  const section = document.querySelector("#dcm-section");
+  const days = campaign.thirdPartyDelivery?.CM360 || null;
+  section.hidden = !days || !Object.keys(days).length;
+  if (section.hidden) return;
+  const comparison = deliveryComparison(campaign);
+  const dates = Object.keys(days).sort();
+  const topUp = campaign.dcmTopUp;
+  document.querySelector("#dcm-topup").hidden = !topUp;
+  if (topUp) document.querySelector("#dcm-topup").innerHTML = `Spend and pacing include DCM for <b>${escapeHtml(shortDate(topUp.from))} to ${escapeHtml(shortDate(topUp.to))}</b> on top of the report through ${escapeHtml(shortDate(topUp.reportAsOf))}: +${escapeHtml(formatExactMoney(topUp.added.spend))} spend and +${escapeHtml(formatCount(topUp.added.impressions))} impressions.${topUp.factor !== 1 ? ` DCM cost is scaled ×${topUp.factor.toFixed(2)} to match this line’s report over the days both cover.` : ""} The next report replaces these days.`;
+  if (!comparison) {
+    document.querySelector("#dcm-window").textContent = `DCM data from ${shortDate(dates[0])} to ${shortDate(dates.at(-1))}. The comparison shows once this line’s report covers the same days (its next report usually does).`;
+    document.querySelector("#dcm-table").innerHTML = "";
+    return;
+  }
+  const gap = (value, flag = true) => value === null ? "—" : `<span class="${flag && Math.abs(value) > alertRules.discrepancy ? "warning-text" : ""}">${value > 0 ? "+" : ""}${value.toFixed(1)}%</span>`;
+  const money = value => Number.isFinite(value) ? formatExactMoney(value) : "—";
+  const countText = value => Number.isFinite(value) ? formatCount(value) : "—";
+  document.querySelector("#dcm-window").textContent = `${shortDate(comparison.from)} to ${shortDate(comparison.to)} · ${comparison.days} day${comparison.days === 1 ? "" : "s"} both sources cover`;
+  const rows = [
+    ["Impressions", countText(comparison.report.impressions), countText(comparison.adServer.impressions), gap(comparison.gaps.impressions)],
+    ["Clicks", countText(comparison.report.clicks), countText(comparison.adServer.clicks), gap(comparison.gaps.clicks)],
+    // DCM cost is worked out from its own rates, so it is shown for reference and never flagged.
+    ["Cost", money(comparison.report.spend), money(comparison.adServer.spend), gap(comparison.gaps.spend, false)],
+    ["Conversions", countText(comparison.report.conversions), countText(comparison.adServer.conversions), ""],
+    ["Revenue", money(comparison.report.revenue), money(comparison.adServer.revenue), ""]
+  ];
+  document.querySelector("#dcm-table").innerHTML = `<div class="dcm-row dcm-head"><span></span><span>This report</span><span>DCM</span><span>Gap</span></div>${rows.map(row => `<div class="dcm-row">${row.map((cell, index) => `<span>${index ? cell : escapeHtml(cell)}</span>`).join("")}</div>`).join("")}<p class="dcm-kpis"><span>DCM CPA <b>${comparison.cpa === null ? "—" : `$${Math.round(comparison.cpa).toLocaleString("en-US")}`}</b></span><span>DCM ROAS <b>${comparison.roas === null ? "—" : `${comparison.roas.toFixed(comparison.roas < 1 ? 2 : 1)}x`}</b></span><small>DCM conversions and revenue against this report’s spend for the same days.</small></p>`;
+}
+document.querySelector("#dcm-remove").addEventListener("click", () => {
+  const campaign = campaigns[activeCampaignIndex];
+  if (!campaign) return;
+  const { thirdPartyDelivery, thirdPartyAsOf, thirdPartyFiles, ...rest } = campaign;
+  campaigns[activeCampaignIndex] = rest;
+  saveCampaigns();
+  renderDcmComparison(campaigns[activeCampaignIndex]);
+  renderCampaigns();
+});
