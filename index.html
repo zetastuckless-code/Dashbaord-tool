@@ -346,8 +346,8 @@
             </li>
           </ol>
 
-          <h3 class="automation-heading" id="dcm-automation-title">DCM email reports</h3>
-          <p class="automation-lede">DCM (CM360) sends its scheduled reports to Outlook with the file attached. A Power Automate flow saves each one into a OneDrive folder, and the dashboard picks it up from there. DCM fills in each line’s spend, delivery, and pacing for the days after its latest full report, so you stay current between weekly reports. When the next report arrives, it takes over those days. Flashtalking sends a download link, not a file, so it isn’t covered here.</p>
+          <h3 class="automation-heading" id="dcm-automation-title">DCM and DSP email reports</h3>
+          <p class="automation-lede">DCM (CM360) and the DSP send their scheduled reports to Outlook with the file attached. A Power Automate flow saves each one into a OneDrive folder, and the dashboard picks it up from there. For 1P clients the DSP report is the spend itself, so it’s used first; DCM fills in for everyone else. DCM fills in each line’s spend, delivery, and pacing for the days after its latest full report, so you stay current between weekly reports. When the next report arrives, it takes over those days. Flashtalking sends a download link, not a file, so it isn’t covered here.</p>
           <ol class="automation-steps" id="dcm-steps">
             <li class="automation-step" data-step="dfolder">
               <div class="step-head"><span class="step-status" id="step-dfolder-status"></span><h4>Make a DCM folder in your own OneDrive</h4></div>
@@ -365,12 +365,13 @@
                 <li>Click <b>+ New step</b>, search for <b>Create file</b>, and pick the <b>OneDrive for Business</b> one.</li>
                 <li>Set <b>Folder Path</b> to <b>/DCM Reports</b>. Set <b>File Name</b> to the <b>Attachments Name</b> value and <b>File Content</b> to <b>Attachments Content</b> (from the dynamic content list). Power Automate wraps the step in <b>Apply to each</b> on its own; that’s expected.</li>
                 <li>Click <b>Save</b>. When the next DCM email arrives, its file appears in <b>DCM Reports</b> within a few minutes. To test now, forward yesterday’s DCM email to yourself with the same subject.</li>
+                <li>For DSP reports, open the flow, click <b>Save As</b>, and name the copy <span class="step-quote">DSP reports to dashboard</span>. Change its <b>Subject Filter</b> to text from your DSP report emails’ subject, and keep the same <b>/DCM Reports</b> folder. One folder holds both.</li>
               </ol>
-              <p class="step-hint">DCM file names already carry the date and time, so each day’s file is kept and nothing gets overwritten.</p>
+              <p class="step-hint">In <b>File Name</b> and <b>File Content</b>, don’t type anything: click into the box, open the dynamic content list (the lightning bolt, or type <b>/</b>), and pick <b>Attachments Name</b> and <b>Attachments Content</b>. Each email’s own file name is used, so every day’s file is kept. If the DSP names every file the same (like <i>export_1.csv</i>), set File Name with the expression <code>concat(formatDateTime(utcNow(),'yyyy-MM-dd_HHmm'),'_',items('Apply_to_each')?['name'])</code> so files don’t overwrite each other.</p>
             </li>
             <li class="automation-step" data-step="dconnect">
-              <div class="step-head"><span class="step-status" id="step-dconnect-status"></span><h4>Connect the DCM folder</h4></div>
-              <p>In <b>Chrome</b> or <b>Edge</b>, pick the <b>DCM Reports</b> folder. The dashboard checks it along with your report folder. A DCM campaign named like one on the dashboard imports on its own. If the name differs, its first file waits on <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> so you can pick the campaign once; after that, each day’s file imports on its own.</p>
+              <div class="step-head"><span class="step-status" id="step-dconnect-status"></span><h4>Connect the folder</h4></div>
+              <p>In <b>Chrome</b> or <b>Edge</b>, pick the <b>DCM Reports</b> folder. The dashboard checks it along with your report folder. A campaign named like one on the dashboard imports on its own; DSP and DCM line items or placements go to the line whose name they carry. If the name differs, its first file waits on <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> so you can pick the campaign once; after that, each day’s file imports on its own.</p>
               <p class="step-detail" id="dcm-connect-detail"></p>
               <div class="step-actions"><button class="primary-button" id="dcm-connect-button" type="button">Connect DCM folder…</button><button class="text-button" id="dcm-disconnect" type="button" hidden>Disconnect</button></div>
             </li>
@@ -663,7 +664,7 @@
           <div id="snapshot-history-list" class="snapshot-history-list"></div>
         </section>
         <section class="snapshot-history-section dcm-section" id="dcm-section" hidden>
-          <div class="detail-section-heading"><span>DCM (CM360) vs this report</span><button class="text-button" id="dcm-remove" type="button">Remove DCM data</button></div>
+          <div class="detail-section-heading"><span>DCM and DSP data</span><button class="text-button" id="dcm-remove" type="button">Remove DCM and DSP data</button></div>
           <p class="dcm-topup" id="dcm-topup" hidden></p>
           <p class="dcm-window" id="dcm-window"></p>
           <div class="dcm-table" id="dcm-table"></div>

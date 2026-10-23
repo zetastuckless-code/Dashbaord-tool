@@ -59,7 +59,7 @@ import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
-import { applyDcmTopUps, applyDelivery, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import { applyDcmTopUps, applyDelivery, DELIVERY_SOURCES, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 let campaigns = applyDcmTopUps(loadCampaigns());
@@ -283,7 +283,8 @@ function applyClientScopeChrome() {
   // When DCM carries a line past its last report, say so and name the report date it builds on.
   const toppedUp = rows.filter(record => record.dcmTopUp);
   const reportThrough = toppedUp.map(record => record.dcmTopUp.reportAsOf).sort().at(-1);
-  const dcmNote = toppedUp.length ? ` · <span class="dcm-through">DCM after the ${escapeHtml(shortDate(reportThrough))} report</span>` : "";
+  const topUpSources = [...new Set(toppedUp.map(record => SHORT_SOURCE[record.dcmTopUp.source] || "DCM"))].join(" and ");
+  const dcmNote = toppedUp.length ? ` · <span class="dcm-through">${escapeHtml(topUpSources)} after the ${escapeHtml(shortDate(reportThrough))} report</span>` : "";
   through.innerHTML = throughDates.length ? `<span class="data-through-dot"></span>Data through <strong>${escapeHtml(longDate(throughDates.at(-1)))}</strong>${dcmNote}${throughDates[0] !== throughDates.at(-1) ? ` · oldest campaign through ${escapeHtml(longDate(throughDates[0]))}` : ""}` : "";
   const live = groups.filter(group => group.status === "live").length;
   eyebrow.textContent = "CLIENT ACCOUNT";
@@ -359,6 +360,8 @@ let onboarding = readOnboarding(localStorage);
 let reviewedImports = readReviewedImports(localStorage);
 let thirdPartyLinks = readThirdPartyLinks(localStorage);
 const SKIP_DELIVERY = "__skip";
+const SHORT_SOURCE = { CM360: "DCM", DSP: "DSP" };
+const deliveryLabel = () => SHORT_SOURCE[pendingValidatedImport?.parsed?.source] || "DCM";
 const CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 // Campaigns marked paused or completed by hand, and the order you put campaigns in (both views share it).
 let campaignStatus = readCampaignStatus(localStorage);
@@ -1435,9 +1438,9 @@ async function prepareImport(file, { allowDuplicate = false } = {}) {
     return { status: "rejected", messages: [error.message] };
   }
   // A CM360 (DCM) delivery report is ad-server data: it sits beside each line's own report, compared over the same days.
-  if (report.kind === "daily-delivery" && report.parsed.source === "CM360") {
+  if (report.kind === "daily-delivery" && ["CM360", "DSP"].includes(report.parsed.source)) {
     if (!report.parsed.records.length) {
-      const messages = report.parsed.errors.length ? report.parsed.errors : ["No dated delivery rows were found in this DCM report."];
+      const messages = report.parsed.errors.length ? report.parsed.errors : ["No dated delivery rows were found in this report."];
       recordImport(file.name, fingerprint, "Rejected", 0, messages);
       return { status: "rejected", messages };
     }
@@ -1516,8 +1519,8 @@ confirmImportButton.addEventListener("click", () => {
   if (reviewingReportKey) { localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== reviewingReportKey))); reviewingReportKey = null; renderReportAutomation(); }
   refreshClientFilter();
   renderCampaigns();
-  document.querySelector("#toast-message").textContent = delivery ? `DCM delivery added to ${count} line${count === 1 ? "" : "s"}.` : `${count} campaign row${count === 1 ? "" : "s"} imported successfully.`;
-  document.querySelector("#toast-title").textContent = delivery ? "DCM report imported" : "Report imported";
+  document.querySelector("#toast-message").textContent = delivery ? `${deliveryLabel()} delivery added to ${count} line${count === 1 ? "" : "s"}.` : `${count} campaign row${count === 1 ? "" : "s"} imported successfully.`;
+  document.querySelector("#toast-title").textContent = delivery ? `${deliveryLabel()} report imported` : "Report imported";
   setTimeout(() => {
     dialog.close();
     const toast = document.querySelector("#toast");
@@ -2909,8 +2912,8 @@ function importIsClear() {
   if (pendingValidatedImport.kind === "delivery") {
     const plan = deliveryPlan();
     const unmatched = plan.find(item => !item.target);
-    if (unmatched) return { clear: false, reason: `DCM campaign “${unmatched.entry.sourceCampaignName || unmatched.entry.sourceCampaignId}” doesn't match a campaign on the dashboard. Pick the campaign once and later reports follow it.` };
-    if (!plan.some(item => item.assigned.size)) return { clear: false, reason: "None of its placements matched a line. Review it to check the campaign." };
+    if (unmatched) return { clear: false, reason: `${deliveryLabel()} campaign “${unmatched.entry.sourceCampaignName || unmatched.entry.sourceCampaignId}” doesn't match a campaign on the dashboard. Pick the campaign once and later reports follow it.` };
+    if (!plan.some(item => item.assigned.size)) return { clear: false, reason: "None of its lines matched a line on the dashboard. Review it to check the campaign." };
     return { clear: true };
   }
   const existing = new Set(groupCampaigns(campaigns.filter(record => !isCampaignArchived(record))).map(group => group.key));
@@ -3009,8 +3012,8 @@ function renderReportAutomation() {
   stepStatus("dfolder", dcmFolder || dcmSeen ? "done" : "todo");
   stepStatus("dflow", dcmSeen ? "done" : "todo");
   stepStatus("dconnect", dcmFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
-  document.querySelector("#dcm-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : !dcmFolder ? "Not connected yet." : `Watching “${dcmFolder.name}”.${dcmSeen ? " DCM files have come through." : " Waiting for the first DCM email."}`;
-  document.querySelector("#dcm-connect-button").textContent = dcmFolder ? "Change folder…" : "Connect DCM folder…";
+  document.querySelector("#dcm-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : !dcmFolder ? "Not connected yet." : `Watching “${dcmFolder.name}”.${dcmSeen ? " Email reports have come through." : " Waiting for the first report email."}`;
+  document.querySelector("#dcm-connect-button").textContent = dcmFolder ? "Change folder…" : "Connect the folder…";
   document.querySelector("#dcm-connect-button").disabled = !folderSupported;
   document.querySelector("#dcm-disconnect").hidden = !dcmFolder;
   stepStatus("rconnect", reportFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
@@ -3462,7 +3465,9 @@ function showDeliveryImport() {
   const last = parsed.records.at(-1)?.date;
   renderDeliveryAssignments();
   document.querySelector("#mapping-review").hidden = true;
-  showValidationResult([`DCM delivery report: ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"}, ${parsed.placements.length ? `${new Set(parsed.placements.map(row => row.placement)).size} placements, ` : ""}${first} to ${last}, from header row ${report.headerRow}. It fills in spend and delivery for the days after each line's latest report, and is compared to the report where both cover the same days.`], "success");
+  const unit = parsed.source === "DSP" ? "line item" : "placement";
+  const units = new Set(parsed.placements.map(row => row.placement)).size;
+  showValidationResult([`${deliveryLabel()} delivery report: ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"}, ${units ? `${units} ${unit}${units === 1 ? "" : "s"}, ` : ""}${first} to ${last}, from header row ${report.headerRow}. It fills in spend and delivery for the days after each line's latest report, and is compared to the report where both cover the same days.`], "success");
 }
 function renderDeliveryAssignments() {
   const plan = deliveryPlan();
@@ -3475,13 +3480,13 @@ function renderDeliveryAssignments() {
     const undecided = !item.target && !item.skipped;
     const options = `${undecided ? '<option value="" selected disabled>Choose a campaign (required)</option>' : ""}<option value="${SKIP_DELIVERY}"${item.skipped ? " selected" : ""}>Skip this campaign</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${item.target === group.key ? " selected" : ""}>${escapeHtml(group.client)} · ${escapeHtml(group.name)}${!chosen && item.target === group.key ? " (matched)" : ""}</option>`).join("")}`;
     const perLine = item.lines.map((name, index) => [name, [...item.assigned.values()].filter(value => value === index).length]);
-    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} placement${count === 1 ? "" : "s"}` : '<em class="muted">no placements</em>'}</span></li>`).join("")}</ul>${item.unassigned.length ? `<p class="delivery-note">${item.unassigned.length} placement${item.unassigned.length === 1 ? "" : "s"} didn’t match a line and will be left out: ${escapeHtml(item.unassigned.slice(0, 4).join(", "))}${item.unassigned.length > 4 ? "…" : ""}</p>` : ""}` : "";
-    return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>DCM campaign ${escapeHtml(item.entry.sourceCampaignId || "")} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? '<small class="import-required-note">Pick the dashboard campaign this DCM campaign belongs to. Later reports follow your choice.</small>' : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${lines}</div>`;
+    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${count === 1 ? "" : "s"}` : '<em class="muted">nothing matched</em>'}</span></li>`).join("")}</ul>${item.unassigned.length ? `<p class="delivery-note">${item.unassigned.length} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} didn’t match a line and will be left out: ${escapeHtml(item.unassigned.slice(0, 4).join(", "))}${item.unassigned.length > 4 ? "…" : ""}</p>` : ""}` : "";
+    return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>${deliveryLabel()} campaign${item.entry.sourceCampaignId ? ` ${escapeHtml(item.entry.sourceCampaignId)}` : ""} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? '<small class="import-required-note">Pick the dashboard campaign this ${deliveryLabel()} campaign belongs to. Later reports follow your choice.</small>' : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${lines}</div>`;
   }).join("");
   const undecided = plan.filter(item => !item.target && !item.skipped).length;
   const assigned = plan.some(item => item.target && item.assigned.size);
   const errorBox = document.querySelector("#import-setup-error");
-  const message = undecided ? `Pick the campaign for ${undecided === 1 ? "the highlighted DCM campaign" : `the ${undecided} highlighted DCM campaigns`} before importing, or skip it.` : !assigned ? "None of the placements match a line in the chosen campaign." : "";
+  const message = undecided ? `Pick the campaign for ${undecided === 1 ? `the highlighted ${deliveryLabel()} campaign` : `the ${undecided} highlighted ${deliveryLabel()} campaigns`} before importing, or skip it.` : !assigned ? "Nothing in it matches a line in the chosen campaign." : "";
   errorBox.hidden = !message;
   errorBox.textContent = message;
   document.querySelector("#import-preview").hidden = true;
@@ -3503,8 +3508,8 @@ function commitDeliveryImport({ automatic = false } = {}) {
   thirdPartyLinks = rememberThirdPartyLinks(localStorage, thirdPartyLinks, plan, parsed.source);
   const touched = campaigns.filter(record => plan.some(item => item.target && groupKey(record) === item.target) && record.thirdPartyFiles?.[0] === fileName);
   const warnings = [
-    ...plan.filter(item => item.target && item.unassigned.length).map(item => `${item.unassigned.length} DCM placement${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
-    ...plan.filter(item => item.skipped).map(item => `DCM campaign “${item.entry.sourceCampaignName}” was skipped.`),
+    ...plan.filter(item => item.target && item.unassigned.length).map(item => `${item.unassigned.length} ${deliveryLabel()} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
+    ...plan.filter(item => item.skipped).map(item => `${deliveryLabel()} campaign “${item.entry.sourceCampaignName}” was skipped.`),
     ...(automatic ? ["Imported automatically from the watched report folder."] : [])
   ];
   const flagged = warnings.filter(warning => !warning.startsWith("Imported automatically"));
@@ -3515,32 +3520,36 @@ function commitDeliveryImport({ automatic = false } = {}) {
 
 function renderDcmComparison(campaign) {
   const section = document.querySelector("#dcm-section");
-  const days = campaign.thirdPartyDelivery?.CM360 || null;
-  section.hidden = !days || !Object.keys(days).length;
+  const sources = DELIVERY_SOURCES.filter(source => Object.keys(campaign.thirdPartyDelivery?.[source] || {}).length);
+  section.hidden = !sources.length;
   if (section.hidden) return;
-  const comparison = deliveryComparison(campaign);
-  const dates = Object.keys(days).sort();
   const topUp = campaign.dcmTopUp;
+  const topLabel = SHORT_SOURCE[topUp?.source] || "DCM";
   document.querySelector("#dcm-topup").hidden = !topUp;
-  if (topUp) document.querySelector("#dcm-topup").innerHTML = `Spend and pacing include DCM for <b>${escapeHtml(shortDate(topUp.from))} to ${escapeHtml(shortDate(topUp.to))}</b> on top of the report through ${escapeHtml(shortDate(topUp.reportAsOf))}: +${escapeHtml(formatExactMoney(topUp.added.spend))} spend and +${escapeHtml(formatCount(topUp.added.impressions))} impressions.${topUp.factor !== 1 ? ` DCM cost is scaled ×${topUp.factor.toFixed(2)} to match this line’s report over the days both cover.` : ""} The next report replaces these days.`;
-  if (!comparison) {
-    document.querySelector("#dcm-window").textContent = `DCM data from ${shortDate(dates[0])} to ${shortDate(dates.at(-1))}. The comparison shows once this line’s report covers the same days (its next report usually does).`;
-    document.querySelector("#dcm-table").innerHTML = "";
-    return;
-  }
+  if (topUp) document.querySelector("#dcm-topup").innerHTML = `Spend and pacing include ${topLabel} for <b>${escapeHtml(shortDate(topUp.from))} to ${escapeHtml(shortDate(topUp.to))}</b> on top of the report through ${escapeHtml(shortDate(topUp.reportAsOf))}: +${escapeHtml(formatExactMoney(topUp.added.spend))} spend and +${escapeHtml(formatCount(topUp.added.impressions))} impressions.${topUp.factor !== 1 ? ` ${topLabel} cost is scaled ×${topUp.factor.toFixed(2)} to match this line’s report over the days both cover.` : ""} The next report replaces these days.`;
   const gap = (value, flag = true) => value === null ? "—" : `<span class="${flag && Math.abs(value) > alertRules.discrepancy ? "warning-text" : ""}">${value > 0 ? "+" : ""}${value.toFixed(1)}%</span>`;
   const money = value => Number.isFinite(value) ? formatExactMoney(value) : "—";
   const countText = value => Number.isFinite(value) ? formatCount(value) : "—";
-  document.querySelector("#dcm-window").textContent = `${shortDate(comparison.from)} to ${shortDate(comparison.to)} · ${comparison.days} day${comparison.days === 1 ? "" : "s"} both sources cover`;
-  const rows = [
-    ["Impressions", countText(comparison.report.impressions), countText(comparison.adServer.impressions), gap(comparison.gaps.impressions)],
-    ["Clicks", countText(comparison.report.clicks), countText(comparison.adServer.clicks), gap(comparison.gaps.clicks)],
-    // DCM cost is worked out from its own rates, so it is shown for reference and never flagged.
-    ["Cost", money(comparison.report.spend), money(comparison.adServer.spend), gap(comparison.gaps.spend, false)],
-    ["Conversions", countText(comparison.report.conversions), countText(comparison.adServer.conversions), ""],
-    ["Revenue", money(comparison.report.revenue), money(comparison.adServer.revenue), ""]
-  ];
-  document.querySelector("#dcm-table").innerHTML = `<div class="dcm-row dcm-head"><span></span><span>This report</span><span>DCM</span><span>Gap</span></div>${rows.map(row => `<div class="dcm-row">${row.map((cell, index) => `<span>${index ? cell : escapeHtml(cell)}</span>`).join("")}</div>`).join("")}<p class="dcm-kpis"><span>DCM CPA <b>${comparison.cpa === null ? "—" : `$${Math.round(comparison.cpa).toLocaleString("en-US")}`}</b></span><span>DCM ROAS <b>${comparison.roas === null ? "—" : `${comparison.roas.toFixed(comparison.roas < 1 ? 2 : 1)}x`}</b></span><small>DCM conversions and revenue against this report’s spend for the same days.</small></p>`;
+  document.querySelector("#dcm-window").hidden = true;
+  document.querySelector("#dcm-table").innerHTML = sources.map(source => {
+    const label = SHORT_SOURCE[source];
+    const dates = Object.keys(campaign.thirdPartyDelivery[source]).sort();
+    const comparison = deliveryComparison(campaign, source);
+    const heading = `<h5 class="dcm-source">${escapeHtml(source === "CM360" ? "DCM (CM360)" : "DSP")} vs this report</h5>`;
+    if (!comparison) return `${heading}<p class="dcm-window">${label} data from ${shortDate(dates[0])} to ${shortDate(dates.at(-1))}. The comparison shows once this line’s report covers the same days.</p>`;
+    // The DSP is the 1P spend itself, so only DCM gaps are flagged.
+    const flag = source === "CM360";
+    const rows = [
+      ["Impressions", countText(comparison.report.impressions), countText(comparison.adServer.impressions), gap(comparison.gaps.impressions, flag)],
+      ["Clicks", countText(comparison.report.clicks), countText(comparison.adServer.clicks), gap(comparison.gaps.clicks, flag)],
+      // DCM cost is worked out from its own rates, so it is shown for reference and never flagged.
+      ["Cost", money(comparison.report.spend), money(comparison.adServer.spend), gap(comparison.gaps.spend, false)],
+      ["Conversions", countText(comparison.report.conversions), countText(comparison.adServer.conversions), ""],
+      ["Revenue", money(comparison.report.revenue), money(comparison.adServer.revenue), ""]
+    ];
+    const kpis = source === "CM360" ? `<p class="dcm-kpis"><span>DCM CPA <b>${comparison.cpa === null ? "—" : `$${Math.round(comparison.cpa).toLocaleString("en-US")}`}</b></span><span>DCM ROAS <b>${comparison.roas === null ? "—" : `${comparison.roas.toFixed(comparison.roas < 1 ? 2 : 1)}x`}</b></span><small>DCM conversions and revenue against this report’s spend for the same days.</small></p>` : "";
+    return `${heading}<p class="dcm-window">${shortDate(comparison.from)} to ${shortDate(comparison.to)} · ${comparison.days} day${comparison.days === 1 ? "" : "s"} both cover</p><div class="dcm-row dcm-head"><span></span><span>This report</span><span>${label}</span><span>Gap</span></div>${rows.map(row => `<div class="dcm-row">${row.map((cell, index) => `<span>${index ? cell : escapeHtml(cell)}</span>`).join("")}</div>`).join("")}${kpis}`;
+  }).join("");
 }
 document.querySelector("#dcm-remove").addEventListener("click", () => {
   const campaign = campaigns[activeCampaignIndex];

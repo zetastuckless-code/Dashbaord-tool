@@ -30,7 +30,7 @@ test("a DCM campaign matches by name and stores each line's days without touchin
   assert.equal(plan[0].target, groupKey(campaigns[0]));
   const { campaigns: next, lineCount } = applyDelivery(campaigns, parsed, plan);
   assert.equal(lineCount, 1);
-  assert.deepEqual(next[0].thirdPartyDelivery.CM360["2026-10-02"], { impressions: 1500, clicks: 15, spend: 6, conversions: 1, revenue: 50 });
+  assert.deepEqual(next[0].thirdPartyDelivery.CM360["2026-10-02"], { impressions: 1500, clicks: 15, spend: 6, conversions: 1, revenue: 50, videoStarts: null, videoCompletions: null });
   assert.equal(next[0].spend, 900);
   assert.equal(next[0].dataAsOf, "2026-09-30");
   // A later month-to-date file replaces the same days instead of adding to them.
@@ -86,4 +86,22 @@ test("DCM days after the latest report top up spend and delivery, and a newer re
   assert.equal(restored.spend, 500);
   assert.equal(restored.dataAsOf, "2026-10-02");
   assert.equal(restored.dcmTopUp, undefined);
+});
+
+test("a DSP export is read as DSP delivery split by line item, and fills in ahead of DCM", async () => {
+  const { parseCsv } = await import("../lib/importer.js");
+  const { detectDailyDelivery, parseDailyDelivery } = await import("../lib/daily-delivery-import.js");
+  const { topUpSource } = await import("../lib/third-party-delivery.js");
+  const rows = parseCsv([
+    '"Advertisement","Campaign","Date","Line Item","Clicks","Impressions","Spend","Video Completions","Video Starts"',
+    '"Spot A","ZCA-12572_Carter Streaming Audio","2026-10-01","AA Audio","0","5000","110.5","4900","4990"',
+    '"Spot B","ZCA-12572_Carter Streaming Audio","2026-10-01","Hispanic Audio","1","6000","130","5900","5990"',
+    '"Spot C","ZCA-12572_Carter Streaming Audio","2026-10-01","Hispanic Audio","0","1000","20","990","999"'
+  ].join("\n"));
+  const parsed = parseDailyDelivery(rows, detectDailyDelivery(rows), { fileName: "export_1.csv" });
+  assert.equal(parsed.source, "DSP");
+  assert.deepEqual(parsed.placements.map(row => [row.placement, row.impressions]), [["AA Audio", 5000], ["Hispanic Audio", 7000]]);
+  assert.equal(parsed.placements[1].videoCompletions, 6890);
+  assert.equal(topUpSource({ thirdPartyDelivery: { CM360: { "2026-10-01": {} }, DSP: { "2026-10-01": {} } } }), "DSP");
+  assert.equal(topUpSource({ thirdPartyDelivery: { CM360: { "2026-10-01": {} } } }), "CM360");
 });
