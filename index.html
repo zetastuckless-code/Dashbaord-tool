@@ -197,7 +197,7 @@
         </section>
 
         <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
-          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
+          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button" id="todo-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your to-do folder">Check to-do folder</button><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
           <div class="client-grid" id="client-grid"></div>
         </section>
 
@@ -350,6 +350,10 @@
         <div class="todo-dialog-tools"><button class="text-button" id="todo-copy-prompt" type="button">Copy ChatGPT prompt</button><button class="text-button" id="todo-download-template" type="button">Download template</button><label class="text-button todo-file-label">Choose file…<input type="file" id="todo-file" accept=".md,.txt,.csv,text/plain,text/markdown,text/csv" hidden /></label></div>
         <textarea id="todo-text" rows="10" placeholder="## Nature's Sunshine&#10;- [ ] Send the October ROAS recap | due: 2026-10-24 | from: Outlook" aria-label="To-do checklist"></textarea>
         <p class="todo-preview" id="todo-preview" aria-live="polite"></p>
+        <div class="todo-folder">
+          <div><strong>Automatic: watch a folder</strong><small id="todo-folder-status">Connect the folder your morning scan saves into. New files there are added each time the dashboard opens, and every few minutes while it is open (Chrome or Edge).</small></div>
+          <div class="todo-folder-actions"><button class="secondary-button" id="todo-folder-connect" type="button">Connect folder…</button><button class="text-button" id="todo-folder-disconnect" type="button" hidden>Disconnect</button></div>
+        </div>
         <div class="dialog-actions"><button class="secondary-button" value="cancel">Cancel</button><button class="primary-button" id="todo-add" type="button" disabled>Add to-dos</button></div>
       </form>
     </dialog>

@@ -45,3 +45,23 @@ test("matches client names loosely and orders open, then soonest due", () => {
   assert.deepEqual(sorted.map(item => item.text), ["c", "b", "a"]);
   assert.match(morningScanPrompt(clients), /## <client name exactly as listed above>/);
 });
+
+test("reads new and changed to-do files from a folder once each", async () => {
+  const { readTodoFolder } = await import("../lib/todo-folder.js");
+  const file = (name, text, lastModified) => ({ kind: "file", name, getFile: async () => ({ lastModified, text: async () => text }) });
+  const files = [
+    file("2026-10-24.md", "## Highmark\n- [ ] Raise SEPA caps", 1),
+    file("notes.pdf", "ignored", 1),
+    file("2026-10-23.md", "## Acme\n- [ ] Unknown client", 1)
+  ];
+  const folder = { values: async function* () { yield* files; } };
+  const first = await readTodoFolder(folder, {}, { clients, today: "2026-10-24" });
+  assert.equal(first.filesRead, 2);
+  assert.deepEqual(first.items.map(item => item.text), ["Raise SEPA caps"]);
+  assert.deepEqual(first.unknownClients, ["Acme"]);
+  const again = await readTodoFolder(folder, first.processed, { clients, today: "2026-10-24" });
+  assert.equal(again.filesRead, 0);
+  files[0] = file("2026-10-24.md", "## Highmark\n- [ ] Raise SEPA caps\n- [ ] Send recap", 2);
+  const changed = await readTodoFolder(folder, first.processed, { clients, today: "2026-10-24" });
+  assert.deepEqual(changed.items.map(item => item.text), ["Raise SEPA caps", "Send recap"]);
+});

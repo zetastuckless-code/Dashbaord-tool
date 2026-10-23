@@ -25,6 +25,7 @@ import { exportAlertsCsv } from "./lib/alert-export.js";
 import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
+import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { mergeTodos, morningScanPrompt, parseTodoFile, pruneTodos, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
 import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
@@ -2489,6 +2490,76 @@ document.querySelector("#todo-download-template").addEventListener("click", () =
   link.click();
   URL.revokeObjectURL(url);
 });
+// --- Watched to-do folder: the morning scan saves a checklist there and the dashboard takes it in on its own ---
+const FOLDER_KEY = "todo-folder";
+const folderSupported = typeof window.showDirectoryPicker === "function" && typeof indexedDB !== "undefined";
+let todoFolder = null;
+let folderState = { lastChecked: null, lastAdded: 0, needsClick: false };
+
+function renderFolderStatus() {
+  const status = document.querySelector("#todo-folder-status");
+  document.querySelector("#todo-folder-connect").textContent = todoFolder ? "Change folder…" : "Connect folder…";
+  document.querySelector("#todo-folder-connect").disabled = !folderSupported;
+  document.querySelector("#todo-folder-disconnect").hidden = !todoFolder;
+  document.querySelector("#todo-folder-reconnect").hidden = !(todoFolder && folderState.needsClick);
+  if (!folderSupported) { status.textContent = "Watching a folder needs Chrome or Edge. In this browser, paste or drop the file instead."; return; }
+  if (!todoFolder) return;
+  status.textContent = folderState.needsClick
+    ? `Watching “${todoFolder.name}”. Chrome needs one click this visit: use Check to-do folder next to Clients.`
+    : `Watching “${todoFolder.name}”${folderState.lastChecked ? ` · checked ${folderState.lastChecked.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${folderState.lastAdded ? ` · ${folderState.lastAdded} added` : ""}` : ""}.`;
+}
+
+/** Reads new files in the watched folder. `ask` is true only from a click, when Chrome may show its permission prompt. */
+async function checkTodoFolder({ ask = false } = {}) {
+  if (!todoFolder) return;
+  let permission = await todoFolder.queryPermission({ mode: "read" });
+  if (permission !== "granted" && ask) permission = await todoFolder.requestPermission({ mode: "read" });
+  folderState.needsClick = permission !== "granted";
+  if (folderState.needsClick) { renderFolderStatus(); return; }
+  try {
+    const result = await readTodoFolder(todoFolder, readProcessedFiles(localStorage), { clients: trackedClients(), today: todayIso() });
+    localStorage.setItem(TODO_FILES_KEY, JSON.stringify(result.processed));
+    const merged = mergeTodos(todos, result.items);
+    folderState = { lastChecked: new Date(), lastAdded: merged.added, needsClick: false };
+    if (merged.added) {
+      todos = merged.todos;
+      saveTodos();
+      renderCampaigns(document.querySelector("#client-filter").value);
+      showToast("New to-dos", `${merged.added} added from ${result.filesRead} file${result.filesRead === 1 ? "" : "s"} in “${todoFolder.name}”.${result.unknownClients.length ? ` Left out: ${result.unknownClients.join(", ")}.` : ""}`);
+    }
+  } catch (error) {
+    folderState.needsClick = true;
+  }
+  renderFolderStatus();
+}
+
+document.querySelector("#todo-folder-connect").addEventListener("click", async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ id: "northstar-todos", mode: "read" });
+    todoFolder = handle;
+    await saveFolderHandle(indexedDB, FOLDER_KEY, handle);
+    // A newly chosen folder is read in full, even files with names seen in an earlier folder.
+    localStorage.removeItem(TODO_FILES_KEY);
+    await checkTodoFolder({ ask: true });
+  } catch { /* the picker was closed */ }
+  renderFolderStatus();
+});
+document.querySelector("#todo-folder-disconnect").addEventListener("click", async () => {
+  todoFolder = null;
+  await saveFolderHandle(indexedDB, FOLDER_KEY, null).catch(() => {});
+  renderFolderStatus();
+});
+document.querySelector("#todo-folder-reconnect").addEventListener("click", () => checkTodoFolder({ ask: true }));
+if (folderSupported) {
+  loadFolderHandle(indexedDB, FOLDER_KEY).then(handle => {
+    todoFolder = handle;
+    renderFolderStatus();
+    return checkTodoFolder();
+  }).catch(() => renderFolderStatus());
+  setInterval(() => { if (todoFolder && !folderState.needsClick && document.visibilityState === "visible") checkTodoFolder(); }, 5 * 60_000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && todoFolder && !folderState.needsClick) checkTodoFolder(); });
+} else renderFolderStatus();
+
 document.querySelector("#todo-add").addEventListener("click", () => {
   const result = mergeTodos(todos, todoParsed.items);
   todos = result.todos;
