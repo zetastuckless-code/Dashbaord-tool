@@ -131,3 +131,18 @@ test("a campaign on an IO is flagged stale once and its IO-matched lines need no
   assert.equal(stale.length, 1);
   assert.equal(stale[0].campaign.name, "Spring — Phoenix");
 });
+
+test("only live lines raise alerts, and a finished first flight doesn't hide a pooled campaign's pacing", async () => {
+  const { setCampaignTotals } = await import("../lib/campaign-totals.js");
+  const { groupKey } = await import("../lib/campaign-groups.js");
+  const asOf = new Date("2026-10-23T12:00:00Z");
+  const flight = (name, startDate, endDate, value) => ({ client: "Rent A Center", name: `Hyperlocal Q2 — ${name}`, spend: 100, budget: null, startDate, endDate, source: "Zeta Global", billingSource: "reported", dataAsOf: "2026-10-22", kpi: "CPA", value, target: "Target $40", impressions: 50_000, clicks: 20 });
+  const rows = [flight("Flight 1", "2026-04-26", "2026-05-23", "$63"), flight("Flight 6", "2026-09-27", "2026-10-24", "$39")];
+  const totals = setCampaignTotals({}, groupKey(rows[0]), { orderNumber: "1", budget: 100_000, startDate: "2026-04-26", endDate: "2026-10-24", lineItems: [] }, "io.pdf");
+  const alerts = evaluateCampaignAlerts(rows, DEFAULT_ALERT_RULES, asOf, { totals });
+  assert.equal(alerts.filter(alert => alert.campaign.name.endsWith("Flight 1")).length, 0);
+  assert.ok(alerts.some(alert => alert.type === "under" && alert.campaign.name.endsWith("Flight 6")));
+  // A line with no dates whose data stopped weeks ago reads as completed, so it stays quiet too.
+  const undated = { client: "Acme", name: "Old — Display", spend: 100, budget: 1000, source: "Zeta Global", dataAsOf: "2026-08-01", deliveryEnd: "2026-08-01", kpi: "CPA", value: "$90", target: "Target $40", impressions: 50_000 };
+  assert.deepEqual(evaluateCampaignAlerts([undated], DEFAULT_ALERT_RULES, asOf), []);
+});

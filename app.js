@@ -183,7 +183,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const period = currentPeriod();
   const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
   // The KPI watcher card: live lines whose primary KPI misses its goal by more than the KPI tolerance.
-  const watch = kpiWatch(activeRows.filter(record => !isPlaceholder(record)), { tolerance: alertRules.kpiTolerance });
+  // Finished flights stay in activeRows for pooled pacing, but only live lines are watched.
+  const watch = kpiWatch(activeRows.filter(record => !isPlaceholder(record) && dashboardFlightStatus(record) === "live"), { tolerance: alertRules.kpiTolerance });
   lastKpiWatch = watch;
   const kpiValue = document.querySelector("#portfolio-kpi-value");
   kpiValue.classList.toggle("pace-over", watch.off.length > 0);
