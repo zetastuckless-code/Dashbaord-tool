@@ -23,7 +23,7 @@ test("restores every workspace collection to browser storage", () => {
   const storage = { setItem: (key, value) => values.set(key, value) };
   const backup = validateWorkspaceBackup(createWorkspaceBackup({ campaigns: [], importHistory: [], alertRules: {}, visibleColumns: [], acknowledgedAlerts: [], dashboardView: {} })).backup;
   restoreWorkspaceBackup(storage, backup);
-  assert.deepEqual([...values.keys()].sort(), ["northstar-acknowledged-alerts", "northstar-alert-rules", "northstar-campaign-columns", "northstar-campaigns", "northstar-dashboard-view", "northstar-import-history", "northstar-saved-views"]);
+  assert.deepEqual([...values.keys()].sort(), ["northstar-acknowledged-alerts", "northstar-alert-rules", "northstar-campaign-columns", "northstar-campaigns", "northstar-dashboard-view", "northstar-import-history", "northstar-saved-views", "northstar-todos"]);
 });
 
 test("carries per-campaign metric choices and still accepts older backups without them", () => {
