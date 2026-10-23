@@ -25,6 +25,8 @@ import { exportAlertsCsv } from "./lib/alert-export.js";
 import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
+import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
+import { mergeTodos, morningScanPrompt, parseTodoFile, pruneTodos, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
 import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
 import { removeDailySource, removeGroupRecords, removeLineItem, removeRecordAt, removeSnapshot } from "./lib/campaign-removal.js";
@@ -158,6 +160,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientNav();
   renderClientIo();
   renderClientDocuments();
+  renderClientTodos();
   applySourcesView();
   applyAlertsView();
 }
@@ -186,6 +189,10 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
     <div class="client-kpi-row"><span>${kpis.length ? kpiText(kpis) : "No KPI data yet"}</span></div>
     <p class="client-section-label">Campaigns</p>
     <ul class="client-campaigns">${client.campaigns.slice(0, 3).map(campaign => `<li><span class="client-campaign-name">${escapeHtml(campaign.name)}</span><span class="client-campaign-facts"><span class="${campaign.pacingBand}">${campaign.pacing === null ? "No pacing yet" : `${campaign.pacing.toFixed(0)}% paced${paceText[campaign.pacingBand] ? `, ${paceText[campaign.pacingBand]}` : ""}`}</span>${campaign.kpis.length ? ` · ${kpiText(campaign.kpis)}` : ""}${campaign.alertCount ? ` · <span class="warning-text">${campaign.alertCount} alert${campaign.alertCount === 1 ? "" : "s"}</span>` : ""}</span></li>`).join("")}${client.campaigns.length > 3 ? `<li class="client-more">+${client.campaigns.length - 3} more campaign${client.campaigns.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>
+    ${(() => {
+      const open = sortTodos(todos.filter(item => item.client === client.client && !item.done));
+      return open.length ? `<p class="client-section-label">To-dos</p><ul class="client-todos-preview">${open.slice(0, 3).map(item => `<li><span class="todo-box"></span><span>${escapeHtml(item.text)}${item.due ? `<small class="${item.due < todayIso() ? "overdue" : ""}">Due ${escapeHtml(shortDate(item.due))}</small>` : ""}</span></li>`).join("")}${open.length > 3 ? `<li class="client-more">+${open.length - 3} more to-do${open.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>` : "";
+    })()}
     ${client.alerts.length ? `<p class="client-section-label">Needs attention</p><ul class="client-alerts">${client.alerts.slice(0, 2).map(alertLine).join("")}${client.alerts.length > 2 ? `<li class="client-more">+${client.alerts.length - 2} more on the Alerts page</li>` : ""}</ul>` : '<p class="client-all-clear">No alerts</p>'}
   </button>`;
   }).join("");
@@ -304,6 +311,7 @@ let campaignTotals = readCampaignTotals(localStorage);
 // Campaigns marked paused or completed by hand, and the order you put campaigns in (both views share it).
 let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
+let todos = pruneTodos(readTodos(localStorage));
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
 let autoExpandedClient = null;
@@ -1286,7 +1294,7 @@ document.querySelector("#workspace-backup-button").addEventListener("click", () 
 });
 document.querySelectorAll(".close-workspace-backup").forEach(button => button.addEventListener("click", () => workspaceBackupDialog.close()));
 document.querySelector("#download-workspace-backup").addEventListener("click", () => {
-  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder });
+  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder, todos });
   const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-workspace-${new Date().toISOString().slice(0, 10)}.json` });
   link.click();
@@ -2398,6 +2406,168 @@ document.querySelector("#alerts-page").addEventListener("click", event => {
 document.querySelector("#alert-card").addEventListener("click", () => setAlertsView(true));
 document.querySelector("#alert-card").addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setAlertsView(true); } });
 document.querySelector("#view-all-alerts").addEventListener("click", () => setAlertsView(true));
+
+// --- Client to-dos: the morning scan's checklist plus what the dashboard's own alerts say to do ---
+const saveTodos = () => { todos = pruneTodos(todos); writeTodos(localStorage, todos); };
+const trackedClients = () => [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].sort((a, b) => a.localeCompare(b));
+
+function renderClientTodos() {
+  const panel = document.querySelector("#client-todos");
+  panel.hidden = !clientScope;
+  if (!clientScope) return;
+  const mine = sortTodos(todos.filter(item => item.client === clientScope));
+  const open = mine.filter(item => !item.done).length;
+  const today = todayIso();
+  document.querySelector("#client-todos-context").textContent = mine.length ? `${open} open${mine.length > open ? ` · ${mine.length - open} done (cleared after two weeks)` : ""}` : "Nothing yet. Add your morning scan, or type one below.";
+  document.querySelector("#client-todo-list").innerHTML = mine.map(item => `<li class="${item.done ? "done" : ""}"><label><input type="checkbox" data-todo-done="${escapeHtml(item.id)}"${item.done ? " checked" : ""} /><span>${escapeHtml(item.text)}</span></label><small>${[item.due ? `<span class="${!item.done && item.due < today ? "overdue" : ""}">Due ${escapeHtml(longDate(item.due))}</span>` : "", item.source ? escapeHtml(item.source) : "", item.addedOn ? `added ${escapeHtml(shortDate(item.addedOn))}` : ""].filter(Boolean).join(" · ")}</small><button class="todo-remove" type="button" data-todo-remove="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.text)}" title="Remove">✕</button></li>`).join("");
+  // The dashboard's own reasons to act on this client, read from its open alerts.
+  const clientAlerts = unacknowledgedAlerts(evaluateAlerts(campaigns.filter(record => record.client === clientScope && !isCampaignArchived(record))), acknowledgedAlertIds);
+  document.querySelector("#client-todo-auto").innerHTML = clientAlerts.length ? `<p class="client-section-label">From the dashboard</p><ul class="todo-auto-list">${clientAlerts.slice(0, 4).map(alert => `<li class="${alert.severity}"><span class="client-alert-dot"></span><span><b>${escapeHtml(ALERT_TYPES[alert.type]?.action || alert.title)}</b><small>${escapeHtml(ALERT_TYPES[alert.type]?.label || alert.title)} · ${escapeHtml(recordLineLabel(alert.campaign))} · ${escapeHtml(String(alert.detail).replace(/ · /g, ", "))}</small></span></li>`).join("")}</ul>${clientAlerts.length > 4 ? `<button class="text-button" type="button" data-todo-alerts>See all ${clientAlerts.length} alerts</button>` : ""}` : "";
+}
+
+document.querySelector("#client-todos").addEventListener("change", event => {
+  const box = event.target.closest("[data-todo-done]");
+  if (!box) return;
+  todos = setTodoDone(todos, box.dataset.todoDone, box.checked);
+  saveTodos();
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+document.querySelector("#client-todos").addEventListener("click", event => {
+  const remove = event.target.closest("[data-todo-remove]");
+  if (remove) { todos = todos.filter(item => item.id !== remove.dataset.todoRemove); saveTodos(); renderCampaigns(document.querySelector("#client-filter").value); return; }
+  if (event.target.closest("[data-todo-alerts]")) { alertsFilter.client = clientScope; setAlertsView(true); }
+});
+document.querySelector("#todo-quick-add").addEventListener("submit", event => {
+  event.preventDefault();
+  const text = document.querySelector("#todo-quick-text").value.trim();
+  if (!text || !clientScope) return;
+  const due = document.querySelector("#todo-quick-due").value || null;
+  todos = mergeTodos(todos, [{ client: clientScope, text, due, source: "Added by you", addedOn: todayIso() }]).todos;
+  saveTodos();
+  document.querySelector("#todo-quick-add").reset();
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+
+const todoDialog = document.querySelector("#todo-dialog");
+let todoParsed = { items: [], unknownClients: [] };
+function previewTodos() {
+  todoParsed = parseTodoFile(document.querySelector("#todo-text").value, { clients: trackedClients(), today: todayIso() });
+  const fresh = mergeTodos(todos, todoParsed.items).added;
+  const clientCount = new Set(todoParsed.items.map(item => item.client)).size;
+  const parts = todoParsed.items.length ? [`${todoParsed.items.length} to-do${todoParsed.items.length === 1 ? "" : "s"} for ${clientCount} client${clientCount === 1 ? "" : "s"}`] : [];
+  if (todoParsed.items.length && fresh < todoParsed.items.length) parts.push(`${todoParsed.items.length - fresh} already on your list`);
+  if (todoParsed.unknownClients.length) parts.push(`left out, no client named ${todoParsed.unknownClients.join(", ")}`);
+  document.querySelector("#todo-preview").textContent = parts.length ? parts.join(" · ") : document.querySelector("#todo-text").value.trim() ? "No to-dos found. Each client needs a \"## Client\" heading with \"- [ ] task\" lines under it." : "";
+  document.querySelector("#todo-add").disabled = fresh === 0;
+}
+function openTodoDialog() {
+  document.querySelector("#todo-text").value = "";
+  previewTodos();
+  todoDialog.showModal();
+}
+document.querySelector("#client-todo-import").addEventListener("click", openTodoDialog);
+document.querySelector("#overview-todo-import").addEventListener("click", openTodoDialog);
+document.querySelector("#todo-text").addEventListener("input", previewTodos);
+document.querySelector("#todo-file").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  document.querySelector("#todo-text").value = await file.text();
+  event.target.value = "";
+  previewTodos();
+});
+document.querySelector("#todo-copy-prompt").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(morningScanPrompt(trackedClients()));
+    showToast("Prompt copied", "Paste it into a scheduled ChatGPT task that can read your Outlook.");
+  } catch {
+    document.querySelector("#todo-text").value = morningScanPrompt(trackedClients());
+    previewTodos();
+  }
+});
+document.querySelector("#todo-download-template").addEventListener("click", () => {
+  const url = URL.createObjectURL(new Blob([todoTemplate(trackedClients(), todayIso())], { type: "text/markdown;charset=utf-8" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-todos-${todayIso()}.md` });
+  link.click();
+  URL.revokeObjectURL(url);
+});
+// --- Watched to-do folder: the morning scan saves a checklist there and the dashboard takes it in on its own ---
+const FOLDER_KEY = "todo-folder";
+const folderSupported = typeof window.showDirectoryPicker === "function" && typeof indexedDB !== "undefined";
+let todoFolder = null;
+let folderState = { lastChecked: null, lastAdded: 0, needsClick: false };
+
+function renderFolderStatus() {
+  const status = document.querySelector("#todo-folder-status");
+  document.querySelector("#todo-folder-connect").textContent = todoFolder ? "Change folder…" : "Connect folder…";
+  document.querySelector("#todo-folder-connect").disabled = !folderSupported;
+  document.querySelector("#todo-folder-disconnect").hidden = !todoFolder;
+  document.querySelector("#todo-folder-reconnect").hidden = !(todoFolder && folderState.needsClick);
+  if (!folderSupported) { status.textContent = "Watching a folder needs Chrome or Edge. In this browser, paste or drop the file instead."; return; }
+  if (!todoFolder) return;
+  status.textContent = folderState.needsClick
+    ? `Watching “${todoFolder.name}”. Chrome needs one click this visit: use Check to-do folder next to Clients.`
+    : `Watching “${todoFolder.name}”${folderState.lastChecked ? ` · checked ${folderState.lastChecked.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${folderState.lastAdded ? ` · ${folderState.lastAdded} added` : ""}` : ""}.`;
+}
+
+/** Reads new files in the watched folder. `ask` is true only from a click, when Chrome may show its permission prompt. */
+async function checkTodoFolder({ ask = false } = {}) {
+  if (!todoFolder) return;
+  let permission = await todoFolder.queryPermission({ mode: "read" });
+  if (permission !== "granted" && ask) permission = await todoFolder.requestPermission({ mode: "read" });
+  folderState.needsClick = permission !== "granted";
+  if (folderState.needsClick) { renderFolderStatus(); return; }
+  try {
+    const result = await readTodoFolder(todoFolder, readProcessedFiles(localStorage), { clients: trackedClients(), today: todayIso() });
+    localStorage.setItem(TODO_FILES_KEY, JSON.stringify(result.processed));
+    const merged = mergeTodos(todos, result.items);
+    folderState = { lastChecked: new Date(), lastAdded: merged.added, needsClick: false };
+    if (merged.added) {
+      todos = merged.todos;
+      saveTodos();
+      renderCampaigns(document.querySelector("#client-filter").value);
+      showToast("New to-dos", `${merged.added} added from ${result.filesRead} file${result.filesRead === 1 ? "" : "s"} in “${todoFolder.name}”.${result.unknownClients.length ? ` Left out: ${result.unknownClients.join(", ")}.` : ""}`);
+    }
+  } catch (error) {
+    folderState.needsClick = true;
+  }
+  renderFolderStatus();
+}
+
+document.querySelector("#todo-folder-connect").addEventListener("click", async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ id: "northstar-todos", mode: "read" });
+    todoFolder = handle;
+    await saveFolderHandle(indexedDB, FOLDER_KEY, handle);
+    // A newly chosen folder is read in full, even files with names seen in an earlier folder.
+    localStorage.removeItem(TODO_FILES_KEY);
+    await checkTodoFolder({ ask: true });
+  } catch { /* the picker was closed */ }
+  renderFolderStatus();
+});
+document.querySelector("#todo-folder-disconnect").addEventListener("click", async () => {
+  todoFolder = null;
+  await saveFolderHandle(indexedDB, FOLDER_KEY, null).catch(() => {});
+  renderFolderStatus();
+});
+document.querySelector("#todo-folder-reconnect").addEventListener("click", () => checkTodoFolder({ ask: true }));
+if (folderSupported) {
+  loadFolderHandle(indexedDB, FOLDER_KEY).then(handle => {
+    todoFolder = handle;
+    renderFolderStatus();
+    return checkTodoFolder();
+  }).catch(() => renderFolderStatus());
+  setInterval(() => { if (todoFolder && !folderState.needsClick && document.visibilityState === "visible") checkTodoFolder(); }, 5 * 60_000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && todoFolder && !folderState.needsClick) checkTodoFolder(); });
+} else renderFolderStatus();
+
+document.querySelector("#todo-add").addEventListener("click", () => {
+  const result = mergeTodos(todos, todoParsed.items);
+  todos = result.todos;
+  saveTodos();
+  todoDialog.close();
+  renderCampaigns(document.querySelector("#client-filter").value);
+  showToast("To-dos added", `${result.added} added${result.skipped ? `, ${result.skipped} already on your list` : ""}.`);
+});
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
 document.querySelector("#sources-kind").addEventListener("change", event => { sourcesFilter.kind = event.target.value; renderDataSources(); });
