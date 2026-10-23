@@ -345,6 +345,36 @@
               <p class="step-detail"><a href="?view=review" data-page-view="review" id="automation-review-link">Open Report review</a></p>
             </li>
           </ol>
+
+          <h3 class="automation-heading" id="dcm-automation-title">DCM email reports</h3>
+          <p class="automation-lede">DCM (CM360) sends its scheduled reports to Outlook with the file attached. A Power Automate flow saves each one into a OneDrive folder, and the dashboard picks it up from there. DCM numbers sit beside each line’s own report and are compared over the same days; they never change spend or pacing. Flashtalking sends a download link, not a file, so it isn’t covered here.</p>
+          <ol class="automation-steps" id="dcm-steps">
+            <li class="automation-step" data-step="dfolder">
+              <div class="step-head"><span class="step-status" id="step-dfolder-status"></span><h4>Make a DCM folder in your own OneDrive</h4></div>
+              <ol class="step-substeps">
+                <li>In <b>Finder › OneDrive</b> (or onedrive.com), make a folder named <b>DCM Reports</b> in your own files.</li>
+                <li>Keep it out of the shared SharePoint folder. Your DCM files then stay yours and don’t show up on teammates’ dashboards.</li>
+              </ol>
+            </li>
+            <li class="automation-step" data-step="dflow">
+              <div class="step-head"><span class="step-status" id="step-dflow-status"></span><h4>Build the flow in Power Automate</h4></div>
+              <ol class="step-substeps">
+                <li>Go to <b>make.powerautomate.com</b> and sign in with your work account.</li>
+                <li>Click <b>Create › Automated cloud flow</b>. Name it <span class="step-quote">DCM reports to dashboard</span>, pick the trigger <b>When a new email arrives (V3)</b> (Office 365 Outlook), and click <b>Create</b>.</li>
+                <li>In the trigger, open <b>Advanced options</b> and set <b>Include Attachments</b> to <b>Yes</b>, <b>Only with Attachments</b> to <b>Yes</b>, and <b>Subject Filter</b> to <span class="step-quote">Report #</span>. Every scheduled CM360 email starts that way, for example <i>Report #1750693127 : "Nature's Sunshine 2026_Zeta"</i>. To take only one client’s report, put its name in the filter instead, like <span class="step-quote">Nature's Sunshine 2026_Zeta</span>.</li>
+                <li>Click <b>+ New step</b>, search for <b>Create file</b>, and pick the <b>OneDrive for Business</b> one.</li>
+                <li>Set <b>Folder Path</b> to <b>/DCM Reports</b>. Set <b>File Name</b> to the <b>Attachments Name</b> value and <b>File Content</b> to <b>Attachments Content</b> (from the dynamic content list). Power Automate wraps the step in <b>Apply to each</b> on its own; that’s expected.</li>
+                <li>Click <b>Save</b>. When the next DCM email arrives, its file appears in <b>DCM Reports</b> within a few minutes. To test now, forward yesterday’s DCM email to yourself with the same subject.</li>
+              </ol>
+              <p class="step-hint">DCM file names already carry the date and time, so each day’s file is kept and nothing gets overwritten.</p>
+            </li>
+            <li class="automation-step" data-step="dconnect">
+              <div class="step-head"><span class="step-status" id="step-dconnect-status"></span><h4>Connect the DCM folder</h4></div>
+              <p>In <b>Chrome</b> or <b>Edge</b>, pick the <b>DCM Reports</b> folder. The dashboard checks it along with your report folder. A DCM campaign named like one on the dashboard imports on its own. If the name differs, its first file waits on <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> so you can pick the campaign once; after that, each day’s file imports on its own.</p>
+              <p class="step-detail" id="dcm-connect-detail"></p>
+              <div class="step-actions"><button class="primary-button" id="dcm-connect-button" type="button">Connect DCM folder…</button><button class="text-button" id="dcm-disconnect" type="button" hidden>Disconnect</button></div>
+            </li>
+          </ol>
         </section>
 
         <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
@@ -631,6 +661,11 @@
         <section class="snapshot-history-section">
           <div class="detail-section-heading"><span>Report snapshot history</span><button class="text-button" id="export-snapshot-history" type="button">Export CSV</button></div>
           <div id="snapshot-history-list" class="snapshot-history-list"></div>
+        </section>
+        <section class="snapshot-history-section dcm-section" id="dcm-section" hidden>
+          <div class="detail-section-heading"><span>DCM (CM360) vs this report</span><button class="text-button" id="dcm-remove" type="button">Remove DCM data</button></div>
+          <p class="dcm-window" id="dcm-window"></p>
+          <div class="dcm-table" id="dcm-table"></div>
         </section>
         <section class="snapshot-history-section" id="daily-delivery-section">
           <div class="detail-section-heading"><span>Daily delivery (CM360 / Flashtalking)</span><div class="panel-actions"><span id="daily-delivery-remove"></span><button class="text-button" id="export-daily-delivery" type="button">Export CSV</button></div></div>
