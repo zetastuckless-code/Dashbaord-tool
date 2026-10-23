@@ -196,6 +196,12 @@
           </article>
         </section>
 
+        <section class="panel morning-brief" id="morning-brief" aria-labelledby="morning-brief-title" hidden>
+          <div class="panel-header"><div><h2 id="morning-brief-title">Morning brief</h2><p id="morning-brief-context"></p></div><div class="panel-actions"><button class="text-button" id="brief-add" type="button">Add brief</button></div></div>
+          <div class="brief-deadlines" id="morning-brief-deadlines"></div>
+          <div class="brief-body" id="morning-brief-body"></div>
+        </section>
+
         <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
           <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button" id="todo-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your to-do folder">Check to-do folder</button><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
           <div class="client-grid" id="client-grid"></div>
@@ -345,10 +351,10 @@
 
     <dialog id="todo-dialog" aria-labelledby="todo-dialog-title">
       <form method="dialog" class="dialog-card todo-dialog-card">
-        <div class="dialog-header"><div><p class="eyebrow">MORNING SCAN</p><h2 id="todo-dialog-title">Add to-dos</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
-        <p>Paste the checklist from your scheduled ChatGPT task, or drop the file it made. Each client gets its own heading with one task per line.</p>
+        <div class="dialog-header"><div><p class="eyebrow">MORNING SCAN</p><h2 id="todo-dialog-title">Add a morning brief or to-dos</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <p>Paste the morning brief from your scheduled ChatGPT task, or choose the file it saved. A brief replaces the last brief’s open items, so anything resolved drops off. Items you added or checked off stay.</p>
         <div class="todo-dialog-tools"><button class="text-button" id="todo-copy-prompt" type="button">Copy ChatGPT prompt</button><button class="text-button" id="todo-download-template" type="button">Download template</button><label class="text-button todo-file-label">Choose file…<input type="file" id="todo-file" accept=".md,.txt,.csv,text/plain,text/markdown,text/csv" hidden /></label></div>
-        <textarea id="todo-text" rows="10" placeholder="## Nature's Sunshine&#10;- [ ] Send the October ROAS recap | due: 2026-10-24 | from: Outlook" aria-label="To-do checklist"></textarea>
+        <textarea id="todo-text" rows="10" placeholder="# Morning brief · 2026-10-24&#10;Sources: Outlook + Jira&#10;&#10;## Nature's Sunshine&#10;- [ ] Send the October ROAS recap | tag: urgent | due: 2026-10-24 | from: Email from Kelley · Today 9:15 AM" aria-label="To-do checklist"></textarea>
         <p class="todo-preview" id="todo-preview" aria-live="polite"></p>
         <div class="todo-folder">
           <div><strong>Automatic: watch a folder</strong><small id="todo-folder-status">Connect the folder your morning scan saves into. New files there are added each time the dashboard opens, and every few minutes while it is open (Chrome or Edge).</small></div>

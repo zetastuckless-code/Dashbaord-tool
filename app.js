@@ -26,7 +26,7 @@ import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
-import { mergeTodos, morningScanPrompt, parseTodoFile, pruneTodos, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
+import { applyBrief, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
 import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
 import { removeDailySource, removeGroupRecords, removeLineItem, removeRecordAt, removeSnapshot } from "./lib/campaign-removal.js";
@@ -161,6 +161,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientIo();
   renderClientDocuments();
   renderClientTodos();
+  renderMorningBrief();
   applySourcesView();
   applyAlertsView();
 }
@@ -190,8 +191,8 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
     <p class="client-section-label">Campaigns</p>
     <ul class="client-campaigns">${client.campaigns.slice(0, 3).map(campaign => `<li><span class="client-campaign-name">${escapeHtml(campaign.name)}</span><span class="client-campaign-facts"><span class="${campaign.pacingBand}">${campaign.pacing === null ? "No pacing yet" : `${campaign.pacing.toFixed(0)}% paced${paceText[campaign.pacingBand] ? `, ${paceText[campaign.pacingBand]}` : ""}`}</span>${campaign.kpis.length ? ` · ${kpiText(campaign.kpis)}` : ""}${campaign.alertCount ? ` · <span class="warning-text">${campaign.alertCount} alert${campaign.alertCount === 1 ? "" : "s"}</span>` : ""}</span></li>`).join("")}${client.campaigns.length > 3 ? `<li class="client-more">+${client.campaigns.length - 3} more campaign${client.campaigns.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>
     ${(() => {
-      const open = sortTodos(todos.filter(item => item.client === client.client && !item.done));
-      return open.length ? `<p class="client-section-label">To-dos</p><ul class="client-todos-preview">${open.slice(0, 3).map(item => `<li><span class="todo-box"></span><span>${escapeHtml(item.text)}${item.due ? `<small class="${item.due < todayIso() ? "overdue" : ""}">Due ${escapeHtml(shortDate(item.due))}</small>` : ""}</span></li>`).join("")}${open.length > 3 ? `<li class="client-more">+${open.length - 3} more to-do${open.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>` : "";
+      const open = sortTodos(todos.filter(item => item.client === client.client && isOpen(item)));
+      return open.length ? `<p class="client-section-label">To-dos</p><ul class="client-todos-preview">${open.slice(0, 3).map(item => `<li><span class="todo-box"></span><span>${todoTag(item)}${escapeHtml(item.text)}${item.due ? `<small class="${item.due < todayIso() ? "overdue" : ""}">Due ${escapeHtml(shortDate(item.due))}</small>` : ""}</span></li>`).join("")}${open.length > 3 ? `<li class="client-more">+${open.length - 3} more to-do${open.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>` : "";
     })()}
     ${client.alerts.length ? `<p class="client-section-label">Needs attention</p><ul class="client-alerts">${client.alerts.slice(0, 2).map(alertLine).join("")}${client.alerts.length > 2 ? `<li class="client-more">+${client.alerts.length - 2} more on the Alerts page</li>` : ""}</ul>` : '<p class="client-all-clear">No alerts</p>'}
   </button>`;
@@ -312,6 +313,7 @@ let campaignTotals = readCampaignTotals(localStorage);
 let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
 let todos = pruneTodos(readTodos(localStorage));
+let brief = readBrief(localStorage);
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
 let autoExpandedClient = null;
@@ -2409,17 +2411,60 @@ document.querySelector("#view-all-alerts").addEventListener("click", () => setAl
 
 // --- Client to-dos: the morning scan's checklist plus what the dashboard's own alerts say to do ---
 const saveTodos = () => { todos = pruneTodos(todos); writeTodos(localStorage, todos); };
-const trackedClients = () => [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].sort((a, b) => a.localeCompare(b));
+const TAG_LABEL = { urgent: "Urgent", waiting: "Waiting", todo: "To-do", upcoming: "Upcoming", fyi: "FYI" };
+const todoTag = item => item.tag && item.tag !== "todo" ? `<em class="todo-tag ${item.tag}">${TAG_LABEL[item.tag]}</em>` : "";
+
+/** Takes in one parsed file: a brief replaces the last brief's open items; a plain checklist adds to the list. */
+function takeInTodos(parsed) {
+  if (!parsed.brief) {
+    const result = mergeTodos(todos, parsed.items);
+    todos = result.todos;
+    return { added: result.added, updated: 0, removed: 0 };
+  }
+  const result = applyBrief(todos, parsed);
+  todos = result.todos;
+  if (!brief || parsed.brief.date >= brief.date) {
+    brief = { ...parsed.brief, receivedAt: new Date().toISOString() };
+    localStorage.setItem(BRIEF_KEY, JSON.stringify(brief));
+  }
+  return result;
+}
+
+// --- Morning brief on the overview: deadlines, today's calendar, what needs attention, and internal items ---
+function renderMorningBrief() {
+  const panel = document.querySelector("#morning-brief");
+  const show = !clientScope && !sourcesView && !alertsView && (brief || todos.some(isOpen));
+  panel.hidden = !show;
+  if (!show) return;
+  const today = todayIso();
+  const open = sortTodos(todos.filter(isOpen));
+  const stale = brief && brief.date < today;
+  document.querySelector("#morning-brief-title").textContent = brief ? `Morning brief · ${new Date(`${brief.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}` : "To-dos";
+  document.querySelector("#morning-brief-context").innerHTML = brief ? `${escapeHtml(brief.sources || "Morning scan")}${brief.skipped ? ` · <span class="warning-text">${escapeHtml(brief.skipped)}</span>` : ""}${stale ? ' · <span class="warning-text">not today’s brief yet</span>' : ""}` : "Add a morning brief to see your day here";
+  const dated = open.filter(item => item.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 4);
+  document.querySelector("#morning-brief-deadlines").innerHTML = dated.map(item => `<span class="deadline-chip${item.due < today ? " overdue" : item.due === today ? " today" : ""}"><b>${item.due === today ? "Today" : escapeHtml(shortDate(item.due))}</b>${escapeHtml(item.client)} · ${escapeHtml(item.text)}</span>`).join("");
+  const itemRow = item => `<li><span class="todo-dot ${escapeHtml(item.tag || "todo")}"></span><span>${todoTag(item)}${escapeHtml(item.text)}<small>${escapeHtml(item.client)}${item.source ? ` · ${escapeHtml(item.source)}` : ""}${item.link ? ` · <a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(/browse\/([A-Z]+-\d+)/.exec(item.link)?.[1] || "Link")} ↗</a>` : ""}</small></span></li>`;
+  const attention = open.filter(item => ["urgent", "waiting"].includes(item.tag)).slice(0, 6);
+  const calendar = stale ? [] : brief?.calendar || [];
+  const internal = sortTodos(todos.filter(item => item.client === INTERNAL && !item.done));
+  const others = sortTodos(todos.filter(item => item.tracked === false && !item.done));
+  document.querySelector("#morning-brief-body").innerHTML = [
+    `<div><p class="client-section-label">Calendar</p>${calendar.length ? `<ul class="brief-calendar">${calendar.map(entry => `<li><b>${escapeHtml(entry.time)}</b><span>${escapeHtml(entry.title)}</span></li>`).join("")}</ul>` : `<p class="brief-empty">${stale ? "Waiting for today’s brief" : "Nothing on the calendar today"}</p>`}</div>`,
+    `<div><p class="client-section-label">Needs attention</p>${attention.length ? `<ul class="brief-items">${attention.map(itemRow).join("")}</ul>` : '<p class="brief-empty">Nothing urgent or waiting</p>'}</div>`,
+    `<div><p class="client-section-label">${escapeHtml(INTERNAL)}${others.length ? " and other accounts" : ""}</p>${internal.length || others.length ? `<ul class="brief-items">${[...internal, ...others].slice(0, 6).map(itemRow).join("")}</ul>` : '<p class="brief-empty">Nothing internal</p>'}</div>`
+  ].join("");
+}
+const trackedClients = () => [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].filter(client => client !== INTERNAL).sort((a, b) => a.localeCompare(b));
 
 function renderClientTodos() {
   const panel = document.querySelector("#client-todos");
   panel.hidden = !clientScope;
   if (!clientScope) return;
   const mine = sortTodos(todos.filter(item => item.client === clientScope));
-  const open = mine.filter(item => !item.done).length;
+  const open = mine.filter(isOpen).length;
   const today = todayIso();
   document.querySelector("#client-todos-context").textContent = mine.length ? `${open} open${mine.length > open ? ` · ${mine.length - open} done (cleared after two weeks)` : ""}` : "Nothing yet. Add your morning scan, or type one below.";
-  document.querySelector("#client-todo-list").innerHTML = mine.map(item => `<li class="${item.done ? "done" : ""}"><label><input type="checkbox" data-todo-done="${escapeHtml(item.id)}"${item.done ? " checked" : ""} /><span>${escapeHtml(item.text)}</span></label><small>${[item.due ? `<span class="${!item.done && item.due < today ? "overdue" : ""}">Due ${escapeHtml(longDate(item.due))}</span>` : "", item.source ? escapeHtml(item.source) : "", item.addedOn ? `added ${escapeHtml(shortDate(item.addedOn))}` : ""].filter(Boolean).join(" · ")}</small><button class="todo-remove" type="button" data-todo-remove="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.text)}" title="Remove">✕</button></li>`).join("");
+  document.querySelector("#client-todo-list").innerHTML = mine.map(item => `<li class="${item.done ? "done" : ""}"><label><input type="checkbox" data-todo-done="${escapeHtml(item.id)}"${item.done ? " checked" : ""} /><span>${todoTag(item)}${escapeHtml(item.text)}</span></label><small>${[item.due ? `<span class="${!item.done && item.due < today ? "overdue" : ""}">Due ${escapeHtml(longDate(item.due))}</span>` : "", item.source ? escapeHtml(item.source) : "", item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(/browse\/([A-Z]+-\d+)/.exec(item.link)?.[1] || "Open link")} ↗</a>` : "", item.origin === "brief" && item.briefDate ? `brief ${escapeHtml(shortDate(item.briefDate))}` : item.addedOn ? `added ${escapeHtml(shortDate(item.addedOn))}` : ""].filter(Boolean).join(" · ")}</small><button class="todo-remove" type="button" data-todo-remove="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.text)}" title="Remove">✕</button></li>`).join("");
   // The dashboard's own reasons to act on this client, read from its open alerts.
   const clientAlerts = unacknowledgedAlerts(evaluateAlerts(campaigns.filter(record => record.client === clientScope && !isCampaignArchived(record))), acknowledgedAlertIds);
   document.querySelector("#client-todo-auto").innerHTML = clientAlerts.length ? `<p class="client-section-label">From the dashboard</p><ul class="todo-auto-list">${clientAlerts.slice(0, 4).map(alert => `<li class="${alert.severity}"><span class="client-alert-dot"></span><span><b>${escapeHtml(ALERT_TYPES[alert.type]?.action || alert.title)}</b><small>${escapeHtml(ALERT_TYPES[alert.type]?.label || alert.title)} · ${escapeHtml(recordLineLabel(alert.campaign))} · ${escapeHtml(String(alert.detail).replace(/ · /g, ", "))}</small></span></li>`).join("")}</ul>${clientAlerts.length > 4 ? `<button class="text-button" type="button" data-todo-alerts>See all ${clientAlerts.length} alerts</button>` : ""}` : "";
@@ -2452,13 +2497,13 @@ const todoDialog = document.querySelector("#todo-dialog");
 let todoParsed = { items: [], unknownClients: [] };
 function previewTodos() {
   todoParsed = parseTodoFile(document.querySelector("#todo-text").value, { clients: trackedClients(), today: todayIso() });
-  const fresh = mergeTodos(todos, todoParsed.items).added;
-  const clientCount = new Set(todoParsed.items.map(item => item.client)).size;
-  const parts = todoParsed.items.length ? [`${todoParsed.items.length} to-do${todoParsed.items.length === 1 ? "" : "s"} for ${clientCount} client${clientCount === 1 ? "" : "s"}`] : [];
-  if (todoParsed.items.length && fresh < todoParsed.items.length) parts.push(`${todoParsed.items.length - fresh} already on your list`);
-  if (todoParsed.unknownClients.length) parts.push(`left out, no client named ${todoParsed.unknownClients.join(", ")}`);
-  document.querySelector("#todo-preview").textContent = parts.length ? parts.join(" · ") : document.querySelector("#todo-text").value.trim() ? "No to-dos found. Each client needs a \"## Client\" heading with \"- [ ] task\" lines under it." : "";
-  document.querySelector("#todo-add").disabled = fresh === 0;
+  const accountCount = new Set(todoParsed.items.map(item => item.client)).size;
+  const parts = todoParsed.brief ? [`Morning brief for ${shortDate(todoParsed.brief.date)}${todoParsed.brief.calendar.length ? ` · ${todoParsed.brief.calendar.length} meeting${todoParsed.brief.calendar.length === 1 ? "" : "s"}` : ""}`] : [];
+  if (todoParsed.items.length) parts.push(`${todoParsed.items.length} item${todoParsed.items.length === 1 ? "" : "s"} across ${accountCount} account${accountCount === 1 ? "" : "s"}`);
+  if (todoParsed.brief) parts.push("replaces the last brief’s open items");
+  if (todoParsed.unknownClients.length) parts.push(`not on the dashboard yet: ${todoParsed.unknownClients.join(", ")} (shown with the brief)`);
+  document.querySelector("#todo-preview").textContent = parts.length ? parts.join(" · ") : document.querySelector("#todo-text").value.trim() ? "Nothing found. Each account needs a \"## Account\" heading with \"- [ ] item\" lines under it." : "";
+  document.querySelector("#todo-add").disabled = !todoParsed.items.length && !todoParsed.brief;
 }
 function openTodoDialog() {
   document.querySelector("#todo-text").value = "";
@@ -2467,6 +2512,7 @@ function openTodoDialog() {
 }
 document.querySelector("#client-todo-import").addEventListener("click", openTodoDialog);
 document.querySelector("#overview-todo-import").addEventListener("click", openTodoDialog);
+document.querySelector("#brief-add").addEventListener("click", openTodoDialog);
 document.querySelector("#todo-text").addEventListener("input", previewTodos);
 document.querySelector("#todo-file").addEventListener("change", async event => {
   const file = event.target.files[0];
@@ -2519,13 +2565,12 @@ async function checkTodoFolder({ ask = false } = {}) {
   try {
     const result = await readTodoFolder(todoFolder, readProcessedFiles(localStorage), { clients: trackedClients(), today: todayIso() });
     localStorage.setItem(TODO_FILES_KEY, JSON.stringify(result.processed));
-    const merged = mergeTodos(todos, result.items);
-    folderState = { lastChecked: new Date(), lastAdded: merged.added, needsClick: false };
-    if (merged.added) {
-      todos = merged.todos;
+    const totals = result.files.reduce((sum, file) => { const taken = takeInTodos(file.parsed); return { added: sum.added + taken.added, changed: sum.changed + taken.added + taken.updated + taken.removed }; }, { added: 0, changed: 0 });
+    folderState = { lastChecked: new Date(), lastAdded: totals.added, needsClick: false };
+    if (result.filesRead) {
       saveTodos();
       renderCampaigns(document.querySelector("#client-filter").value);
-      showToast("New to-dos", `${merged.added} added from ${result.filesRead} file${result.filesRead === 1 ? "" : "s"} in “${todoFolder.name}”.${result.unknownClients.length ? ` Left out: ${result.unknownClients.join(", ")}.` : ""}`);
+      if (totals.changed) showToast(result.files.some(file => file.parsed.brief) ? "Morning brief updated" : "New to-dos", `${totals.added} new item${totals.added === 1 ? "" : "s"} from ${result.filesRead} file${result.filesRead === 1 ? "" : "s"} in “${todoFolder.name}”.`);
     }
   } catch (error) {
     folderState.needsClick = true;
@@ -2561,12 +2606,11 @@ if (folderSupported) {
 } else renderFolderStatus();
 
 document.querySelector("#todo-add").addEventListener("click", () => {
-  const result = mergeTodos(todos, todoParsed.items);
-  todos = result.todos;
+  const result = takeInTodos(todoParsed);
   saveTodos();
   todoDialog.close();
   renderCampaigns(document.querySelector("#client-filter").value);
-  showToast("To-dos added", `${result.added} added${result.skipped ? `, ${result.skipped} already on your list` : ""}.`);
+  showToast(todoParsed.brief ? "Morning brief added" : "To-dos added", `${result.added} new${result.updated ? `, ${result.updated} updated` : ""}${result.removed ? `, ${result.removed} resolved since the last brief` : ""}.`);
 });
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
