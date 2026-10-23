@@ -68,7 +68,8 @@ import { attachLineDays, billingFileName, billingSheets, computeClientBilling, m
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
 import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
-import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
+import { characterSvg, clientCharacters, moveClient, orderClients, readClientOrder, writeClientOrder } from "./lib/client-marks.js";
+import { readSkySettings, SKY_KEY, SKY_LABEL, skyScene, skyTime, skyWeather, sunTimes, weatherUrl } from "./lib/sky.js";
 
 // Each line's DCM and DSP days load from IndexedDB just after the page opens; until then the saved top-ups stand as they are.
 let campaigns = loadCampaigns();
@@ -344,9 +345,10 @@ function applyClientScopeChrome() {
 }
 
 function renderClientNav() {
-  const clients = [...new Map(campaigns.filter(campaign => !isCampaignArchived(campaign)).map(campaign => [campaign.client, campaign])).values()].sort((a, b) => a.client.localeCompare(b.client));
+  const clients = orderClients([...new Set(campaigns.filter(campaign => !isCampaignArchived(campaign)).map(campaign => campaign.client))], readClientOrder(localStorage));
+  const characters = clientCharacters(clients);
   document.querySelector("#client-nav-label").hidden = clients.length === 0;
-  document.querySelector("#client-nav").innerHTML = clients.map(campaign => `<a class="nav-item client-nav-item${campaign.client === clientScope ? " active" : ""}" href="?client=${encodeURIComponent(campaign.client)}" data-client-link="${escapeHtml(campaign.client)}"${campaign.client === clientScope ? ' aria-current="page"' : ""}><span class="client-nav-mark ${escapeHtml(campaign.className || "")}">${escapeHtml(campaign.short || "")}</span><span class="client-nav-name">${escapeHtml(campaign.client)}</span></a>`).join("");
+  document.querySelector("#client-nav").innerHTML = clients.map(client => `<a class="nav-item client-nav-item${client === clientScope ? " active" : ""}" href="?client=${encodeURIComponent(client)}" data-client-link="${escapeHtml(client)}" draggable="false" title="Drag to reorder, or use Alt and the arrow keys"${client === clientScope ? ' aria-current="page"' : ""}><span class="client-nav-mark">${characterSvg(characters.get(client))}</span><span class="client-nav-name">${escapeHtml(client)}</span></a>`).join("");
   const overview = document.querySelector("#nav-overview");
   overview.classList.toggle("active", !clientScope && !sourcesView && !alertsView && !pageView);
   if (clientScope || sourcesView || alertsView || pageView) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
@@ -368,6 +370,81 @@ document.querySelector(".sidebar").addEventListener("click", event => {
   const page = event.target.closest("[data-page-view]");
   if (page) { event.preventDefault(); setPageView(page.dataset.pageView); document.querySelector(".sidebar").classList.remove("open"); return; }
   if (event.target.closest("#nav-overview") && (clientScope || sourcesView || alertsView || pageView)) { event.preventDefault(); alertsView = false; setClientScope(null); }
+});
+// Reordering clients: drag one up or down the sidebar (press and hold on touch), or press Alt with an arrow key.
+function saveClientMove(client, toIndex) {
+  const current = [...document.querySelectorAll("#client-nav [data-client-link]")].map(link => link.dataset.clientLink);
+  writeClientOrder(localStorage, moveClient(current, client, toIndex));
+  renderClientNav();
+}
+let clientDrag = null;
+let suppressClientClick = false;
+const clientNav = document.querySelector("#client-nav");
+clientNav.addEventListener("pointerdown", event => {
+  const item = event.target.closest(".client-nav-item");
+  if (!item || event.button !== 0) return;
+  const items = [...clientNav.querySelectorAll(".client-nav-item")];
+  clientDrag = { item, items, index: items.indexOf(item), startY: event.clientY, pointerId: event.pointerId, active: false, target: items.indexOf(item), tops: items.map(entry => entry.getBoundingClientRect().top) };
+  clientDrag.step = items.length > 1 ? clientDrag.tops[1] - clientDrag.tops[0] : item.offsetHeight;
+  // On touch, a short hold starts the drag so a swipe still scrolls the sidebar.
+  if (event.pointerType === "touch") clientDrag.holdTimer = setTimeout(() => { if (clientDrag) startClientDrag(); }, 350);
+});
+function startClientDrag() {
+  clientDrag.active = true;
+  clientDrag.item.setPointerCapture?.(clientDrag.pointerId);
+  clientDrag.item.classList.add("dragging");
+  clientNav.classList.add("reordering");
+}
+clientNav.addEventListener("pointermove", event => {
+  if (!clientDrag || event.pointerId !== clientDrag.pointerId) return;
+  const dy = event.clientY - clientDrag.startY;
+  if (!clientDrag.active) {
+    if (Math.abs(dy) < 6) return;
+    if (clientDrag.holdTimer) { clearTimeout(clientDrag.holdTimer); clientDrag = null; return; }
+    startClientDrag();
+  }
+  event.preventDefault();
+  const { items, index, step } = clientDrag;
+  const target = Math.max(0, Math.min(items.length - 1, index + Math.round(dy / step)));
+  clientDrag.target = target;
+  clientDrag.item.style.transform = `translateY(${Math.max(-index * step, Math.min((items.length - 1 - index) * step, dy))}px)`;
+  items.forEach((entry, position) => {
+    if (entry === clientDrag.item) return;
+    const shift = position > index && position <= target ? -step : position < index && position >= target ? step : 0;
+    entry.style.transform = shift ? `translateY(${shift}px)` : "";
+  });
+});
+function endClientDrag(event) {
+  if (!clientDrag || event.pointerId !== clientDrag.pointerId) return;
+  clearTimeout(clientDrag.holdTimer);
+  const { active, item, target, index } = clientDrag;
+  clientDrag = null;
+  if (!active) return;
+  suppressClientClick = true;
+  setTimeout(() => { suppressClientClick = false; }, 0);
+  clientNav.classList.remove("reordering");
+  if (target === index) {
+    item.classList.remove("dragging");
+    item.style.transform = "";
+    return;
+  }
+  saveClientMove(item.dataset.clientLink, target);
+}
+clientNav.addEventListener("pointerup", endClientDrag);
+clientNav.addEventListener("pointercancel", endClientDrag);
+clientNav.addEventListener("click", event => {
+  if (!suppressClientClick) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+clientNav.addEventListener("keydown", event => {
+  const link = event.target.closest("[data-client-link]");
+  if (!link || !event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+  event.preventDefault();
+  const links = [...clientNav.querySelectorAll("[data-client-link]")];
+  const client = link.dataset.clientLink;
+  saveClientMove(client, links.indexOf(link) + (event.key === "ArrowUp" ? -1 : 1));
+  [...clientNav.querySelectorAll("[data-client-link]")].find(entry => entry.dataset.clientLink === client)?.focus();
 });
 document.querySelector("#client-back").addEventListener("click", event => { event.preventDefault(); setClientScope(null); });
 window.addEventListener("popstate", () => {
@@ -3417,9 +3494,21 @@ navigator.storage?.persisted?.().then(kept => kept || navigator.storage.persist?
 // --- The sky behind the dashboard: time of day always, local weather once you turn it on ---
 let sky = readSkySettings(localStorage);
 let skyCondition = sky.weather && sky.checkedAt && Date.now() - sky.checkedAt < 3 * 3600_000 ? sky.weather : "clear";
+// ?sky=rain&skytime=sunset previews a look (the Settings preview uses the same thing).
+const skyPreview = { weather: new URLSearchParams(location.search).get("sky"), time: new URLSearchParams(location.search).get("skytime") };
+let skyPainted = "";
 function paintSky() {
-  document.body.dataset.skyTime = skyTime(new Date().getHours());
-  document.body.dataset.skyWeather = skyCondition;
+  const time = skyPreview.time || skyTime(new Date(), sky.sun && sky.sun.sunset?.slice(0, 10) === todayLocal() ? sky.sun : {});
+  const weather = skyPreview.weather || skyCondition;
+  document.body.dataset.skyTime = time;
+  document.body.dataset.skyWeather = weather;
+  // The scene is only rebuilt when the look changes, so clouds keep drifting where they are.
+  if (skyPainted !== `${time}:${weather}`) {
+    skyPainted = `${time}:${weather}`;
+    document.querySelector(".sky-scene").innerHTML = skyScene({ time, weather, seed: new Date().getDate() });
+  }
+  const preview = document.querySelector("#sky-preview");
+  if (preview) preview.value = skyPreview.weather || skyPreview.time ? `${skyPreview.time || ""}:${skyPreview.weather || ""}` : "";
   const button = document.querySelector("#sky-weather");
   button.textContent = sky.coords ? "Stop matching weather" : "Match my weather";
   document.querySelector("#settings-sky-detail").textContent = sky.coords ? `Following your local weather: ${SKY_LABEL[skyCondition].toLowerCase()} right now. Only a rounded location is sent to Open-Meteo.` : "The sky follows the time of day. Turn on weather to follow your local weather too; it asks for your location once.";
@@ -3432,7 +3521,7 @@ async function refreshWeather() {
     if (!response.ok) return;
     const data = await response.json();
     skyCondition = skyWeather(data.current?.weather_code);
-    sky = { ...sky, weather: skyCondition, checkedAt: Date.now() };
+    sky = { ...sky, weather: skyCondition, sun: sunTimes(data) || sky.sun, checkedAt: Date.now() };
     localStorage.setItem(SKY_KEY, JSON.stringify(sky));
   } catch {
     // Offline or blocked: the sky keeps its last mood.
@@ -3453,6 +3542,12 @@ document.querySelector("#sky-weather").addEventListener("click", () => {
     localStorage.setItem(SKY_KEY, JSON.stringify(sky));
     refreshWeather();
   }, () => showToast("Location not shared", "The sky will keep following the time of day."), { maximumAge: 3600_000, timeout: 15_000 });
+});
+document.querySelector("#sky-preview").addEventListener("change", event => {
+  const [time, weather] = event.target.value.split(":");
+  skyPreview.time = time || null;
+  skyPreview.weather = weather || null;
+  paintSky();
 });
 paintSky();
 refreshWeather();

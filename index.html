@@ -12,7 +12,7 @@
   </head>
   <body>
     <a class="skip-link" href="#overview">Skip to dashboard content</a>
-    <div class="sky" aria-hidden="true"><span class="sky-glow one"></span><span class="sky-glow two"></span><span class="sky-glow three"></span><span class="sky-cloud one"></span><span class="sky-cloud two"></span><span class="sky-precip"></span></div>
+    <div class="sky" aria-hidden="true"><span class="sky-glow one"></span><span class="sky-glow two"></span><span class="sky-glow three"></span><div class="sky-scene"></div></div>
     <div class="app-shell">
       <aside class="sidebar" id="primary-navigation" aria-label="Primary navigation">
         <a class="brand" href="./" aria-label="Zeta Global campaign dashboard home">
@@ -235,6 +235,7 @@
             <div class="settings-rows">
               <div class="settings-row"><div><b>Display name</b><small>Used in the greeting and on the sidebar.</small></div><input id="settings-name" autocomplete="given-name" placeholder="Your name" /></div>
               <div class="settings-row"><div><b>Background</b><small id="settings-sky-detail">The sky follows the time of day. Turn on weather to follow your local weather too.</small></div><button class="secondary-button" id="sky-weather" type="button">Match my weather</button></div>
+              <div class="settings-row"><div><b>Preview the sky</b><small>Try each look. It goes back to your real sky when you reload.</small></div><select id="sky-preview" aria-label="Preview the sky"><option value="">Your sky right now</option><option value="day:clear">Clear day</option><option value="day:partly">Partly cloudy</option><option value="day:cloudy">Cloudy</option><option value="sunset:clear">Cotton candy sunset</option><option value="sunset:partly">Sunset with clouds</option><option value="day:rain">Rain</option><option value="day:storm">Storm</option><option value="day:snow">Snow</option><option value="day:fog">Fog</option><option value="dawn:clear">Dawn</option><option value="dusk:clear">Dusk</option><option value="night:clear">Clear night</option></select></div>
             </div>
           </article>
           <article class="panel settings-section">
