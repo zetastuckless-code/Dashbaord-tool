@@ -26,6 +26,7 @@
           <a class="nav-item" id="nav-brief" href="?view=brief" data-page-view="brief"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>Daily brief</a>
           <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
           <a class="nav-item" id="nav-review" href="?view=review" data-page-view="review"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg></span>Report review <span class="nav-badge review" id="nav-review-count" hidden>0</span></a>
+          <a class="nav-item" id="nav-billing" href="?view=billing" data-page-view="billing"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg></span>Billing <span class="nav-badge review" id="nav-billing-count" hidden>0</span></a>
         </nav>
 
         <p class="nav-label" id="client-nav-label" hidden>Clients</p>
@@ -231,6 +232,13 @@
           <div class="brief-groups" id="brief-groups"></div>
         </section>
 
+        <section class="billing-page" id="billing-page" aria-label="Billing" hidden>
+          <article class="panel">
+            <div class="panel-header"><div><h2>Monthly billing</h2><p id="billing-page-context">Each client’s billing for the month, filled from DCM and DSP</p></div><div class="panel-actions"><label class="billing-month">Month <select id="billing-month"></select></label></div></div>
+            <ul class="billing-list" id="billing-list"></ul>
+          </article>
+        </section>
+
         <section class="review-page" id="review-page" aria-label="Report review" hidden>
           <article class="panel review-section">
             <div class="panel-header"><div><h2>Waiting for a decision</h2><p id="review-inbox-context">Reports from your folder that couldn’t be matched on their own</p></div></div>
@@ -411,6 +419,16 @@
             <div class="client-io-list" id="client-io-list"></div>
             <div class="client-io-done" id="client-io-done" hidden><p class="io-done-label">Completed</p><div class="client-io-done-list" id="client-io-done-list"></div></div>
           </div>
+        </section>
+
+        <section class="panel client-billing" id="client-billing" aria-labelledby="client-billing-title" hidden>
+          <div class="panel-header">
+            <div><h2 id="client-billing-title">Billing</h2><p id="client-billing-context">Set up how this client is billed once. Each month fills in from the DCM and DSP reports.</p></div>
+            <div class="panel-actions"><label class="secondary-button file-button">Fill from a past billing file<input id="billing-template-input" type="file" accept=".xlsx" hidden /></label><button class="text-button" id="billing-add-row" type="button">Add a row</button></div>
+          </div>
+          <div class="billing-client-fields" id="billing-client-fields"></div>
+          <div class="billing-rows" id="billing-rows"></div>
+          <div class="billing-preview" id="billing-preview"></div>
         </section>
 
         <section class="content-grid">
