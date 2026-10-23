@@ -70,6 +70,22 @@ test("extracts DSP and DCM spend columns from a Rent-A-Center flight summary", (
   assert.equal(campaign.first_party_spend, 39_019.73);
   assert.equal(campaign.third_party_spend, 36_762.76);
   assert.equal(campaign.kpi, "CPA");
+  // Online conversions from the same source as the spend (DSP here), plus offline conversions.
+  assert.equal(campaign.conversions, 330 + 851);
+});
+
+test("blends DCM and offline conversions on a DCM-billed block, as the report's Total CPA does", () => {
+  const rows = [
+    [null, "RAC_National_OLA_Q4_2026"],
+    [null, null, "Line", "Impressions", "Clicks", "CTR", "DCM Spend", "DSP Impression", "DSP Spend", "DCM Conversion", "DSP Conversions", "DCM CPA", "DSP CPA", "Offline Conversions", "Total CPA", "Cost", null, "IO Budget"],
+    [null, "Flight 1", "Display", 1_880_614, 1_376, 0.00073, 6_111.9955, null, null, 31, null, 197.16, "#DIV/0!", 0, 197.16, 3.25, null, 51_002.21],
+    [null, "Flight 2", "Display", 15_109_539, 4_102, 0.00027, 49_106.00175, 16_264_951, 52_861.09, 4_601, 5_252, 10.67, 10.06, 2_211, 7.21, 3.25, null, 50_903.88]
+  ];
+  const [q4, flight2] = extractPerformanceSummaryCampaigns(rows, { sheetName: "OLA", fileName: "Rent A Center report.xlsx" });
+  assert.equal(q4.kpi, "CPA");
+  assert.equal(q4.kpi_value, "$197.16");
+  assert.equal(flight2.conversions, 4_601 + 2_211);
+  assert.equal(flight2.kpi_value, "$7.21");
 });
 
 test("uses report goals as CTR targets and filename fallbacks for client names", () => {
