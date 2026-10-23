@@ -301,3 +301,73 @@ dialog[open]{animation:dialog-in 200ms var(--ease-out)}dialog[open]::backdrop{an
 .panel-header{flex-wrap:wrap;gap:8px 14px}.panel-actions{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
 .alerts-panel .panel-header>div:first-child{flex:1 1 140px}
 #metric-dialog table{min-width:0}#metric-dialog td:last-child{white-space:nowrap}
+/* Sky: a soft gradient behind the dashboard that follows the time of day and, when turned on, the local weather. */
+.sky{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:linear-gradient(180deg,var(--sky-top) 0%,var(--sky-bottom) 70%);transition:background 1.2s ease}.app-shell{position:relative;z-index:1}body{background:var(--sky-bottom,var(--bg))}
+body{--sky-top:#dceafe;--sky-bottom:#f3f1fd;--glow-1:#b9d7ff;--glow-2:#ddd5ff;--glow-3:#fff0c4;--cloud:rgba(255,255,255,.75)}
+body[data-sky-time=dawn]{--sky-top:#fde4d6;--sky-bottom:#efe9fb;--glow-1:#ffc6a3;--glow-2:#d4cbff;--glow-3:#ffe2a0}
+body[data-sky-time=dusk]{--sky-top:#f5d3e3;--sky-bottom:#e7e2f8;--glow-1:#ffb6a3;--glow-2:#bfaff6;--glow-3:#f8c4d8}
+body[data-sky-time=night]{--sky-top:#cfd3ef;--sky-bottom:#e4e1f4;--glow-1:#9a9be0;--glow-2:#b3a6ee;--glow-3:#c9d4f5;--cloud:rgba(240,240,255,.5)}
+body[data-sky-weather=cloudy],body[data-sky-weather=fog]{--sky-top:#e2e6ef;--sky-bottom:#f1f1f6}
+body[data-sky-weather=rain],body[data-sky-weather=storm]{--sky-top:#d3dae6;--sky-bottom:#eceef4;--glow-1:#a9bad3;--glow-2:#c3c0e2;--glow-3:#d9e2ee}
+body[data-sky-weather=storm]{--sky-top:#c5c8da}
+body[data-sky-weather=snow]{--sky-top:#e6edf7;--sky-bottom:#f7f8fc;--glow-1:#cddcf2;--glow-2:#e2def7;--glow-3:#f2f5fb}
+.sky-glow{position:absolute;border-radius:50%;filter:blur(70px);opacity:.75;will-change:transform;animation:sky-drift 48s ease-in-out infinite alternate}
+.sky-glow.one{width:56vw;height:56vw;left:12%;top:-28vw;background:var(--glow-1)}
+.sky-glow.two{width:44vw;height:44vw;right:-10vw;top:10vh;background:var(--glow-2);animation-duration:62s;animation-direction:alternate-reverse}
+.sky-glow.three{width:30vw;height:30vw;left:38%;top:42vh;background:var(--glow-3);opacity:.55;animation-duration:54s}
+body[data-sky-weather=cloudy] .sky-glow,body[data-sky-weather=fog] .sky-glow,body[data-sky-weather=rain] .sky-glow,body[data-sky-weather=storm] .sky-glow{filter:blur(80px) saturate(.5)}
+.sky-cloud{position:absolute;height:22vh;border-radius:50%;background:var(--cloud);filter:blur(40px);opacity:0;transition:opacity 1.2s ease;animation:sky-cloud 120s linear infinite}
+.sky-cloud.one{width:48vw;top:6vh;left:-10vw}.sky-cloud.two{width:38vw;top:34vh;left:40vw;animation-duration:160s;animation-delay:-60s}
+body[data-sky-weather=cloudy] .sky-cloud,body[data-sky-weather=rain] .sky-cloud,body[data-sky-weather=storm] .sky-cloud,body[data-sky-weather=snow] .sky-cloud{opacity:.8}
+body[data-sky-weather=fog] .sky-cloud{opacity:1;height:40vh;filter:blur(60px)}
+.sky-precip{position:absolute;inset:-20vh 0 0;opacity:0;transition:opacity 1.2s ease}
+body[data-sky-weather=rain] .sky-precip,body[data-sky-weather=storm] .sky-precip{opacity:.35;background-image:repeating-linear-gradient(105deg,transparent 0 22px,rgba(110,130,170,.45) 22px 23px,transparent 23px 61px);background-size:100% 140px;animation:sky-rain .9s linear infinite}
+body[data-sky-weather=storm] .sky-precip{opacity:.5}
+body[data-sky-weather=snow] .sky-precip{opacity:.9;background-image:radial-gradient(circle,rgba(255,255,255,.95) 0 1.6px,transparent 2px),radial-gradient(circle,rgba(255,255,255,.8) 0 1.1px,transparent 1.5px);background-size:120px 120px,70px 70px;background-position:0 0,35px 20px;animation:sky-snow 14s linear infinite}
+@keyframes sky-drift{to{transform:translate3d(6vw,4vh,0) scale(1.08)}}
+@keyframes sky-cloud{from{transform:translateX(-20vw)}to{transform:translateX(70vw)}}
+@keyframes sky-rain{to{background-position:-30px 140px}}
+@keyframes sky-snow{to{background-position:40px 120px,-20px 90px}}
+@media(prefers-reduced-motion:reduce){.sky-glow,.sky-cloud,.sky-precip{animation:none}}
+.sky-toggle{display:block;width:calc(100% - 6px);margin:0 3px 10px;padding:8px 10px;border:1px solid #33354a;border-radius:8px;background:transparent;color:#b9bdcc;font:600 12px "DM Sans";text-align:left;cursor:pointer}.sky-toggle:hover{background:#25263b;color:#fff}
+
+/* Client cards: name first, the money and pacing, then one line on what needs you. Details are a click away. */
+.client-grid{align-items:stretch}
+.client-card{display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;gap:0;padding:18px 18px 16px;border-radius:14px}
+.client-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(24,32,52,.05),0 14px 34px rgba(24,32,52,.09)}
+.client-card:active{transform:scale(.97)}
+.client-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.client-name{display:block;font:750 18px/1.25 Manrope,sans-serif;letter-spacing:-.3px;color:var(--ink);text-wrap:balance;min-width:0}
+.client-meta{display:block;margin-top:4px;font-size:12px;color:var(--muted)}
+.client-card .client-spend{margin-top:16px}.client-card .client-spend strong{font-size:24px}
+.client-card .client-kpi-row{display:block;font-size:12px}
+.client-card-foot{display:grid;gap:9px;margin-top:auto;padding-top:14px}
+.client-top-issue{display:flex;gap:7px;align-items:center;margin:0;padding-top:12px;border-top:1px solid #eff0f4;font-size:12px;color:#30384b;min-width:0}.client-top-issue>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.client-top-issue.critical .client-alert-dot{background:var(--red)}
+.client-signals{display:flex;flex-wrap:wrap;gap:6px}
+.client-signal{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:999px;background:#f1f2f6;color:#454e60;font-size:11px;font-weight:600}.client-signal b{color:#a8384a}
+.client-signal.warning{background:#fff3e5;color:#8a5516}.client-signal.critical{background:#fdecef;color:#a8384a}.client-signal.clear{background:#eaf8f3;color:#136c4e}
+
+/* Opening a client: the card grows into the header and its name becomes the title. */
+::view-transition-group(client-open),::view-transition-group(client-title){animation-duration:360ms;animation-timing-function:var(--ease-out)}
+::view-transition-old(root),::view-transition-new(root){animation-duration:200ms}
+::view-transition-old(client-open),::view-transition-new(client-open){height:100%;object-fit:cover}
+
+/* Campaign rows: every row shares one column plan, long names wrap within two lines, and the actions keep a fixed slot. */
+.campaign-card-head,.campaign-line,.campaign-lines-labels{grid-template-columns:22px 64px minmax(200px,2.4fr) repeat(var(--metric-count,6),minmax(0,1fr)) 150px}
+.campaign-card-head .metric-cell small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.campaign-card-head .campaign-title strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.campaign-card-head .campaign-title small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.metric-cell{min-width:0}
+@media(hover:hover){.campaign-move{opacity:0;transition:opacity 150ms ease}.campaign-card-head:hover .campaign-move,.campaign-card-head:focus-within .campaign-move{opacity:1}}
+
+/* Morning brief: a short strip of today's meetings, then one feed you can narrow to a client. */
+.brief-calendar-strip{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;padding:0 20px 12px;font-size:12px;color:#454e60}.brief-calendar-strip:empty{display:none}
+.brief-strip-label{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}.brief-meeting b{color:#3127a8;font-weight:700;margin-right:6px}
+.brief-filter{display:flex;gap:6px;padding:0 20px 10px;overflow-x:auto;scrollbar-width:none}.brief-filter:empty{display:none}
+.brief-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:#fff;color:#454e60;font:600 12px "DM Sans";white-space:nowrap;cursor:pointer;transition:background-color 150ms ease,border-color 150ms ease,transform 160ms var(--ease-out)}.brief-chip span{color:var(--muted);font-weight:500}.brief-chip:hover{border-color:#c9c2fb}.brief-chip:active{transform:scale(.97)}
+.brief-chip[aria-pressed=true]{background:#efedff;border-color:#c9c2fb;color:#3127a8}.brief-chip[aria-pressed=true] span{color:#3127a8}
+.brief-feed li.brief-empty{display:block;color:var(--muted);font-size:12px}
+.brief-feed-more{padding:8px 20px 0}.brief-feed-more:empty{display:none}
+/* Cards in a row share their row lines, so a name that wraps doesn't push its numbers out of line with the neighbors. */
+@supports (grid-template-rows:subgrid){.client-grid{row-gap:0}.client-card{display:grid;grid-row:span 5;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);row-gap:0;margin-bottom:14px}.client-card .progress-track[hidden]{display:block;visibility:hidden}}

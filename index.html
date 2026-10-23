@@ -12,6 +12,7 @@
   </head>
   <body>
     <a class="skip-link" href="#overview">Skip to dashboard content</a>
+    <div class="sky" aria-hidden="true"><span class="sky-glow one"></span><span class="sky-glow two"></span><span class="sky-glow three"></span><span class="sky-cloud one"></span><span class="sky-cloud two"></span><span class="sky-precip"></span></div>
     <div class="app-shell">
       <aside class="sidebar" id="primary-navigation" aria-label="Primary navigation">
         <a class="brand" href="./" aria-label="Zeta Global campaign dashboard home">
@@ -38,6 +39,7 @@
         </nav>
 
         <div class="sidebar-bottom">
+          <button class="sky-toggle" id="sky-weather" type="button">Match my weather</button>
           <div class="health-card" id="data-health-card" data-state="empty">
             <div class="health-title"><span class="status-dot"></span><span id="data-health-title">No data yet</span></div>
             <p id="data-health-detail">Import a report to begin</p>
@@ -198,8 +200,10 @@
 
         <section class="panel morning-brief" id="morning-brief" aria-labelledby="morning-brief-title" hidden>
           <div class="panel-header"><div><h2 id="morning-brief-title">Morning brief</h2><p id="morning-brief-context"></p></div><div class="panel-actions"><button class="text-button" id="brief-add" type="button">Add brief</button></div></div>
-          <div class="brief-deadlines" id="morning-brief-deadlines"></div>
-          <div class="brief-body" id="morning-brief-body"></div>
+          <div class="brief-calendar-strip" id="morning-brief-calendar"></div>
+          <div class="brief-filter" id="morning-brief-filter" role="group" aria-label="Show items for"></div>
+          <ul class="todo-list brief-feed" id="morning-brief-feed"></ul>
+          <div class="brief-feed-more" id="morning-brief-more"></div>
         </section>
 
         <section class="panel brief-page" id="brief-page" aria-labelledby="brief-page-title" hidden>
