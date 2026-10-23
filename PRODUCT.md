@@ -41,7 +41,7 @@ It reads the actual IO PDFs and the actual Zeta report workbooks the team alread
 - No Microsoft Graph or IT-managed access until the tool proves itself.
 - Raw report records are kept 180 days. Files in the shared folder are never deleted.
 - Terminology: client, campaign (group name before " — "), line item, IO, flight (F1, F2), KPI (CPA, CTR, VCR, ROAS, CPC and others), pacing, data-through date, reporting period.
-- Undecided: a first-run onboarding flow is wanted but not designed yet.
+- Getting started: an empty workspace shows a welcome with three steps (upload an IO, import its report, open the client), then a short checklist that points to the automations.
 
 ## Brand Commitments
 

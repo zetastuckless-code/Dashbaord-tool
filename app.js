@@ -57,6 +57,8 @@ import { applySetupEdits, setupFieldsFromRow, validateSetupEdits } from "./lib/n
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
+import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
+import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 let campaigns = loadCampaigns();
@@ -68,7 +70,9 @@ if (sourcesView) clientScope = null;
 let alertsView = new URLSearchParams(location.search).get("view") === "alerts";
 if (alertsView) clientScope = null;
 // Full pages reached from the sidebar: the daily brief and the automation setup guide.
-const PAGE_VIEWS = ["brief", "automation"];
+const PAGE_VIEWS = ["brief", "automation", "review"];
+// The "new campaign" choice shared by the IO and report dialogs.
+const NEW_CAMPAIGN = "__new";
 let pageView = PAGE_VIEWS.includes(new URLSearchParams(location.search).get("view")) ? new URLSearchParams(location.search).get("view") : null;
 if (pageView) clientScope = null;
 let alertRules = loadAlertRules();
@@ -141,6 +145,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
+  const liveCampaignCount = new Set(activeRows.map(row => `${row.client}::${campaignGroupName(row)}`)).size;
+  document.querySelector("#budget-detail").textContent = liveCampaignCount ? `across ${liveCampaignCount} live campaign${liveCampaignCount === 1 ? "" : "s"}` : "No live campaigns yet";
   // A period no report reaches (data through Oct 12, "last 7 days" ending Oct 22) has no spend to show, not $0.
   document.querySelector("#spend-value").textContent = period !== "current" && !comparablePeriodRows.length ? "—" : formatMoney(spend);
   document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · ${periodText(period)}`;
@@ -171,6 +177,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   applySourcesView();
   applyAlertsView();
   applyPageView();
+  renderWelcome();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -231,6 +238,7 @@ function resetExpandedCampaigns() {
 }
 
 function setClientScope(name, { replace = false } = {}) {
+  if (name && !onboarding.openedClient) onboarding = writeOnboarding(localStorage, { ...onboarding, openedClient: name });
   if ((name || null) !== clientScope) resetExpandedCampaigns();
   clientScope = name || null;
   sourcesView = false;
@@ -336,6 +344,9 @@ let metricPrefs = readMetricPrefs(localStorage);
 let auditMode = false;
 try { auditMode = localStorage.getItem("northstar-audit-mode") === "on"; } catch { auditMode = false; }
 let campaignTotals = readCampaignTotals(localStorage);
+let onboarding = readOnboarding(localStorage);
+let reviewedImports = readReviewedImports(localStorage);
+const CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 // Campaigns marked paused or completed by hand, and the order you put campaigns in (both views share it).
 let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
@@ -1465,9 +1476,8 @@ validateButton.addEventListener("click", async () => {
   const { report, result } = pendingValidatedImport;
   normalizeLineSkips();
   renderImportAssignments();
-  const effectiveRows = effectiveImport().campaigns;
-  confirmImportButton.disabled = effectiveRows.length === 0;
-  renderImportPreview(effectiveRows);
+  // Also turns Import off until every unmatched campaign has been placed.
+  refreshImportAfterAssignment();
   renderMappingReview(report.headers);
   const location = report.worksheet ? `${report.worksheet}, header row ${report.headerRow}` : `header row ${report.headerRow}`;
   const mappingSummary = report.headerMappings.length ? ` ${report.headerMappings.length} source column alias${report.headerMappings.length === 1 ? " was" : "es were"} mapped automatically.` : "";
@@ -1553,9 +1563,25 @@ function refreshImportAfterAssignment() {
   const errorBox = document.querySelector("#import-setup-error");
   errorBox.hidden = errors.length === 0;
   errorBox.textContent = errors.join(" ");
+  // A report campaign that matches nothing must be placed on purpose, so an older report doesn't quietly become a new campaign.
+  const undecided = importGroups().filter(needsDecision).length;
+  const messages = [...errors, ...(undecided ? [`Pick where ${undecided === 1 ? "the highlighted campaign goes" : `the ${undecided} highlighted campaigns go`} before importing: an existing campaign, a new one, or skip.`] : [])];
+  errorBox.hidden = messages.length === 0;
+  errorBox.textContent = messages.join(" ");
   renderImportPreview(effective.campaigns);
-  confirmImportButton.disabled = effective.campaigns.length === 0 || errors.length > 0;
+  confirmImportButton.disabled = effective.campaigns.length === 0 || messages.length > 0;
 }
+
+/** True when a report campaign matches nothing you track and you haven't said yet whether it's new. */
+function needsDecision(group) {
+  const pending = pendingValidatedImport;
+  if (groupChoice(group) || pending.confirmedNew?.has(group.key)) return false;
+  if (groupCampaigns(campaigns).some(item => item.key === group.key)) return false;
+  const actions = previewCampaignImport(campaigns, group.rows).actions.map(item => item.action);
+  return !(actions.length && actions.every(action => action === "update"));
+}
+const clientWords = name => String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const sameClient = (a, b) => { const x = clientWords(a), y = clientWords(b); return Boolean(x && y) && (x === y || x.startsWith(y) || y.startsWith(x) || x.split(" ")[0] === y.split(" ")[0]); };
 
 const groupChoice = group => {
   const choices = group.rows.map(row => pendingValidatedImport.choices[assignmentKey(row)] || "");
@@ -1578,7 +1604,14 @@ function renderImportAssignments() {
   if (!groups.length) return;
   pending.openSetup ??= new Set(groups.length === 1 ? [groups[0].key] : []);
   const sizes = new Map(groups.map(group => [group.key, group.rows.length]));
-  const targetOptions = selected => `<option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this campaign</option>${existing.map(group => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`).join("")}`;
+  // The report's own client comes first, since a report almost always belongs to a campaign that client already has.
+  const campaignOption = (group, selected) => `<option value="${escapeHtml(group.key)}"${selected === group.key ? " selected" : ""}>Add to ${escapeHtml(group.client)} · ${escapeHtml(group.name)}</option>`;
+  const targetOptions = (selected, client = null) => {
+    const mine = client ? existing.filter(group => sameClient(group.client, client)) : [];
+    const others = existing.filter(group => !mine.includes(group));
+    const campaignsHtml = mine.length ? `<optgroup label="${escapeHtml(client)} campaigns">${mine.map(group => campaignOption(group, selected)).join("")}</optgroup>${others.length ? `<optgroup label="Other clients">${others.map(group => campaignOption(group, selected)).join("")}</optgroup>` : ""}` : others.map(group => campaignOption(group, selected)).join("");
+    return `<option value="${SKIP}"${selected === SKIP ? " selected" : ""}>Skip this campaign</option>${campaignsHtml}`;
+  };
   document.querySelector("#import-assign-all").innerHTML = `<option value="__mixed" selected disabled>Choose…</option><option value="${KEEP}">New or matching campaigns</option>${targetOptions("")}`;
   document.querySelector("#import-assign-all").closest("label").hidden = groups.length < 2;
   document.querySelector("#import-assignment-list").innerHTML = groups.map(group => {
@@ -1590,13 +1623,16 @@ function renderImportAssignments() {
     // A report campaign with the same client and name as one you track (often one created from its IO) joins it.
     const sameName = existing.find(item => item.key === group.key);
     const keepLabel = sameName ? `Add to ${sameName.client} · ${sameName.name} (same name)` : updates ? "Update the matching campaign" : "New campaign from this report";
-    const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice || sameName ? '<em class="preview-action update">added to campaign</em>' : updates ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
+    const undecided = needsDecision(group);
+    const isNew = !choice && !sameName && !updates;
+    const firstOptions = undecided ? `<option value="" selected disabled>Choose a campaign (required)</option><option value="${NEW_CAMPAIGN}">New campaign from this report</option>` : isNew ? `<option value="${NEW_CAMPAIGN}" selected>New campaign from this report</option>` : `<option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>`;
+    const chip = undecided ? '<em class="preview-action required">choose a campaign</em>' : choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice || sameName ? '<em class="preview-action update">added to campaign</em>' : updates ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
     const budgetTotal = group.rows.reduce((sum, row) => sum + (Number.isFinite(row.budget) ? row.budget : 0), 0);
     const meta = [group.client, `${group.rows.length} line${group.rows.length === 1 ? "" : "s"}`, budgetTotal ? `${formatMoney(budgetTotal)} budget in report` : ""].filter(Boolean).map(escapeHtml).join(" · ");
     const skippedHere = group.rows.filter(row => pending.skippedLines.has(assignmentKey(row))).length;
     // The line selector is the one thing to review here; campaign details are edited from the campaign afterwards.
     const lines = `<details class="import-group-lines" open><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} to import${skippedHere ? ` · ${skippedHere} left out` : ""} <small>(untick a line to leave it out)</small></summary>${group.rows.map(row => `<label class="import-line-include"><input type="checkbox" data-line-include="${escapeHtml(assignmentKey(row))}"${pending.skippedLines.has(assignmentKey(row)) ? "" : " checked"} /><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></label>`).join("")}</details>`;
-    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${lines}</div>`;
+    return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small>${undecided ? `<small class="import-required-note">This doesn’t match a campaign you track. If it’s an older report for a current campaign, pick that campaign.</small>` : ""}</span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"${undecided ? ' aria-invalid="true" required' : ""}>${firstOptions}${targetOptions(choice, group.client)}</select></div>${lines}</div>`;
   }).join("");
 }
 
@@ -1627,7 +1663,9 @@ document.querySelector("#import-assignment-list").addEventListener("change", asy
   const choice = event.target.closest("[data-group-choice]");
   if (choice) {
     const group = importGroups().find(item => item.key === choice.dataset.groupChoice);
-    if (group) setGroupChoice(group, choice.value);
+    pending.confirmedNew ??= new Set();
+    if (group && choice.value === NEW_CAMPAIGN) { pending.confirmedNew.add(group.key); setGroupChoice(group, KEEP); }
+    else if (group) { pending.confirmedNew.delete(group.key); setGroupChoice(group, choice.value); }
     renderImportAssignments();
     refreshImportAfterAssignment();
     return;
@@ -1650,7 +1688,12 @@ document.querySelector("#import-assignment-list").addEventListener("toggle", eve
 
 document.querySelector("#import-assign-all").addEventListener("change", event => {
   if (!pendingValidatedImport?.result) return;
-  importGroups().forEach(group => setGroupChoice(group, event.target.value));
+  pendingValidatedImport.confirmedNew ??= new Set();
+  importGroups().forEach(group => {
+    // "New or matching campaigns" for all is an explicit answer for every campaign in the report.
+    if (event.target.value === KEEP) pendingValidatedImport.confirmedNew.add(group.key); else pendingValidatedImport.confirmedNew.delete(group.key);
+    setGroupChoice(group, event.target.value);
+  });
   renderImportAssignments();
   refreshImportAfterAssignment();
 });
@@ -1927,7 +1970,6 @@ function openCampaignDialog(index, alertId = null) {
 // --- Insertion order (PDF) review: parse in the browser, confirm, then apply ---
 // --- Upload IO: one order at a time (several files queue up). It creates a campaign or revises one; nothing else. ---
 const ioReviewDialog = document.querySelector("#io-review-dialog");
-const NEW_CAMPAIGN = "__new";
 let pendingIo = null;
 let ioQueue = [];
 
@@ -2660,12 +2702,17 @@ function applyPageView() {
   for (const page of PAGE_VIEWS) document.body.classList.toggle(`${page}-view`, pageView === page);
   document.querySelector("#brief-page").hidden = pageView !== "brief";
   document.querySelector("#automation-page").hidden = pageView !== "automation";
+  document.querySelector("#review-page").hidden = pageView !== "review";
   if (!pageView) return;
   document.querySelector("#client-back").hidden = true;
-  document.querySelector("#greeting").textContent = pageView === "brief" ? "Daily brief" : "Automation";
-  document.querySelector("#page-subtitle").textContent = pageView === "brief" ? "Your morning brief and every client's to-dos in one place." : "Set up the morning brief and report uploads, step by step.";
-  document.title = `Zeta | ${pageView === "brief" ? "Daily brief" : "Automation"}`;
-  if (pageView === "brief") renderBriefPage(); else { renderAutomationPage(); renderReportAutomation(); }
+  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review" };
+  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look." };
+  document.querySelector("#greeting").textContent = titles[pageView];
+  document.querySelector("#page-subtitle").textContent = subtitles[pageView];
+  document.title = `Zeta | ${titles[pageView]}`;
+  if (pageView === "brief") renderBriefPage();
+  else if (pageView === "automation") { renderAutomationPage(); renderReportAutomation(); }
+  else renderReportAutomation();
 }
 
 /** One to-do row with its checkbox, tag, due date, source, link, and remove button. */
@@ -2898,7 +2945,10 @@ function renderReportAutomation() {
   chip.hidden = !inbox.length;
   chip.textContent = `${inbox.length} report${inbox.length === 1 ? "" : "s"} to review`;
   document.querySelector("#report-folder-reconnect").hidden = !(reportFolder && reportState.needsClick);
+  updateReviewBadge();
+  if (pageView === "review") renderReviewPage(inbox);
   if (pageView !== "automation") return;
+  document.querySelector("#automation-review-link").textContent = inbox.length ? `Open Report review · ${inbox.length} waiting` : "Open Report review";
   stepStatus("rfolder", reportFolder ? "done" : "todo");
   stepStatus("rconnect", reportFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
   stepStatus("rreview", !reportFolder ? "todo" : inbox.length ? "warn" : "done");
@@ -2910,9 +2960,6 @@ function renderReportAutomation() {
   document.querySelector("#report-only-folders").checked = reportSettings.onlyReportFolders;
   document.querySelector("#report-lookback").value = reportSettings.lookbackDays;
   document.querySelector("#report-retention").value = reportSettings.retentionDays;
-  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${escapeHtml(item.reason)}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
-  const activity = readReportActivity().slice(0, 8);
-  document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
 }
 
 document.querySelector("#report-connect-button").addEventListener("click", async () => {
@@ -2931,7 +2978,7 @@ document.querySelector("#report-disconnect").addEventListener("click", async () 
 });
 document.querySelector("#report-check-now").addEventListener("click", () => checkReportFolder({ ask: true }));
 document.querySelector("#report-folder-reconnect").addEventListener("click", () => checkReportFolder({ ask: true }));
-document.querySelector("#report-review-chip").addEventListener("click", () => { setPageView("automation"); setTimeout(() => document.querySelector("#report-inbox").scrollIntoView({ block: "center" }), 50); });
+document.querySelector("#report-review-chip").addEventListener("click", () => setPageView("review"));
 document.querySelector("#automation-page").addEventListener("change", event => {
   if (!["report-only-folders", "report-lookback", "report-retention"].includes(event.target.id)) return;
   const days = (value, fallback) => Math.max(1, Math.min(3650, Math.round(Number(value)) || fallback));
@@ -3130,6 +3177,7 @@ function renderAlerts(visibleCampaigns) {
   document.querySelector("#alert-count").textContent = alerts.length;
   document.querySelector("#alert-summary").innerHTML = `<span class="warning-text">${critical} critical</span><span>across ${new Set(alerts.map(alert => alert.campaign.name)).size} campaigns</span>`;
   document.querySelector("#nav-alert-count").textContent = alerts.length;
+  document.querySelector("#nav-alert-count").hidden = alerts.length === 0;
   document.querySelector("#alert-list").innerHTML = alerts.length ? alerts.slice(0, 3).map(alert => `<button class="alert-item" data-alert-id="${escapeHtml(alert.id)}" data-campaign-index="${campaigns.indexOf(alert.campaign)}" aria-label="Open ${escapeHtml(alert.campaign.name)}: ${escapeHtml(alert.title)}"><span class="alert-symbol ${alert.severity}">${alert.symbol}</span><span><strong>${escapeHtml(alert.title)}</strong><small>${escapeHtml(alert.campaign.client)} · ${escapeHtml(alert.campaign.name)}</small><em>${escapeHtml(alert.detail)}</em></span><span class="chevron">›</span></button>`).join("") : '<p class="no-alerts">No active alerts for these campaigns.</p>';
 }
 
@@ -3159,9 +3207,13 @@ document.querySelector("#acknowledge-alert-button").addEventListener("click", ()
 });
 
 function renderDataHealth() {
-  const health = evaluateDataHealth(importHistory);
+  let health = evaluateDataHealth(importHistory);
+  // Once every flagged import is marked reviewed, the card stops asking for a look.
+  if (health.state === "warning" && !pendingImportReviews(importHistory, reviewedImports).length) health = { ...health, state: "healthy", title: "Data is current", detail: "Latest import reviewed" };
   const card = document.querySelector("#data-health-card");
   card.dataset.state = health.state;
+  const actionable = ["warning", "error"].includes(health.state);
+  if (actionable) { card.setAttribute("role", "link"); card.tabIndex = 0; card.title = "Open Report review"; } else { card.removeAttribute("role"); card.removeAttribute("tabindex"); card.removeAttribute("title"); }
   document.querySelector("#data-health-title").textContent = health.title;
   document.querySelector("#data-health-detail").textContent = health.detail;
   document.querySelector("#data-health-sync").textContent = health.lastSync;
@@ -3214,3 +3266,105 @@ document.querySelector("#sky-weather").addEventListener("click", () => {
 paintSky();
 refreshWeather();
 setInterval(() => { paintSky(); if (sky.coords && Date.now() - (sky.checkedAt || 0) > 30 * 60_000) refreshWeather(); }, 5 * 60_000);
+
+// --- Getting started: a full-page welcome on an empty workspace, then a short checklist until the first client is open ---
+function renderWelcome() {
+  const panel = document.querySelector("#welcome");
+  const progress = setupProgress({ campaigns, totals: campaignTotals, state: onboarding, isPlaceholder });
+  const onOverview = !clientScope && !sourcesView && !alertsView && !pageView;
+  const mode = progress.mode;
+  document.body.classList.toggle("first-run", mode === "welcome" && onOverview);
+  if (mode === "welcome" && onOverview) document.querySelector("#page-subtitle").textContent = "Let’s get your first client in.";
+  panel.hidden = mode === "hidden" || !onOverview;
+  panel.classList.toggle("compact", mode === "checklist");
+  document.querySelector("#welcome-reopen").hidden = !onboarding.dismissed;
+  if (panel.hidden) return;
+  const current = progress.steps.find(step => !step.done)?.id || null;
+  document.querySelector("#welcome-title").textContent = mode === "welcome" ? "Welcome to Zeta Campaign Pacing" : progress.coreDone ? "You’re set up" : `Getting started · ${progress.doneCount} of 3`;
+  document.querySelector("#welcome-lede").hidden = mode !== "welcome";
+  document.querySelector("#welcome-name-field").hidden = mode !== "welcome";
+  document.querySelector("#welcome-skip").textContent = mode === "welcome" ? "Skip setup" : progress.coreDone ? "Done" : "Hide";
+  const nameInput = document.querySelector("#welcome-name");
+  if (document.activeElement !== nameInput) { try { nameInput.value = localStorage.getItem("northstar-profile-name") || ""; } catch { nameInput.value = ""; } }
+  const client = progress.reportClient || progress.ioClient;
+  const copy = {
+    io: { title: "Upload a client’s IO", body: "Pick one live client and upload the IO PDF. The dashboard reads the budget, flights, and line items.", action: "Upload IO", done: progress.ioClient ? `IO added for ${progress.ioClient}` : "IO added" },
+    report: { title: client && progress.ioClient ? `Import ${client}’s latest report` : "Import the latest report", body: "Use the xlsx or csv linked from the Jira ticket. Report lines match to the IO on their own, and you confirm anything unclear.", action: "Import report", done: progress.reportClient ? `Report in for ${progress.reportClient}` : "Report imported" },
+    open: { title: progress.reportClient ? `Open ${progress.reportClient}` : "Open the client", body: "Check pacing and KPIs line by line. Each line’s Details show where every number came from.", action: progress.reportClient ? `Open ${progress.reportClient}` : "Open client", done: "Opened" }
+  };
+  document.querySelector("#welcome-steps").innerHTML = progress.steps.map((step, index) => {
+    const text = copy[step.id];
+    const state = step.done ? "done" : step.id === current ? "current" : "upcoming";
+    const blocked = step.id === "open" && !progress.reportClient;
+    return `<li class="welcome-step ${state}"${state === "current" ? ' aria-current="step"' : ""}><span class="welcome-marker">${step.done ? CHECK_ICON : index + 1}</span><div><h3>${escapeHtml(text.title)}</h3><p>${escapeHtml(step.done ? text.done : text.body)}</p></div>${step.done ? "" : `<button class="${state === "current" ? "primary-button" : "secondary-button"}" type="button" data-welcome-action="${step.id}"${blocked ? " disabled" : ""}>${escapeHtml(text.action)}</button>`}</li>`;
+  }).join("");
+  // Once a client is in, point at the two automations that save time every morning.
+  const automationReady = typeof window.showDirectoryPicker === "function";
+  document.querySelector("#welcome-next").innerHTML = mode === "welcome" ? "" : `<p class="welcome-next-label">Next, save time every morning</p><div class="welcome-next-grid"><a href="?view=automation" data-page-view="automation"><b>Morning brief</b><span>A scheduled ChatGPT scan of your email, Jira, and Slack drops to-dos here by client.</span></a><a href="?view=automation" data-page-view="automation"><b>Report folder</b><span>Watch a SharePoint folder in OneDrive and new reports come in on their own.</span></a></div><p class="welcome-note">Both run in this Chrome profile${automationReady ? "" : ", so open the dashboard in Chrome or Edge to set them up"}.</p>`;
+  document.querySelector("#welcome-note").hidden = mode !== "welcome";
+  document.querySelector("#welcome-browser").hidden = mode !== "welcome";
+  // Chrome and Edge both expose the folder picker the automations use; Safari and Firefox do not.
+  document.querySelector("#welcome-browser-warning").hidden = automationReady;
+}
+document.querySelector("#welcome").addEventListener("click", event => {
+  const action = event.target.closest("[data-welcome-action]")?.dataset.welcomeAction;
+  if (action === "io") document.querySelector("#client-io-button").click();
+  else if (action === "report") document.querySelector("#upload-button").click();
+  else if (action === "open") {
+    const progress = setupProgress({ campaigns, totals: campaignTotals, state: onboarding, isPlaceholder });
+    if (progress.reportClient) setClientScope(progress.reportClient);
+  }
+  const page = event.target.closest("[data-page-view]");
+  if (page) { event.preventDefault(); setPageView(page.dataset.pageView); }
+});
+document.querySelector("#welcome-skip").addEventListener("click", () => {
+  onboarding = writeOnboarding(localStorage, { ...onboarding, dismissed: true });
+  renderWelcome();
+});
+document.querySelector("#welcome-reopen").addEventListener("click", () => {
+  onboarding = writeOnboarding(localStorage, { ...onboarding, dismissed: false });
+  setPageView(null);
+});
+document.querySelector("#welcome-name").addEventListener("change", event => {
+  const name = event.target.value.trim();
+  try { if (name) localStorage.setItem("northstar-profile-name", name); else localStorage.removeItem("northstar-profile-name"); } catch { /* keeps the default greeting */ }
+  renderProfile();
+});
+renderWelcome();
+
+// --- Report review: what the folder automation held back, and imports with warnings, in one place ---
+const pendingImports = () => pendingImportReviews(importHistory, reviewedImports);
+function updateReviewBadge() {
+  const count = readReportInbox(localStorage).length + pendingImports().length;
+  const badge = document.querySelector("#nav-review-count");
+  badge.textContent = count;
+  badge.hidden = count === 0;
+}
+function renderReviewPage(inbox = readReportInbox(localStorage)) {
+  document.querySelector("#review-inbox-context").textContent = inbox.length ? `${inbox.length} report${inbox.length === 1 ? "" : "s"} from your folder need${inbox.length === 1 ? "s" : ""} you to pick the campaign` : "Reports from your folder that couldn’t be matched on their own";
+  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${escapeHtml(item.reason)}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
+  const activity = readReportActivity().slice(0, 8);
+  document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
+  const pending = pendingImports();
+  const clients = [...new Set(campaigns.map(record => record.client))];
+  const statusLabel = { "Imported with warnings": "Imported with warnings", "Partially imported": "Partly imported", Rejected: "Didn’t import" };
+  document.querySelector("#review-mark-all").hidden = pending.length < 2;
+  document.querySelector("#review-imports-context").textContent = pending.length ? `${pending.length} import${pending.length === 1 ? "" : "s"} to check. Mark each one reviewed once it looks right.` : "Imports that came in with warnings, came in partly, or didn’t come in";
+  document.querySelector("#review-imports").innerHTML = pending.length ? pending.map(record => {
+    const touched = importClients(record, clients);
+    const notes = [...(record.warnings || []), ...(record.errors || [])];
+    return `<li class="review-import ${record.status === "Rejected" ? "rejected" : ""}"><div class="review-import-head"><span class="report-outcome ${record.status === "Rejected" ? "failed" : "review"}">${escapeHtml(statusLabel[record.status] || record.status)}</span><b>${escapeHtml(record.fileName)}</b><time>${escapeHtml(new Date(record.importedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></div>${notes.length ? `<ul class="review-notes">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}<div class="review-import-actions">${touched.map(client => `<a class="text-button" href="?client=${encodeURIComponent(client)}" data-review-client="${escapeHtml(client)}">Open ${escapeHtml(client)}</a>`).join("")}<button class="secondary-button" type="button" data-review-done="${escapeHtml(record.id)}">Mark reviewed</button></div></li>`;
+  }).join("") : '<li class="report-inbox-empty">Nothing to check. Imports with warnings show up here.</li>';
+}
+document.querySelector("#review-page").addEventListener("click", event => {
+  const done = event.target.closest("[data-review-done]");
+  if (done) { reviewedImports = markImportsReviewed(localStorage, reviewedImports, [done.dataset.reviewDone]); renderReportAutomation(); renderDataHealth(); return; }
+  if (event.target.closest("#review-mark-all")) { reviewedImports = markImportsReviewed(localStorage, reviewedImports, pendingImports().map(record => record.id)); renderReportAutomation(); renderDataHealth(); return; }
+  const client = event.target.closest("[data-review-client]");
+  if (client) { event.preventDefault(); setClientScope(client.dataset.reviewClient); }
+});
+document.querySelector("#automation-review-link").addEventListener("click", event => { event.preventDefault(); setPageView("review"); });
+// The sidebar health card opens Report review when something needs a look.
+document.querySelector("#data-health-card").addEventListener("click", () => { if (["warning", "error"].includes(document.querySelector("#data-health-card").dataset.state)) setPageView("review"); });
+document.querySelector("#data-health-card").addEventListener("keydown", event => { if ((event.key === "Enter" || event.key === " ") && ["warning", "error"].includes(event.currentTarget.dataset.state)) { event.preventDefault(); setPageView("review"); } });
+updateReviewBadge();
