@@ -57,6 +57,7 @@ import { applySetupEdits, setupFieldsFromRow, validateSetupEdits } from "./lib/n
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
+import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 let campaigns = loadCampaigns();
 let importHistory = readImportHistory(localStorage);
@@ -180,35 +181,46 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to open its account` : "No clients have live campaigns for the current filters";
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
   const kpiText = kpis => kpis.map(kpi => `${escapeHtml(kpi.metric)} <strong>${escapeHtml(kpi.formatted)}</strong>`).join(" · ");
-  const paceText = { over: "above plan", under: "below plan", "on-track": "on track", unknown: "" };
-  // Each alert as a short sentence: what it is, which line, and the number behind it.
-  const alertLine = alert => {
-    const line = recordLineLabel(alert.campaign);
-    const where = line && line !== campaignGroupName(alert.campaign) ? line : campaignGroupName(alert.campaign);
-    return `<li class="${alert.severity}"><span class="client-alert-dot"></span><span><b>${escapeHtml(ALERT_TYPES[alert.type]?.label || alert.title)}</b> · ${escapeHtml(where)}<small>${escapeHtml(String(alert.detail).replace(/ · /g, ", "))}</small></span></li>`;
-  };
   grid.innerHTML = rollup.map(client => {
     const kpis = client.kpiMix.length ? client.kpiMix : client.kpi.formatted !== "—" ? [client.kpi] : [];
+    const open = sortTodos(todos.filter(item => item.client === client.client && isOpen(item)));
+    const urgent = open.filter(item => item.tag === "urgent").length;
+    const meta = [`${client.liveCount} campaign${client.liveCount === 1 ? "" : "s"}`, `${client.lineCount} line${client.lineCount === 1 ? "" : "s"}`, client.latestDataAsOf ? `data through ${shortDate(client.latestDataAsOf)}` : ""].filter(Boolean).join(" · ");
+    // The card answers "is this client okay?" at a glance. Campaigns, every alert, and every to-do live one click away.
+    const top = client.alerts.find(alert => alert.severity === "critical") || client.alerts[0];
+    const topLine = top ? `<p class="client-top-issue ${top.severity}"><span class="client-alert-dot"></span><span><b>${escapeHtml(ALERT_TYPES[top.type]?.label || top.title)}</b> · ${escapeHtml(recordLineLabel(top.campaign) || campaignGroupName(top.campaign))}</span></p>` : "";
+    const signals = [
+      client.alerts.length ? `<span class="client-signal ${client.alerts.some(alert => alert.severity === "critical") ? "critical" : "warning"}">${client.alerts.length} alert${client.alerts.length === 1 ? "" : "s"}</span>` : '<span class="client-signal clear">No alerts</span>',
+      open.length ? `<span class="client-signal">${open.length} to-do${open.length === 1 ? "" : "s"}${urgent ? ` · <b>${urgent} urgent</b>` : ""}</span>` : ""
+    ].join("");
     return `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
-    <div class="client-card-head"><span class="client-mark ${escapeHtml(client.className || "")}">${escapeHtml(client.short || "")}</span><span><strong>${escapeHtml(client.client)}</strong><small>${client.liveCount} live campaign${client.liveCount === 1 ? "" : "s"} · ${client.lineCount} line${client.lineCount === 1 ? "" : "s"}${client.latestDataAsOf ? ` · data through ${escapeHtml(client.latestDataAsOf)}` : ""}</small></span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></div>
-    <div class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `spent of ${formatMoney(client.budget)} budget` : "budget needed") : escapeHtml(periodText(period))}</span></div>
-    ${client.utilization === null ? "" : `<div class="progress-track"><span style="width:${Math.min(client.utilization, 100)}%"></span></div>`}
-    <div class="client-kpi-row"><span>${kpis.length ? kpiText(kpis) : "No KPI data yet"}</span></div>
-    <p class="client-section-label">Campaigns</p>
-    <ul class="client-campaigns">${client.campaigns.slice(0, 3).map(campaign => `<li><span class="client-campaign-name">${escapeHtml(campaign.name)}</span><span class="client-campaign-facts"><span class="${campaign.pacingBand}">${campaign.pacing === null ? "No pacing yet" : `${campaign.pacing.toFixed(0)}% paced${paceText[campaign.pacingBand] ? `, ${paceText[campaign.pacingBand]}` : ""}`}</span>${campaign.kpis.length ? ` · ${kpiText(campaign.kpis)}` : ""}${campaign.alertCount ? ` · <span class="warning-text">${campaign.alertCount} alert${campaign.alertCount === 1 ? "" : "s"}</span>` : ""}</span></li>`).join("")}${client.campaigns.length > 3 ? `<li class="client-more">+${client.campaigns.length - 3} more campaign${client.campaigns.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>
-    ${(() => {
-      const open = sortTodos(todos.filter(item => item.client === client.client && isOpen(item)));
-      return open.length ? `<p class="client-section-label">To-dos</p><ul class="client-todos-preview">${open.slice(0, 3).map(item => `<li><span class="todo-box"></span><span>${todoTag(item)}${escapeHtml(item.text)}${item.due ? `<small class="${item.due < todayIso() ? "overdue" : ""}">Due ${escapeHtml(shortDate(item.due))}</small>` : ""}</span></li>`).join("")}${open.length > 3 ? `<li class="client-more">+${open.length - 3} more to-do${open.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>` : "";
-    })()}
-    ${client.alerts.length ? `<p class="client-section-label">Needs attention</p><ul class="client-alerts">${client.alerts.slice(0, 2).map(alertLine).join("")}${client.alerts.length > 2 ? `<li class="client-more">+${client.alerts.length - 2} more on the Alerts page</li>` : ""}</ul>` : '<p class="client-all-clear">No alerts</p>'}
+    <span class="client-card-top"><span class="client-card-head"><span class="client-name">${escapeHtml(client.client)}</span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></span>
+    <span class="client-meta">${escapeHtml(meta)}</span></span>
+    <span class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)}` : "budget needed") : escapeHtml(periodText(period))}</span></span>
+    <span class="progress-track"${client.utilization === null ? " hidden" : ""}><span style="width:${Math.min(client.utilization ?? 0, 100)}%"></span></span>
+    <span class="client-kpi-row">${kpis.length ? kpiText(kpis) : "No KPI data yet"}</span>
+    <span class="client-card-foot">${topLine}<span class="client-signals">${signals}</span></span>
   </button>`;
   }).join("");
 }
 
+// Opening a client: the card grows into the page header and its name becomes the page title.
 document.querySelector("#client-grid").addEventListener("click", event => {
   const card = event.target.closest(".client-card");
   if (!card) return;
-  setClientScope(card.dataset.client);
+  const open = () => setClientScope(card.dataset.client);
+  if (!document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) { open(); return; }
+  const header = document.querySelector(".topbar");
+  const heading = document.querySelector("#greeting");
+  card.style.viewTransitionName = "client-open";
+  card.querySelector(".client-name").style.viewTransitionName = "client-title";
+  const transition = document.startViewTransition(() => {
+    card.style.viewTransitionName = "";
+    open();
+    header.style.viewTransitionName = "client-open";
+    heading.style.viewTransitionName = "client-title";
+  });
+  transition.finished.finally(() => { header.style.viewTransitionName = ""; heading.style.viewTransitionName = ""; });
 });
 
 // --- Client account view: ?client=Name shows only that client's campaigns, independent of the saved filters ---
@@ -2455,7 +2467,10 @@ function takeInTodos(parsed) {
   return result;
 }
 
-// --- Morning brief on the overview: deadlines, today's calendar, what needs attention, and internal items ---
+// --- Morning brief on the overview: today's meetings, then one feed of open items you can narrow to a client ---
+let briefFeedClient = "all";
+let briefFeedExpanded = false;
+const BRIEF_FEED_LIMIT = 6;
 function renderMorningBrief() {
   const panel = document.querySelector("#morning-brief");
   const show = !clientScope && !sourcesView && !alertsView && (pageView === "brief" || (!pageView && (brief || todos.some(isOpen))));
@@ -2466,18 +2481,21 @@ function renderMorningBrief() {
   const stale = brief && brief.date < today;
   document.querySelector("#morning-brief-title").textContent = brief ? `Morning brief · ${new Date(`${brief.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}` : "To-dos";
   document.querySelector("#morning-brief-context").innerHTML = brief ? `${escapeHtml(brief.sources || "Morning scan")}${brief.skipped ? ` · <span class="warning-text">${escapeHtml(brief.skipped)}</span>` : ""}${stale ? ' · <span class="warning-text">not today’s brief yet</span>' : ""}` : "Add a morning brief to see your day here";
-  const dated = open.filter(item => item.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 4);
-  document.querySelector("#morning-brief-deadlines").innerHTML = dated.map(item => `<span class="deadline-chip${item.due < today ? " overdue" : item.due === today ? " today" : ""}"><b>${item.due === today ? "Today" : escapeHtml(shortDate(item.due))}</b>${escapeHtml(item.client)} · ${escapeHtml(item.text)}</span>`).join("");
-  const itemRow = item => `<li><span class="todo-dot ${escapeHtml(item.tag || "todo")}"></span><span>${todoTag(item)}${escapeHtml(item.text)}<small>${escapeHtml(item.client)}${item.source ? ` · ${escapeHtml(item.source)}` : ""}${item.link ? ` · <a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(/browse\/([A-Z]+-\d+)/.exec(item.link)?.[1] || "Link")} ↗</a>` : ""}</small></span></li>`;
-  const attention = open.filter(item => ["urgent", "waiting"].includes(item.tag)).slice(0, 6);
   const calendar = stale ? [] : brief?.calendar || [];
-  const internal = sortTodos(todos.filter(item => item.client === INTERNAL && !item.done));
-  const others = sortTodos(todos.filter(item => item.tracked === false && !item.done));
-  document.querySelector("#morning-brief-body").innerHTML = [
-    `<div><p class="client-section-label">Calendar</p>${calendar.length ? `<ul class="brief-calendar">${calendar.map(entry => `<li><b>${escapeHtml(entry.time)}</b><span>${escapeHtml(entry.title)}</span></li>`).join("")}</ul>` : `<p class="brief-empty">${stale ? "Waiting for today’s brief" : "Nothing on the calendar today"}</p>`}</div>`,
-    `<div><p class="client-section-label">Needs attention</p>${attention.length ? `<ul class="brief-items">${attention.map(itemRow).join("")}</ul>` : '<p class="brief-empty">Nothing urgent or waiting</p>'}</div>`,
-    `<div><p class="client-section-label">${escapeHtml(INTERNAL)}${others.length ? " and other accounts" : ""}</p>${internal.length || others.length ? `<ul class="brief-items">${[...internal, ...others].slice(0, 6).map(itemRow).join("")}</ul>` : '<p class="brief-empty">Nothing internal</p>'}</div>`
-  ].join("");
+  document.querySelector("#morning-brief-calendar").innerHTML = calendar.length ? `<span class="brief-strip-label">Today</span>${calendar.map(entry => `<span class="brief-meeting"><b>${escapeHtml(entry.time)}</b>${escapeHtml(entry.title)}</span>`).join("")}` : "";
+  // The Daily brief page already lists every item by account, so the feed shows only on the overview.
+  const feedShown = pageView !== "brief";
+  for (const id of ["#morning-brief-filter", "#morning-brief-feed", "#morning-brief-more"]) document.querySelector(id).hidden = !feedShown;
+  if (!feedShown) return;
+  const counts = new Map();
+  open.forEach(item => counts.set(item.client, (counts.get(item.client) || 0) + 1));
+  if (briefFeedClient !== "all" && !counts.has(briefFeedClient)) briefFeedClient = "all";
+  const accounts = [...counts.keys()].sort((a, b) => (a === INTERNAL) - (b === INTERNAL) || a.localeCompare(b));
+  document.querySelector("#morning-brief-filter").innerHTML = open.length ? [["all", "All", open.length], ...accounts.map(account => [account, account, counts.get(account)])].map(([value, label, count]) => `<button type="button" class="brief-chip" data-brief-client="${escapeHtml(value)}" aria-pressed="${briefFeedClient === value}">${escapeHtml(label)}<span>${count}</span></button>`).join("") : "";
+  const items = open.filter(item => briefFeedClient === "all" || item.client === briefFeedClient);
+  const shown = briefFeedExpanded ? items : items.slice(0, BRIEF_FEED_LIMIT);
+  document.querySelector("#morning-brief-feed").innerHTML = shown.length ? shown.map(item => todoRowHtml(item, { showClient: briefFeedClient === "all" })).join("") : '<li class="brief-empty">Nothing open</li>';
+  document.querySelector("#morning-brief-more").innerHTML = items.length > BRIEF_FEED_LIMIT ? `<button class="text-button" type="button" data-brief-more>${briefFeedExpanded ? "Show less" : `Show all ${items.length}`}</button>` : "";
 }
 const trackedClients = () => [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].filter(client => client !== INTERNAL).sort((a, b) => a.localeCompare(b));
 
@@ -2681,7 +2699,7 @@ function renderBriefPage() {
 }
 
 // Checking, removing, and adding work the same on the client panel and the Daily brief page.
-for (const container of ["#client-todos", "#brief-page"]) {
+for (const container of ["#client-todos", "#brief-page", "#morning-brief"]) {
   document.querySelector(container).addEventListener("change", event => {
     const box = event.target.closest("[data-todo-done]");
     if (!box) return;
@@ -2693,6 +2711,9 @@ for (const container of ["#client-todos", "#brief-page"]) {
     const remove = event.target.closest("[data-todo-remove]");
     if (remove) { todos = todos.filter(item => item.id !== remove.dataset.todoRemove); saveTodos(); renderCampaigns(document.querySelector("#client-filter").value); return; }
     if (event.target.closest("[data-todo-alerts]")) { alertsFilter.client = clientScope; setAlertsView(true); return; }
+    const chip = event.target.closest("[data-brief-client]");
+    if (chip) { briefFeedClient = chip.dataset.briefClient; briefFeedExpanded = false; renderMorningBrief(); return; }
+    if (event.target.closest("[data-brief-more]")) { briefFeedExpanded = !briefFeedExpanded; renderMorningBrief(); return; }
     const page = event.target.closest("[data-page-view]");
     if (page) { event.preventDefault(); setPageView(page.dataset.pageView); return; }
     const client = event.target.closest("[data-client-link]");
@@ -3150,3 +3171,46 @@ refreshClientFilter();
 applyDashboardView(dashboardView);
 renderDataHealth();
 renderCampaigns();
+
+// --- The sky behind the dashboard: time of day always, local weather once you turn it on ---
+let sky = readSkySettings(localStorage);
+let skyCondition = sky.weather && sky.checkedAt && Date.now() - sky.checkedAt < 3 * 3600_000 ? sky.weather : "clear";
+function paintSky() {
+  document.body.dataset.skyTime = skyTime(new Date().getHours());
+  document.body.dataset.skyWeather = skyCondition;
+  const button = document.querySelector("#sky-weather");
+  button.textContent = sky.coords ? `${SKY_LABEL[skyCondition]} sky · stop` : "Match my weather";
+  button.title = sky.coords ? "Stop matching the sky to your local weather" : "Ask once for your location so the background follows your weather";
+}
+async function refreshWeather() {
+  if (!sky.coords) return;
+  try {
+    const response = await fetch(weatherUrl(sky.coords));
+    if (!response.ok) return;
+    const data = await response.json();
+    skyCondition = skyWeather(data.current?.weather_code);
+    sky = { ...sky, weather: skyCondition, checkedAt: Date.now() };
+    localStorage.setItem(SKY_KEY, JSON.stringify(sky));
+  } catch {
+    // Offline or blocked: the sky keeps its last mood.
+  }
+  paintSky();
+}
+document.querySelector("#sky-weather").addEventListener("click", () => {
+  if (sky.coords) {
+    sky = {};
+    skyCondition = "clear";
+    localStorage.removeItem(SKY_KEY);
+    paintSky();
+    return;
+  }
+  if (!navigator.geolocation) { showToast("Weather sky unavailable", "This browser can’t share a location."); return; }
+  navigator.geolocation.getCurrentPosition(position => {
+    sky = { coords: { latitude: Math.round(position.coords.latitude * 10) / 10, longitude: Math.round(position.coords.longitude * 10) / 10 } };
+    localStorage.setItem(SKY_KEY, JSON.stringify(sky));
+    refreshWeather();
+  }, () => showToast("Location not shared", "The sky will keep following the time of day."), { maximumAge: 3600_000, timeout: 15_000 });
+});
+paintSky();
+refreshWeather();
+setInterval(() => { paintSky(); if (sky.coords && Date.now() - (sky.checkedAt || 0) > 30 * 60_000) refreshWeather(); }, 5 * 60_000);
