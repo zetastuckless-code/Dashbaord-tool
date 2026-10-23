@@ -73,6 +73,20 @@
           </div>
         </header>
 
+        <section class="welcome panel" id="welcome" aria-labelledby="welcome-title" hidden>
+          <div class="welcome-head">
+            <div>
+              <h2 id="welcome-title">Welcome to Zeta Campaign Pacing</h2>
+              <p class="welcome-lede" id="welcome-lede">See each client’s pacing against the IO, line by line, built from the files you already get. Setup takes about five minutes with one client.</p>
+            </div>
+            <button class="text-button" id="welcome-skip" type="button">Skip setup</button>
+          </div>
+          <label class="welcome-name" id="welcome-name-field">What should we call you? <input id="welcome-name" autocomplete="given-name" placeholder="First name" /></label>
+          <ol class="welcome-steps" id="welcome-steps"></ol>
+          <div class="welcome-next" id="welcome-next"></div>
+          <p class="welcome-note" id="welcome-note">Your data stays in this browser. Use Backup to save a copy or move it to another computer.</p>
+        </section>
+
         <section class="data-sources" id="data-sources-page" aria-labelledby="data-sources-title" hidden>
           <div class="client-rollup-header">
             <div><h2 id="data-sources-title">Uploaded reports</h2><p id="data-sources-context">Everything behind the dashboard, by client and campaign</p></div>
@@ -173,7 +187,7 @@
           <article class="metric-card metric-card-action" id="budget-card" data-metric-detail="budget" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Active media budget. Open budget details">
             <div class="metric-heading"><span>Active media budget <em class="metric-more">Details ›</em></span></div>
             <strong class="metric-value" id="budget-value">$1.24M</strong>
-            <div class="metric-detail"><span class="positive">↗ 8.2%</span><span>vs. last period</span></div>
+            <div class="metric-detail" id="budget-detail"></div>
           </article>
           <article class="metric-card metric-card-action" id="spend-card" data-metric-detail="spend" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Spend to date. Open spend details">
             <div class="metric-heading"><span><span id="spend-metric-label">Spend to date</span> <em class="metric-more">Details ›</em></span></div>
@@ -220,6 +234,7 @@
             <h2 id="automation-title">Set up your daily automations</h2>
             <p>Two automations keep the dashboard current without any copying and pasting. The morning brief turns your Outlook, Jira, and Slack into a to-do list for each client. Report uploads bring new client reports in on their own. Work through the steps in order; each one shows a check when it is done.</p>
             <div class="automation-progress" id="automation-progress"></div>
+            <button class="text-button welcome-reopen" id="welcome-reopen" type="button" hidden>Show the getting started checklist</button>
           </div>
 
           <h3 class="automation-heading">Morning brief and to-dos</h3>

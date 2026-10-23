@@ -57,6 +57,7 @@ import { applySetupEdits, setupFieldsFromRow, validateSetupEdits } from "./lib/n
 import { computeMetrics, formatMetric, MAX_ROW_METRICS, METRIC_CATALOG, metricLabel } from "./lib/metric-catalog.js";
 import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
+import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 let campaigns = loadCampaigns();
@@ -141,6 +142,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const comparablePeriodRows = period === "current" ? activeRows : activeRows.filter(item => periodSpend(item, period) !== null);
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
+  const liveCampaignCount = new Set(activeRows.map(row => `${row.client}::${campaignGroupName(row)}`)).size;
+  document.querySelector("#budget-detail").textContent = liveCampaignCount ? `across ${liveCampaignCount} live campaign${liveCampaignCount === 1 ? "" : "s"}` : "No live campaigns yet";
   // A period no report reaches (data through Oct 12, "last 7 days" ending Oct 22) has no spend to show, not $0.
   document.querySelector("#spend-value").textContent = period !== "current" && !comparablePeriodRows.length ? "—" : formatMoney(spend);
   document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · ${periodText(period)}`;
@@ -171,6 +174,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   applySourcesView();
   applyAlertsView();
   applyPageView();
+  renderWelcome();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -231,6 +235,7 @@ function resetExpandedCampaigns() {
 }
 
 function setClientScope(name, { replace = false } = {}) {
+  if (name && !onboarding.openedClient) onboarding = writeOnboarding(localStorage, { ...onboarding, openedClient: name });
   if ((name || null) !== clientScope) resetExpandedCampaigns();
   clientScope = name || null;
   sourcesView = false;
@@ -336,6 +341,8 @@ let metricPrefs = readMetricPrefs(localStorage);
 let auditMode = false;
 try { auditMode = localStorage.getItem("northstar-audit-mode") === "on"; } catch { auditMode = false; }
 let campaignTotals = readCampaignTotals(localStorage);
+let onboarding = readOnboarding(localStorage);
+const CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 // Campaigns marked paused or completed by hand, and the order you put campaigns in (both views share it).
 let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
@@ -3130,6 +3137,7 @@ function renderAlerts(visibleCampaigns) {
   document.querySelector("#alert-count").textContent = alerts.length;
   document.querySelector("#alert-summary").innerHTML = `<span class="warning-text">${critical} critical</span><span>across ${new Set(alerts.map(alert => alert.campaign.name)).size} campaigns</span>`;
   document.querySelector("#nav-alert-count").textContent = alerts.length;
+  document.querySelector("#nav-alert-count").hidden = alerts.length === 0;
   document.querySelector("#alert-list").innerHTML = alerts.length ? alerts.slice(0, 3).map(alert => `<button class="alert-item" data-alert-id="${escapeHtml(alert.id)}" data-campaign-index="${campaigns.indexOf(alert.campaign)}" aria-label="Open ${escapeHtml(alert.campaign.name)}: ${escapeHtml(alert.title)}"><span class="alert-symbol ${alert.severity}">${alert.symbol}</span><span><strong>${escapeHtml(alert.title)}</strong><small>${escapeHtml(alert.campaign.client)} · ${escapeHtml(alert.campaign.name)}</small><em>${escapeHtml(alert.detail)}</em></span><span class="chevron">›</span></button>`).join("") : '<p class="no-alerts">No active alerts for these campaigns.</p>';
 }
 
@@ -3214,3 +3222,65 @@ document.querySelector("#sky-weather").addEventListener("click", () => {
 paintSky();
 refreshWeather();
 setInterval(() => { paintSky(); if (sky.coords && Date.now() - (sky.checkedAt || 0) > 30 * 60_000) refreshWeather(); }, 5 * 60_000);
+
+// --- Getting started: a full-page welcome on an empty workspace, then a short checklist until the first client is open ---
+function renderWelcome() {
+  const panel = document.querySelector("#welcome");
+  const progress = setupProgress({ campaigns, totals: campaignTotals, state: onboarding, isPlaceholder });
+  const onOverview = !clientScope && !sourcesView && !alertsView && !pageView;
+  const mode = progress.mode;
+  document.body.classList.toggle("first-run", mode === "welcome" && onOverview);
+  if (mode === "welcome" && onOverview) document.querySelector("#page-subtitle").textContent = "Let’s get your first client in.";
+  panel.hidden = mode === "hidden" || !onOverview;
+  panel.classList.toggle("compact", mode === "checklist");
+  document.querySelector("#welcome-reopen").hidden = !onboarding.dismissed;
+  if (panel.hidden) return;
+  const current = progress.steps.find(step => !step.done)?.id || null;
+  document.querySelector("#welcome-title").textContent = mode === "welcome" ? "Welcome to Zeta Campaign Pacing" : progress.coreDone ? "You’re set up" : `Getting started · ${progress.doneCount} of 3`;
+  document.querySelector("#welcome-lede").hidden = mode !== "welcome";
+  document.querySelector("#welcome-name-field").hidden = mode !== "welcome";
+  document.querySelector("#welcome-skip").textContent = mode === "welcome" ? "Skip setup" : progress.coreDone ? "Done" : "Hide";
+  const nameInput = document.querySelector("#welcome-name");
+  if (document.activeElement !== nameInput) { try { nameInput.value = localStorage.getItem("northstar-profile-name") || ""; } catch { nameInput.value = ""; } }
+  const client = progress.reportClient || progress.ioClient;
+  const copy = {
+    io: { title: "Upload a client’s IO", body: "Pick one live client and upload the IO PDF. The dashboard reads the budget, flights, and line items.", action: "Upload IO", done: progress.ioClient ? `IO added for ${progress.ioClient}` : "IO added" },
+    report: { title: client && progress.ioClient ? `Import ${client}’s latest report` : "Import the latest report", body: "Use the xlsx or csv linked from the Jira ticket. Report lines match to the IO on their own, and you confirm anything unclear.", action: "Import report", done: progress.reportClient ? `Report in for ${progress.reportClient}` : "Report imported" },
+    open: { title: progress.reportClient ? `Open ${progress.reportClient}` : "Open the client", body: "Check pacing and KPIs line by line. Each line’s Details show where every number came from.", action: progress.reportClient ? `Open ${progress.reportClient}` : "Open client", done: "Opened" }
+  };
+  document.querySelector("#welcome-steps").innerHTML = progress.steps.map((step, index) => {
+    const text = copy[step.id];
+    const state = step.done ? "done" : step.id === current ? "current" : "upcoming";
+    const blocked = step.id === "open" && !progress.reportClient;
+    return `<li class="welcome-step ${state}"${state === "current" ? ' aria-current="step"' : ""}><span class="welcome-marker">${step.done ? CHECK_ICON : index + 1}</span><div><h3>${escapeHtml(text.title)}</h3><p>${escapeHtml(step.done ? text.done : text.body)}</p></div>${step.done ? "" : `<button class="${state === "current" ? "primary-button" : "secondary-button"}" type="button" data-welcome-action="${step.id}"${blocked ? " disabled" : ""}>${escapeHtml(text.action)}</button>`}</li>`;
+  }).join("");
+  // Once a client is in, point at the two automations that save time every morning.
+  const automationReady = typeof window.showDirectoryPicker === "function";
+  document.querySelector("#welcome-next").innerHTML = mode === "welcome" ? "" : `<p class="welcome-next-label">Next, save time every morning</p><div class="welcome-next-grid"><a href="?view=automation" data-page-view="automation"><b>Morning brief</b><span>A scheduled ChatGPT scan of your email, Jira, and Slack drops to-dos here by client.</span></a><a href="?view=automation" data-page-view="automation"><b>Report folder</b><span>Watch a SharePoint folder in OneDrive and new reports come in on their own.</span></a></div>${automationReady ? "" : '<p class="welcome-note">These need Chrome or Edge on a computer.</p>'}`;
+  document.querySelector("#welcome-note").hidden = mode !== "welcome";
+}
+document.querySelector("#welcome").addEventListener("click", event => {
+  const action = event.target.closest("[data-welcome-action]")?.dataset.welcomeAction;
+  if (action === "io") document.querySelector("#client-io-button").click();
+  else if (action === "report") document.querySelector("#upload-button").click();
+  else if (action === "open") {
+    const progress = setupProgress({ campaigns, totals: campaignTotals, state: onboarding, isPlaceholder });
+    if (progress.reportClient) setClientScope(progress.reportClient);
+  }
+  const page = event.target.closest("[data-page-view]");
+  if (page) { event.preventDefault(); setPageView(page.dataset.pageView); }
+});
+document.querySelector("#welcome-skip").addEventListener("click", () => {
+  onboarding = writeOnboarding(localStorage, { ...onboarding, dismissed: true });
+  renderWelcome();
+});
+document.querySelector("#welcome-reopen").addEventListener("click", () => {
+  onboarding = writeOnboarding(localStorage, { ...onboarding, dismissed: false });
+  setPageView(null);
+});
+document.querySelector("#welcome-name").addEventListener("change", event => {
+  const name = event.target.value.trim();
+  try { if (name) localStorage.setItem("northstar-profile-name", name); else localStorage.removeItem("northstar-profile-name"); } catch { /* keeps the default greeting */ }
+  renderProfile();
+});
+renderWelcome();
