@@ -187,3 +187,10 @@ npm test
 ```
 
 The test suite covers quoted CSV fields, line endings, malformed quoting, missing or duplicate columns, invalid numeric data, duplicate campaign rows, atomic rejection, HTML escaping, file fingerprints, duplicate-file detection, and bounded import history.
+
+## Automations
+
+Open **Automation** in the sidebar for a step-by-step setup. Both automations use Chrome or Edge, which can read a folder on your computer once you allow it.
+
+- **Morning brief.** A scheduled ChatGPT task reads Outlook, Jira, and Slack and saves a brief in a OneDrive folder. The dashboard reads that folder and shows the brief on the Overview and the Daily brief page, with each client's to-dos. The Automation page builds the ChatGPT prompt from your details and the clients on the dashboard.
+- **Report uploads.** Add your SharePoint report folders to OneDrive with "Add shortcut to My files", then connect that folder. New or changed reports import on their own when every campaign in them matches one on the dashboard (upload each client's IO first). Reports that need a decision wait under "Review anything it couldn't place". The dashboard only reads the folder; it never moves or deletes files. It remembers which files it has seen for 180 days by default.

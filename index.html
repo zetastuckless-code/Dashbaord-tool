@@ -215,12 +215,12 @@
         <section class="automation-page" id="automation-page" aria-labelledby="automation-title" hidden>
           <div class="automation-intro panel">
             <h2 id="automation-title">Set up your daily automations</h2>
-            <p>Two automations keep the dashboard current without any copying and pasting. The morning brief turns your Outlook, Jira, and Slack into a to-do list for each client. Report uploads (coming next) will bring new client reports in on their own. Work through the steps in order; each one shows a check when it is done.</p>
+            <p>Two automations keep the dashboard current without any copying and pasting. The morning brief turns your Outlook, Jira, and Slack into a to-do list for each client. Report uploads bring new client reports in on their own. Work through the steps in order; each one shows a check when it is done.</p>
             <div class="automation-progress" id="automation-progress"></div>
           </div>
 
           <h3 class="automation-heading">Morning brief and to-dos</h3>
-          <ol class="automation-steps">
+          <ol class="automation-steps" id="brief-steps">
             <li class="automation-step" data-step="clients">
               <div class="step-head"><span class="step-status" id="step-clients-status"></span><h4>Add your clients to the dashboard</h4></div>
               <p>The brief is written per client, and the prompt you copy in step 4 lists every client on the dashboard. So add your clients first. The quickest way is to upload each client's insertion order (IO). That creates the client and its campaign.</p>
@@ -281,19 +281,40 @@
             </li>
           </ol>
 
-          <h3 class="automation-heading">Report uploads <span class="coming-next">Coming next</span></h3>
-          <div class="panel automation-coming">
-            <p>Soon the dashboard will watch a folder of client reports the same way and import new ones on its own, adding each to its campaign when the match is clear and asking you only when it isn't. Until then, import reports with <b>Import report</b> at the top of the page. The setup will look like this:</p>
-            <ol class="step-substeps">
-              <li>In SharePoint, open the folder that holds your clients' reports and click <b>Add shortcut to My files</b> (or <b>Sync</b>) so it shows up in OneDrive on your computer.</li>
-              <li>Connect that folder here, the same way as step 3.</li>
-              <li>Pick how long to keep raw report files before they're cleared (180 days to start).</li>
-            </ol>
-          </div>
+          <h3 class="automation-heading" id="report-automation-title">Report uploads</h3>
+          <ol class="automation-steps" id="report-steps">
+            <li class="automation-step" data-step="rfolder">
+              <div class="step-head"><span class="step-status" id="step-rfolder-status"></span><h4>Put your report folders in OneDrive</h4></div>
+              <p>Reports live in SharePoint, so make them show up on your computer. You don't need IT for this; it uses your own access.</p>
+              <ol class="step-substeps">
+                <li>Open the SharePoint folder that holds your clients (for example <b>ActivationPortal › Indy</b>, or one agency folder like <b>Crispin - Houston</b>). The link in a report's Jira comment takes you there.</li>
+                <li>At the top, click <b>Add shortcut to My files</b>. (If you only see <b>Sync</b>, that works too.)</li>
+                <li>Give it a minute, then check <b>Finder › OneDrive</b>. The folder shows up there with its subfolders.</li>
+              </ol>
+              <p class="step-hint">Pick the smallest folder that still holds all your clients. A whole department's tree takes longer to look through.</p>
+            </li>
+            <li class="automation-step" data-step="rconnect">
+              <div class="step-head"><span class="step-status" id="step-rconnect-status"></span><h4>Connect it to the dashboard</h4></div>
+              <p>In <b>Chrome</b> or <b>Edge</b>, click the button and pick that folder in OneDrive. The dashboard looks through it (subfolders too) when you open the dashboard, when you come back to its tab, and every 10 minutes. It only reads; it never moves or deletes your team's files.</p>
+              <p class="step-detail" id="report-connect-detail"></p>
+              <div class="step-actions"><button class="primary-button" id="report-connect-button" type="button">Connect folder…</button><button class="secondary-button" id="report-check-now" type="button" hidden>Check now</button><button class="text-button" id="report-disconnect" type="button" hidden>Disconnect</button></div>
+              <div class="report-options">
+                <label class="automation-check"><input type="checkbox" id="report-only-folders" /> Only look in folders with “Report” in the name (skips IOs, media plans, and creative)</label>
+                <label>Look at files changed in the last <input type="number" id="report-lookback" min="1" max="3650" /> days</label>
+                <label>Remember files it has seen for <input type="number" id="report-retention" min="1" max="3650" /> days</label>
+              </div>
+            </li>
+            <li class="automation-step" data-step="rreview">
+              <div class="step-head"><span class="step-status" id="step-rreview-status"></span><h4>Review anything it couldn't place</h4></div>
+              <p>A new report imports on its own when every campaign in it matches one on the dashboard. That's the same matching you see when you import by hand, so add each client's IO first. A report that needs a decision waits here. <b>Review</b> opens it in the import screen so you can pick the campaign.</p>
+              <ul class="report-inbox" id="report-inbox"></ul>
+              <details class="troubleshoot" open><summary>Recent activity</summary><ul class="report-activity" id="report-activity"></ul></details>
+            </li>
+          </ol>
         </section>
 
         <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
-          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button" id="todo-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your to-do folder">Check to-do folder</button><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
+          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button report-review-chip" id="report-review-chip" type="button" hidden></button><button class="text-button" id="report-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your report folder">Check report folder</button><button class="text-button" id="todo-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your to-do folder">Check to-do folder</button><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
           <div class="client-grid" id="client-grid"></div>
         </section>
 
