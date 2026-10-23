@@ -3256,8 +3256,11 @@ function renderWelcome() {
   }).join("");
   // Once a client is in, point at the two automations that save time every morning.
   const automationReady = typeof window.showDirectoryPicker === "function";
-  document.querySelector("#welcome-next").innerHTML = mode === "welcome" ? "" : `<p class="welcome-next-label">Next, save time every morning</p><div class="welcome-next-grid"><a href="?view=automation" data-page-view="automation"><b>Morning brief</b><span>A scheduled ChatGPT scan of your email, Jira, and Slack drops to-dos here by client.</span></a><a href="?view=automation" data-page-view="automation"><b>Report folder</b><span>Watch a SharePoint folder in OneDrive and new reports come in on their own.</span></a></div>${automationReady ? "" : '<p class="welcome-note">These need Chrome or Edge on a computer.</p>'}`;
+  document.querySelector("#welcome-next").innerHTML = mode === "welcome" ? "" : `<p class="welcome-next-label">Next, save time every morning</p><div class="welcome-next-grid"><a href="?view=automation" data-page-view="automation"><b>Morning brief</b><span>A scheduled ChatGPT scan of your email, Jira, and Slack drops to-dos here by client.</span></a><a href="?view=automation" data-page-view="automation"><b>Report folder</b><span>Watch a SharePoint folder in OneDrive and new reports come in on their own.</span></a></div><p class="welcome-note">Both run in this Chrome profile${automationReady ? "" : ", so open the dashboard in Chrome or Edge to set them up"}.</p>`;
   document.querySelector("#welcome-note").hidden = mode !== "welcome";
+  document.querySelector("#welcome-browser").hidden = mode !== "welcome";
+  // Chrome and Edge both expose the folder picker the automations use; Safari and Firefox do not.
+  document.querySelector("#welcome-browser-warning").hidden = automationReady;
 }
 document.querySelector("#welcome").addEventListener("click", event => {
   const action = event.target.closest("[data-welcome-action]")?.dataset.welcomeAction;
