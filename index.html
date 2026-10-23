@@ -20,10 +20,10 @@
         </a>
 
         <nav class="nav-list">
-          <a class="nav-item active" id="nav-overview" href="./" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
-          <a class="nav-item" href="#campaign-list"><span class="nav-icon">◫</span>Campaigns</a>
-          <a class="nav-item" id="nav-brief" href="?view=brief" data-page-view="brief"><span class="nav-icon">☑</span>Daily brief</a>
-          <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
+          <a class="nav-item active" id="nav-overview" href="./" aria-current="page"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg></span>Overview</a>
+          <a class="nav-item" href="#campaign-list"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></span>Campaigns</a>
+          <a class="nav-item" id="nav-brief" href="?view=brief" data-page-view="brief"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>Daily brief</a>
+          <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
         </nav>
 
         <p class="nav-label" id="client-nav-label" hidden>Clients</p>
@@ -31,10 +31,10 @@
 
         <p class="nav-label">Workspace</p>
         <nav class="nav-list">
-          <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon">⇧</span>Data imports</button>
-          <a class="nav-item" id="nav-sources" href="?view=sources"><span class="nav-icon">⌁</span>Data sources</a>
-          <a class="nav-item" id="nav-automation" href="?view=automation" data-page-view="automation"><span class="nav-icon">⟳</span>Automation</a>
-          <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>Settings</a>
+          <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span>Data imports</button>
+          <a class="nav-item" id="nav-sources" href="?view=sources"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>Data sources</a>
+          <a class="nav-item" id="nav-automation" href="?view=automation" data-page-view="automation"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>Automation</a>
+          <a class="nav-item" href="#settings"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>Settings</a>
         </nav>
 
         <div class="sidebar-bottom">
@@ -56,14 +56,13 @@
           <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded="false">☰</button>
           <div>
             <a class="client-back" id="client-back" href="./" hidden>← All clients</a>
-            <p class="eyebrow" id="page-eyebrow">PERFORMANCE CENTER</p>
-            <h1 id="greeting">Good morning</h1>
+                        <h1 id="greeting">Good morning</h1>
             <p class="subtitle" id="page-subtitle">Here’s how your campaigns are tracking today.</p>
           </div>
           <div class="top-actions">
             <button class="secondary-button" id="undo-action" type="button" hidden>↶ Undo</button>
-            <button class="icon-button" aria-label="Search">⌕</button>
-            <button class="icon-button notification" aria-label="Notifications">♢<span></span></button>
+            <button class="icon-button" aria-label="Search"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
+            <button class="icon-button notification" aria-label="Notifications"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg><span></span></button>
             <button class="secondary-button" id="workspace-backup-button">Backup</button>
             <button class="secondary-button" id="export-dashboard-button">Export CSV</button>
             <button class="secondary-button" id="client-io-button" type="button">Upload / revise IO</button>
@@ -170,28 +169,28 @@
 
         <section class="metric-grid" aria-label="Key performance metrics">
           <article class="metric-card metric-card-action" id="budget-card" data-metric-detail="budget" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Active media budget. Open budget details">
-            <div class="metric-heading"><span>Active media budget <em class="metric-more">Details ›</em></span><span class="metric-icon violet">$</span></div>
+            <div class="metric-heading"><span>Active media budget <em class="metric-more">Details ›</em></span></div>
             <strong class="metric-value" id="budget-value">$1.24M</strong>
             <div class="metric-detail"><span class="positive">↗ 8.2%</span><span>vs. last period</span></div>
           </article>
           <article class="metric-card metric-card-action" id="spend-card" data-metric-detail="spend" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Spend to date. Open spend details">
-            <div class="metric-heading"><span><span id="spend-metric-label">Spend to date</span> <em class="metric-more">Details ›</em></span><span class="metric-icon blue">↗</span></div>
+            <div class="metric-heading"><span><span id="spend-metric-label">Spend to date</span> <em class="metric-more">Details ›</em></span></div>
             <strong class="metric-value" id="spend-value">$684.2K</strong>
             <div class="progress-track"><span id="spend-progress" style="width:55%"></span></div>
             <div class="progress-copy"><span id="utilization-value">55.2% utilized</span><span id="remaining-value">$555.8K remaining</span></div>
           </article>
           <article class="metric-card metric-card-action" id="pacing-card" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Overall pacing. Open pacing details">
-            <div class="metric-heading"><span>Overall pacing <em class="metric-more">Details ›</em></span><span class="metric-icon green">◷</span></div>
+            <div class="metric-heading"><span>Overall pacing <em class="metric-more">Details ›</em></span></div>
             <strong class="metric-value" id="portfolio-pacing-value">—</strong>
             <div class="metric-detail"><span class="status-pill good" id="portfolio-pacing-status">On track</span><span id="portfolio-pacing-target">Target: 85–110%</span></div>
           </article>
           <article class="metric-card metric-card-action" id="kpi-card" data-metric-detail="kpi" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Primary KPI. Open KPI details">
-            <div class="metric-heading"><span><span id="portfolio-kpi-label">Primary KPI mix</span> <em class="metric-more">Details ›</em></span><span class="metric-icon violet">K</span></div>
+            <div class="metric-heading"><span><span id="portfolio-kpi-label">Primary KPI mix</span> <em class="metric-more">Details ›</em></span></div>
             <strong class="metric-value" id="portfolio-kpi-value">—</strong>
             <div class="metric-detail"><label class="kpi-card-picker">Show <select id="kpi-card-view" aria-label="KPI shown on this card"><option value="primary">Campaign primary</option><option value="CTR">CTR</option><option value="VCR">VCR</option><option value="CPA">CPA</option><option value="ROAS">ROAS</option></select></label><span id="portfolio-kpi-coverage">No KPI data</span></div>
           </article>
           <article class="metric-card alert-card metric-card-action" id="alert-card" role="button" tabindex="0" aria-label="Needs attention. Open the alerts page">
-            <div class="metric-heading"><span>Needs attention <em class="metric-more">View alerts ›</em></span><span class="metric-icon amber">!</span></div>
+            <div class="metric-heading"><span>Needs attention <em class="metric-more">View alerts ›</em></span></div>
             <strong class="metric-value" id="alert-count">4</strong>
             <div class="metric-detail" id="alert-summary"><span class="warning-text">2 critical</span><span>across 3 campaigns</span></div>
           </article>
@@ -391,7 +390,7 @@
 
     <dialog id="workspace-backup-dialog" aria-labelledby="workspace-backup-title">
       <form class="dialog-card" id="workspace-backup-form">
-        <div class="dialog-header"><div><p class="eyebrow">LOCAL WORKSPACE</p><h2 id="workspace-backup-title">Back up or restore dashboard data</h2></div><button class="close-button close-workspace-backup" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Local workspace</p><h2 id="workspace-backup-title">Back up or restore dashboard data</h2></div><button class="close-button close-workspace-backup" type="button" aria-label="Close">×</button></div>
         <p>Download campaigns, preferences, alert settings, acknowledgments, and import history as JSON. Restoring replaces the workspace saved in this browser.</p>
         <div class="workspace-backup-actions"><button class="secondary-button" id="download-workspace-backup" type="button">Download backup</button><label class="secondary-button" for="workspace-backup-input">Choose backup file</label><input id="workspace-backup-input" type="file" accept=".json,application/json" hidden /></div>
         <p class="settings-error" id="workspace-backup-error" hidden></p>
@@ -402,7 +401,7 @@
 
     <dialog id="saved-views-dialog" aria-labelledby="saved-views-title">
       <form class="dialog-card" id="saved-views-form">
-        <div class="dialog-header"><div><p class="eyebrow">DASHBOARD VIEWS</p><h2 id="saved-views-title">Save and reopen portfolio views</h2></div><button class="close-button close-saved-views" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Dashboard views</p><h2 id="saved-views-title">Save and reopen portfolio views</h2></div><button class="close-button close-saved-views" type="button" aria-label="Close">×</button></div>
         <p>Save the current filters, search, reporting period, spend source, sort, and KPI selection for quick reuse.</p>
         <div class="saved-view-create"><input id="saved-view-name" maxlength="60" placeholder="View name, e.g. Apex pacing review" /><button class="primary-button" type="submit">Save current view</button></div>
         <p class="settings-error" id="saved-view-error" hidden></p>
@@ -413,7 +412,7 @@
 
     <dialog id="upload-dialog" aria-labelledby="upload-title">
       <form method="dialog" class="dialog-card">
-        <div class="dialog-header"><div><p class="eyebrow">DATA IMPORT</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Data import</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Choose where the report goes, then the report itself. It is validated before any data is added to the dashboard, and your existing data stays unchanged until you confirm.</p>
         <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
         <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
@@ -439,7 +438,7 @@
 
     <dialog id="pacing-dialog" aria-labelledby="pacing-dialog-title">
       <form method="dialog" class="dialog-card pacing-detail-card">
-        <div class="dialog-header"><div><p class="eyebrow" id="pacing-dialog-eyebrow">PACING DETAILS</p><h2 id="pacing-dialog-title">Overall pacing</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow" id="pacing-dialog-eyebrow">Pacing details</p><h2 id="pacing-dialog-title">Overall pacing</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <div class="pacing-stats" id="pacing-stats"></div>
         <section class="pacing-chart-section" aria-labelledby="pacing-chart-title">
           <div class="detail-section-heading"><h3 id="pacing-chart-title">Daily spend vs. a 100% pace</h3><small id="pacing-chart-context"></small></div>
@@ -462,7 +461,7 @@
 
     <dialog id="todo-dialog" aria-labelledby="todo-dialog-title">
       <form method="dialog" class="dialog-card todo-dialog-card">
-        <div class="dialog-header"><div><p class="eyebrow">MORNING SCAN</p><h2 id="todo-dialog-title">Add a morning brief or to-dos</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Morning scan</p><h2 id="todo-dialog-title">Add a morning brief or to-dos</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Paste the morning brief from your scheduled ChatGPT task, or choose the file it saved. A brief replaces the last brief’s open items, so anything resolved drops off. Items you added or checked off stay.</p>
         <div class="todo-dialog-tools"><button class="text-button" id="todo-copy-prompt" type="button">Copy ChatGPT prompt</button><button class="text-button" id="todo-download-template" type="button">Download template</button><label class="text-button todo-file-label">Choose file…<input type="file" id="todo-file" accept=".md,.txt,.csv,text/plain,text/markdown,text/csv" hidden /></label></div>
         <textarea id="todo-text" rows="10" placeholder="# Morning brief · 2026-10-24&#10;Sources: Outlook + Jira&#10;&#10;## Nature's Sunshine&#10;- [ ] Send the October ROAS recap | tag: urgent | due: 2026-10-24 | from: Email from Kelley · Today 9:15 AM" aria-label="To-do checklist"></textarea>
@@ -477,7 +476,7 @@
 
     <dialog id="metric-dialog" aria-labelledby="metric-dialog-title">
       <form method="dialog" class="dialog-card pacing-detail-card">
-        <div class="dialog-header"><div><p class="eyebrow" id="metric-dialog-eyebrow">DETAILS</p><h2 id="metric-dialog-title">Details</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow" id="metric-dialog-eyebrow">Details</p><h2 id="metric-dialog-title">Details</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <div class="metric-dialog-controls" id="metric-dialog-controls"></div>
         <div class="pacing-stats" id="metric-stats"></div>
         <section class="pacing-table-section" aria-labelledby="metric-table-title">
@@ -494,7 +493,7 @@
 
     <dialog id="import-audit-dialog" aria-labelledby="import-audit-title">
       <form method="dialog" class="dialog-card import-audit-card">
-        <div class="dialog-header"><div><p class="eyebrow">IMPORT AUDIT</p><h2 id="import-audit-title">Report processing history</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Import audit</p><h2 id="import-audit-title">Report processing history</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <div class="import-audit-summary" id="import-audit-summary"></div>
         <div class="import-audit-controls"><input id="import-audit-search" type="search" placeholder="Search file, issue, or fingerprint" /><select id="import-audit-status"><option value="all">All statuses</option><option value="successful">Successful</option><option value="attention">Needs attention</option><option value="historical">Historical</option></select></div>
         <div class="import-audit-list" id="import-audit-list"></div>
@@ -504,7 +503,7 @@
 
     <dialog id="alert-dialog" aria-labelledby="alert-settings-title">
       <form class="dialog-card" id="alert-settings-form">
-        <div class="dialog-header"><div><p class="eyebrow">ALERT RULES</p><h2 id="alert-settings-title">Configure monitoring thresholds</h2></div><button class="close-button close-alert-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Alert rules</p><h2 id="alert-settings-title">Configure monitoring thresholds</h2></div><button class="close-button close-alert-dialog" type="button" aria-label="Close">×</button></div>
         <p>These rules apply to the campaign portfolio and update alerts immediately.</p>
         <div class="settings-grid alert-settings-grid">
           <label>Underpacing below<input id="under-pacing-input" type="number" min="0" max="99.9" step="0.1" required /><span>%</span></label>
@@ -523,7 +522,7 @@
 
     <dialog id="bulk-edit-dialog" aria-labelledby="bulk-edit-title">
       <form class="dialog-card" id="bulk-edit-form" method="dialog">
-        <div class="dialog-header"><div><p class="eyebrow" id="bulk-edit-eyebrow">BULK EDIT</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow" id="bulk-edit-eyebrow">Bulk edit</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
         <fieldset class="bulk-edit-group" id="bulk-edit-lines"><legend>Report lines</legend><div class="settings-grid">
           <label>Owner<input id="bulk-owner" autocomplete="off" /></label><label id="bulk-channel-label">Channel<input id="bulk-channel" autocomplete="off" /></label>
           <label>Primary KPI<input id="bulk-kpi" autocomplete="off" placeholder="CTR" list="kpi-options" /><datalist id="kpi-options"><option value="CTR"></option><option value="CPA"></option><option value="ROAS"></option><option value="VCR"></option><option value="CPM"></option><option value="CPC"></option><option value="ACR"></option></datalist></label><label>KPI target<input id="bulk-target" autocomplete="off" placeholder="0.25%" /></label>
@@ -541,7 +540,7 @@
 
     <dialog id="io-review-dialog" aria-labelledby="io-review-title">
       <form class="dialog-card io-review-card" id="io-review-form" method="dialog">
-        <div class="dialog-header"><div><p class="eyebrow" id="io-review-eyebrow">INSERTION ORDER</p><h2 id="io-review-title">Review insertion order</h2><p id="io-review-subtitle"></p></div><button class="close-button close-io-review" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow" id="io-review-eyebrow">Insertion order</p><h2 id="io-review-title">Review insertion order</h2><p id="io-review-subtitle"></p></div><button class="close-button close-io-review" type="button" aria-label="Close">×</button></div>
         <div class="source-summary component-summary io-review-facts" id="io-review-facts"></div>
         <ul class="io-review-warnings" id="io-review-warnings" hidden></ul>
         <label class="io-review-target">Campaign<select id="io-review-target"></select></label>
@@ -559,7 +558,7 @@
 
     <dialog id="metric-picker-dialog" aria-labelledby="metric-picker-title">
       <form class="dialog-card" id="metric-picker-form" method="dialog">
-        <div class="dialog-header"><div><p class="eyebrow">CUSTOMIZE VIEW</p><h2 id="metric-picker-title">Choose metrics</h2><p id="metric-picker-subtitle"></p></div><button class="close-button close-metric-picker" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Customize view</p><h2 id="metric-picker-title">Choose metrics</h2><p id="metric-picker-subtitle"></p></div><button class="close-button close-metric-picker" type="button" aria-label="Close">×</button></div>
         <p class="settings-note" id="metric-picker-count"></p>
         <p class="settings-note">Drag a metric (or use the arrows) to set its order. You can also drag metrics directly on a campaign row.</p>
         <div class="metric-picker-grid" id="metric-picker-grid"></div>
@@ -570,7 +569,7 @@
 
     <dialog id="campaign-dialog" aria-labelledby="campaign-settings-title">
       <form class="dialog-card campaign-settings-card" id="campaign-settings-form">
-        <div class="dialog-header"><div><p class="eyebrow">CAMPAIGN SETTINGS</p><h2 id="campaign-settings-title">Edit dashboard display</h2><p id="campaign-dialog-client"></p></div><button class="close-button close-campaign-dialog" type="button" aria-label="Close">×</button></div>
+        <div class="dialog-header"><div><p class="eyebrow">Campaign settings</p><h2 id="campaign-settings-title">Edit dashboard display</h2><p id="campaign-dialog-client"></p></div><button class="close-button close-campaign-dialog" type="button" aria-label="Close">×</button></div>
         <div class="source-summary">
           <div><span>1st-party spend</span><strong id="detail-first-spend">—</strong></div>
           <div><span>3rd-party spend</span><strong id="detail-third-spend">—</strong></div>
