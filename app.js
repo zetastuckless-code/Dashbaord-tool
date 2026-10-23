@@ -60,6 +60,9 @@ import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetri
 import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { applyDcmTopUps, applyDelivery, DELIVERY_SOURCES, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import writeExcelFile from "write-excel-file/universal";
+import readXlsxFile, { readSheetNames } from "read-excel-file";
+import { attachLineDays, billingFileName, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 let campaigns = applyDcmTopUps(loadCampaigns());
@@ -71,7 +74,7 @@ if (sourcesView) clientScope = null;
 let alertsView = new URLSearchParams(location.search).get("view") === "alerts";
 if (alertsView) clientScope = null;
 // Full pages reached from the sidebar: the daily brief and the automation setup guide.
-const PAGE_VIEWS = ["brief", "automation", "review"];
+const PAGE_VIEWS = ["brief", "automation", "review", "billing"];
 // The "new campaign" choice shared by the IO and report dialogs.
 const NEW_CAMPAIGN = "__new";
 let pageView = PAGE_VIEWS.includes(new URLSearchParams(location.search).get("view")) ? new URLSearchParams(location.search).get("view") : null;
@@ -180,6 +183,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientIo();
   renderClientDocuments();
   renderClientTodos();
+  renderClientBilling();
+  updateBillingReminder();
   renderMorningBrief();
   applySourcesView();
   applyAlertsView();
@@ -358,6 +363,7 @@ try { auditMode = localStorage.getItem("northstar-audit-mode") === "on"; } catch
 let campaignTotals = readCampaignTotals(localStorage);
 let onboarding = readOnboarding(localStorage);
 let reviewedImports = readReviewedImports(localStorage);
+let billing = readBilling(localStorage);
 let thirdPartyLinks = readThirdPartyLinks(localStorage);
 const SKIP_DELIVERY = "__skip";
 const SHORT_SOURCE = { CM360: "DCM", DSP: "DSP" };
@@ -2733,14 +2739,16 @@ function applyPageView() {
   document.querySelector("#brief-page").hidden = pageView !== "brief";
   document.querySelector("#automation-page").hidden = pageView !== "automation";
   document.querySelector("#review-page").hidden = pageView !== "review";
+  document.querySelector("#billing-page").hidden = pageView !== "billing";
   if (!pageView) return;
   document.querySelector("#client-back").hidden = true;
-  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review" };
-  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look." };
+  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review", billing: "Billing" };
+  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look.", billing: "Monthly billing for each client, filled from DCM and DSP." };
   document.querySelector("#greeting").textContent = titles[pageView];
   document.querySelector("#page-subtitle").textContent = subtitles[pageView];
   document.title = `Zeta | ${titles[pageView]}`;
   if (pageView === "brief") renderBriefPage();
+  else if (pageView === "billing") renderBillingPage();
   else if (pageView === "automation") { renderAutomationPage(); renderReportAutomation(); }
   else renderReportAutomation();
 }
@@ -3560,3 +3568,193 @@ document.querySelector("#dcm-remove").addEventListener("click", () => {
   renderDcmComparison(campaigns[activeCampaignIndex]);
   renderCampaigns();
 });
+
+// --- Billing: each client's rows set up once (or read from last month's file), filled each month from DCM and DSP ---
+function clientLines(client) { return campaigns.filter(record => record.client === client && !isCampaignArchived(record) && !isPlaceholder(record)); }
+function lineLabelText(record) { return record.name; }
+function saveBilling() { billing = writeBilling(localStorage, billing); }
+function billingConfig(client) { return (billing[client] ||= { agency: "", advertiser: client, currency: "USD", periodMode: "month", periods: [], rows: [], history: {} }); }
+function newRowId() { return `row-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`; }
+/** The source a row most likely bills from: the DSP when its lines have DSP days, else DCM, else the client's report. */
+const defaultSource = lines => lines.some(line => Object.keys(line.thirdPartyDelivery?.DSP || {}).length) ? "DSP" : lines.some(line => Object.keys(line.thirdPartyDelivery?.CM360 || {}).length) ? "CM360" : "report";
+const nameWords = text => new Set(String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 2 && !["zeta", "the", "and", "campaign", "2025", "2026", "2027"].includes(word)));
+/** Dashboard lines a billing row names: those sharing the most words with its line and campaign names, else all of them. */
+function guessLines(row, lines) {
+  const words = new Set([...nameWords(row.lineName), ...nameWords(row.campaignName)]);
+  const scored = lines.map(line => [line, [...nameWords(line.name)].filter(word => words.has(word)).length]);
+  const best = Math.max(0, ...scored.map(([, score]) => score));
+  return (best ? scored.filter(([, score]) => score === best).map(([line]) => line) : lines).map(line => line.name);
+}
+
+function renderClientBilling() {
+  const panel = document.querySelector("#client-billing");
+  panel.hidden = !clientScope;
+  if (!clientScope) return;
+  const config = billingConfig(clientScope);
+  const lines = clientLines(clientScope);
+  document.querySelector("#billing-client-fields").innerHTML = `
+    <label>Agency<input data-billing-client="agency" value="${escapeHtml(config.agency || "")}" placeholder="Agency name from the IO" /></label>
+    <label>Advertiser<input data-billing-client="advertiser" value="${escapeHtml(config.advertiser || "")}" /></label>
+    <label>Currency<input data-billing-client="currency" value="${escapeHtml(config.currency || "USD")}" /></label>
+    <label>Billing periods<select data-billing-client="periodMode"><option value="month"${config.periodMode !== "custom" ? " selected" : ""}>Calendar months</option><option value="custom"${config.periodMode === "custom" ? " selected" : ""}>Custom periods</option></select></label>
+    ${config.periodMode === "custom" ? `<label class="billing-periods">Periods, one per line<textarea data-billing-client="periods" rows="3" placeholder="08/30/2026 - 09/26/2026">${escapeHtml((config.periods || []).map(period => `${period.from.slice(5, 7)}/${period.from.slice(8)}/${period.from.slice(0, 4)} - ${period.to.slice(5, 7)}/${period.to.slice(8)}/${period.to.slice(0, 4)}`).join("\n"))}</textarea></label>` : ""}`;
+  const option = (value, label, selected) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  document.querySelector("#billing-rows").innerHTML = config.rows.length ? config.rows.map((row, index) => `<div class="billing-row" data-billing-row="${escapeHtml(row.id)}">
+      <div class="billing-row-head"><b>Row ${index + 1}</b><button class="text-button danger-text" type="button" data-billing-remove="${escapeHtml(row.id)}">Remove</button></div>
+      <div class="billing-row-fields">
+        <label class="wide">Campaign name<input data-billing-field="campaignName" value="${escapeHtml(row.campaignName || "")}" /></label>
+        <label class="wide">Line item name<input data-billing-field="lineName" value="${escapeHtml(row.lineName || "")}" /></label>
+        <label>Salesforce ID<input data-billing-field="sfid" value="${escapeHtml(row.sfid || "")}" /></label>
+        <label>PO #<input data-billing-field="po" value="${escapeHtml(row.po || "")}" /></label>
+        <label>Numbers from<select data-billing-field="source">${Object.entries(BILLING_SOURCES).map(([value, label]) => option(value, label, row.source)).join("")}</select></label>
+        <label>Billed as<select data-billing-field="rateType">${Object.entries(RATE_TYPES).map(([value, label]) => option(value, label, row.rateType)).join("")}</select></label>
+        <label>${row.rateType === "flat" ? "Fee" : row.rateType === "spend" ? "IO rate (shown only)" : "Rate"}<input data-billing-field="rate" inputmode="decimal" value="${escapeHtml(String(row.rate ?? ""))}" /></label>
+        <label>Discount %<input data-billing-field="discount" inputmode="decimal" value="${escapeHtml(String(row.discount || ""))}" placeholder="0" /></label>
+        <label class="wide">Note<input data-billing-field="note" value="${escapeHtml(row.note || "")}" /></label>
+      </div>
+      <fieldset class="billing-lines"><legend>Dashboard lines in this row</legend>${lines.map(line => `<label><input type="checkbox" data-billing-line="${escapeHtml(line.name)}"${(row.lines || []).includes(line.name) ? " checked" : ""} /> ${escapeHtml(lineLabelText(line))}</label>`).join("") || "<small>No lines on the dashboard yet.</small>"}</fieldset>
+    </div>`).join("") : '<p class="billing-empty">No billing rows yet. Fill them from last month’s billing file, or add a row.</p>';
+  renderBillingPreview();
+}
+
+function billingResult(client, month) {
+  const config = billingConfig(client);
+  return attachLineDays(computeClientBilling(config, clientLines(client), month), clientLines(client));
+}
+function moneyText(value) { return formatExactMoney(value); }
+function dayList(days) { return days.length > 4 ? `${shortDate(days[0])} to ${shortDate(days.at(-1))} (${days.length} days)` : days.map(shortDate).join(", "); }
+function billingStatusText(result) {
+  if (!result.rows.length) return "Not set up";
+  if (result.unavailable.length) return `Needs data: ${result.unavailable.join(", ")} has no numbers for these dates`;
+  if (result.missingDays.length) return `Missing ${dayList(result.missingDays)}`;
+  return "Ready";
+}
+function renderBillingPreview() {
+  if (!clientScope) return;
+  const month = previousMonth();
+  const result = billingResult(clientScope, month);
+  const config = billingConfig(clientScope);
+  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `<div class="billing-preview-head"><b>${escapeHtml(monthLabel(month))}</b><span class="billing-status ${result.ready ? "ready" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(clientScope)}" data-billing-month="${month}">Download</button></div><table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}</td></tr>`).join("")}</tbody></table>${config.history?.[month] ? `<p class="billing-note">Downloaded ${escapeHtml(new Date(config.history[month].downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}.</p>` : ""}` : "";
+}
+
+document.querySelector("#client-billing").addEventListener("change", event => {
+  if (!clientScope) return;
+  const config = billingConfig(clientScope);
+  const clientField = event.target.closest("[data-billing-client]");
+  if (clientField) {
+    const key = clientField.dataset.billingClient;
+    if (key === "periods") {
+      config.periods = clientField.value.split(/\n+/).map(text => text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/)).filter(Boolean).map(match => ({ from: `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}`, to: `${match[6]}-${match[4].padStart(2, "0")}-${match[5].padStart(2, "0")}` }));
+    } else config[key] = clientField.value;
+    saveBilling();
+    if (key === "periodMode") renderClientBilling(); else renderBillingPreview();
+    return;
+  }
+  const rowElement = event.target.closest("[data-billing-row]");
+  if (!rowElement) return;
+  const row = config.rows.find(item => item.id === rowElement.dataset.billingRow);
+  if (!row) return;
+  const field = event.target.closest("[data-billing-field]");
+  const lineBox = event.target.closest("[data-billing-line]");
+  if (field) row[field.dataset.billingField] = ["rate", "discount"].includes(field.dataset.billingField) ? field.value.trim() : field.value;
+  if (lineBox) row.lines = lineBox.checked ? [...new Set([...(row.lines || []), lineBox.dataset.billingLine])] : (row.lines || []).filter(name => name !== lineBox.dataset.billingLine);
+  saveBilling();
+  if (field?.dataset.billingField === "rateType") renderClientBilling(); else renderBillingPreview();
+});
+document.querySelector("#client-billing").addEventListener("click", event => {
+  const remove = event.target.closest("[data-billing-remove]");
+  if (remove && clientScope) {
+    const config = billingConfig(clientScope);
+    config.rows = config.rows.filter(row => row.id !== remove.dataset.billingRemove);
+    saveBilling();
+    renderClientBilling();
+  }
+});
+document.querySelector("#billing-add-row").addEventListener("click", () => {
+  if (!clientScope) return;
+  const lines = clientLines(clientScope);
+  billingConfig(clientScope).rows.push({ id: newRowId(), campaignName: "", lineName: "", sfid: "", po: "", source: defaultSource(lines), rateType: "cpm", rate: "", discount: "", note: "", lines: lines.map(line => line.name) });
+  saveBilling();
+  renderClientBilling();
+});
+document.querySelector("#billing-template-input").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (!file || !clientScope) return;
+  try {
+    const names = await readSheetNames(file);
+    const sheet = names.find(name => /final billing/i.test(name)) || names[0];
+    const parsed = parseBillingSheet(await readXlsxFile(file, { sheet }));
+    if (!parsed?.rows.length) { showToast("No billing rows found", "Look for a Final Billing tab with a Customer / Agency header row."); return; }
+    const config = billingConfig(clientScope);
+    const lines = clientLines(clientScope);
+    config.agency = parsed.agency || config.agency;
+    config.advertiser = parsed.advertiser || config.advertiser;
+    config.currency = parsed.currency || config.currency;
+    if (parsed.periods.length) { config.periodMode = "custom"; config.periods = parsed.periods; }
+    config.rows = parsed.rows.map(row => {
+      const matched = guessLines(row, lines);
+      return { id: newRowId(), ...row, source: defaultSource(lines.filter(line => matched.includes(line.name))), lines: matched };
+    });
+    saveBilling();
+    renderClientBilling();
+    showToast("Billing set up", `${parsed.rows.length} row${parsed.rows.length === 1 ? "" : "s"} read from ${file.name}. Check each row’s lines and source.`);
+  } catch (error) {
+    showToast("Couldn't read that file", error.message);
+  }
+});
+
+async function downloadBilling(client, month) {
+  const config = billingConfig(client);
+  const result = billingResult(client, month);
+  if (!result.rows.length) return;
+  const blob = await writeExcelFile(billingSheets(config, result, client)).toBlob();
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement("a"), { href: url, download: billingFileName(config, client, month) });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  config.history = { ...(config.history || {}), [month]: { from: result.window.from, to: result.window.to, downloadedAt: new Date().toISOString(), total: result.total } };
+  saveBilling();
+  renderClientBilling();
+  if (pageView === "billing") renderBillingPage();
+  updateBillingReminder();
+}
+document.addEventListener("click", event => {
+  const button = event.target.closest("[data-billing-download]");
+  if (button) downloadBilling(button.dataset.billingDownload, button.dataset.billingMonth);
+});
+
+function billedClients() { return [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].sort((a, b) => a.localeCompare(b)); }
+function renderBillingPage() {
+  const select = document.querySelector("#billing-month");
+  const months = Array.from({ length: 12 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - index + 1, 1))));
+  const chosen = select.value || months[1] || months[0];
+  select.innerHTML = months.map(month => `<option value="${month}"${month === chosen ? " selected" : ""}>${escapeHtml(monthLabel(month))}</option>`).join("");
+  const month = select.value;
+  const items = billedClients().map(client => ({ client, result: billingResult(client, month), config: billing[client] }));
+  const ready = items.filter(item => item.result.ready);
+  document.querySelector("#billing-page-context").textContent = `${ready.length} of ${items.length} client${items.length === 1 ? "" : "s"} ready for ${monthLabel(month)} · ${moneyText(ready.reduce((sum, item) => sum + item.result.total, 0))} ready to bill`;
+  document.querySelector("#billing-list").innerHTML = items.map(({ client, result, config }) => {
+    const downloaded = config?.history?.[month];
+    return `<li><span class="billing-client"><b>${escapeHtml(client)}</b><small class="billing-status ${!result.rows.length ? "" : result.ready ? "ready" : "warn"}">${escapeHtml(billingStatusText(result))}${downloaded ? ` · downloaded ${escapeHtml(new Date(downloaded.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</small></span><strong>${result.rows.length ? moneyText(result.total) : ""}</strong><span class="billing-actions">${result.rows.length ? `<button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button>` : ""}<a class="text-button" href="?client=${encodeURIComponent(client)}" data-billing-setup="${escapeHtml(client)}">${result.rows.length ? "Edit setup" : "Set up"}</a></span></li>`;
+  }).join("") || '<li class="billing-empty">No clients yet.</li>';
+}
+document.querySelector("#billing-month").addEventListener("change", renderBillingPage);
+document.querySelector("#billing-list").addEventListener("click", event => {
+  const setup = event.target.closest("[data-billing-setup]");
+  if (!setup) return;
+  event.preventDefault();
+  setClientScope(setup.dataset.billingSetup);
+  setTimeout(() => document.querySelector("#client-billing").scrollIntoView({ block: "start" }), 50);
+});
+
+/** From the 1st, the sidebar counts set-up clients whose last month hasn't been downloaded. */
+function updateBillingReminder() {
+  const month = previousMonth();
+  const due = Object.entries(billing).filter(([client, config]) => config.rows?.length && !config.history?.[month] && campaigns.some(record => record.client === client)).length;
+  const badge = document.querySelector("#nav-billing-count");
+  badge.textContent = due;
+  badge.hidden = due === 0;
+  badge.title = due ? `${monthLabel(month)} billing to download for ${due} client${due === 1 ? "" : "s"}` : "";
+}
+updateBillingReminder();

@@ -462,3 +462,33 @@ body.review-view .main-content>:not(.topbar):not(#review-page){display:none!impo
 .dcm-topup[hidden]{display:none}.dcm-topup{margin:0 0 10px;padding:10px 12px;border-radius:8px;background:#f4f7fd;font-size:12px;line-height:1.5;color:#30384b}
 .dcm-through{color:#596273;font-weight:500}
 .dcm-source{margin:12px 0 4px;font:700 12px Manrope,sans-serif;color:var(--ink)}.dcm-source:first-child{margin-top:0}
+
+/* Billing: the client's setup on its tab, and the monthly list on the Billing page */
+body.billing-view .main-content>:not(.topbar):not(#billing-page){display:none!important}
+.billing-page[hidden],.client-billing[hidden]{display:none}.billing-page{max-width:980px;margin-bottom:24px}.client-billing{margin:0 0 20px}
+.file-button{display:inline-flex;align-items:center;cursor:pointer}
+.billing-client-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 14px;padding:0 20px 14px}
+.billing-client-fields label,.billing-row-fields label{display:grid;gap:4px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.billing-client-fields input,.billing-client-fields select,.billing-client-fields textarea,.billing-row-fields input,.billing-row-fields select{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font:500 13px "DM Sans";color:var(--ink);text-transform:none;letter-spacing:0}
+.billing-client-fields textarea{height:auto;padding:8px 10px;resize:vertical}
+.billing-periods{grid-column:1/-1}
+.billing-rows{display:grid;gap:10px;padding:0 20px}
+.billing-row{padding:12px 14px;border:1px solid #eceef3;border-radius:10px;background:#fcfcfe}
+.billing-row-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px}
+.danger-text{color:#a8384a}
+.billing-row-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px}.billing-row-fields .wide{grid-column:span 2}
+.billing-lines{margin:10px 0 0;padding:8px 0 0;border:0;border-top:1px solid #eff0f4;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:#30384b}.billing-lines legend{padding:0;margin-bottom:4px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.billing-lines label{display:inline-flex;gap:6px;align-items:center}.billing-lines input{accent-color:var(--primary)}
+.billing-empty{margin:0;padding:6px 0 4px;font-size:13px;color:var(--muted)}
+.billing-preview{padding:14px 20px 18px}.billing-preview:empty{display:none}
+.billing-preview-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-bottom:8px;font-size:13px}.billing-preview-head strong{margin-left:auto;font:750 18px Manrope,sans-serif;font-variant-numeric:tabular-nums}.billing-preview-head .secondary-button{height:34px}
+.billing-status{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:#f1f2f6;color:#454e60;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0}.billing-status.ready{background:#eaf8f3;color:#136c4e}.billing-status.warn{background:#fff3e5;color:#8a5516}
+.billing-table{width:100%;min-width:0;border-collapse:collapse;font-size:12px}.billing-table th{background:none;border:0;border-bottom:1px solid #eceef2;padding:6px 8px;text-align:left}.billing-table td{padding:8px;border-bottom:1px solid #f0f1f5;font-variant-numeric:tabular-nums}.billing-table td small{display:block;color:var(--muted);font-size:11px}.billing-table th:nth-child(n+3),.billing-table td:nth-child(n+3){text-align:right}
+.billing-note{margin:8px 0 0;font-size:12px;color:var(--muted)}
+.billing-month{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#454e60}.billing-month select{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font:600 13px "DM Sans"}
+.billing-list{list-style:none;margin:0;padding:0 20px 18px;display:grid}
+.billing-list li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:16px;padding:12px 0;border-top:1px solid #f0f1f5}
+.billing-client{display:grid;gap:4px;min-width:0}.billing-client b{font-size:14px}.billing-client .billing-status{justify-self:start}
+.billing-list strong{font:750 15px Manrope,sans-serif;font-variant-numeric:tabular-nums}
+.billing-actions{display:flex;align-items:center;gap:12px}.billing-actions .secondary-button{height:34px}
+@media(max-width:900px){.billing-client-fields,.billing-row-fields{grid-template-columns:1fr 1fr}.billing-list li{grid-template-columns:1fr}}
