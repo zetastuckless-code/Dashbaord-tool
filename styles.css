@@ -329,7 +329,6 @@ body[data-sky-weather=snow] .sky-precip{opacity:.9;background-image:radial-gradi
 @keyframes sky-rain{to{background-position:-30px 140px}}
 @keyframes sky-snow{to{background-position:40px 120px,-20px 90px}}
 @media(prefers-reduced-motion:reduce){.sky-glow,.sky-cloud,.sky-precip{animation:none}}
-.sky-toggle{display:block;width:calc(100% - 6px);margin:0 3px 10px;padding:8px 10px;border:1px solid #33354a;border-radius:8px;background:transparent;color:#b9bdcc;font:600 12px "DM Sans";text-align:left;cursor:pointer}.sky-toggle:hover{background:#25263b;color:#fff}
 
 /* Client cards: name first, the money and pacing, then one line on what needs you. Details are a click away. */
 .client-grid{align-items:stretch}
@@ -496,3 +495,15 @@ body.billing-view .main-content>:not(.topbar):not(#billing-page){display:none!im
 /* KPI watcher card and its dialog */
 .kpi-watch-detail{display:grid;gap:3px;align-items:start}.kpi-watch-detail b{font-weight:700}
 .kpi-watch-worst{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* Settings: one page, grouped into short sections of label, explanation, and the control or link */
+body.settings-view .main-content>:not(.topbar):not(#settings-page){display:none!important}
+.settings-page[hidden]{display:none}.settings-page{display:grid;gap:14px;max-width:880px;margin-bottom:24px}
+.settings-rows{display:grid;padding:0 20px 8px}
+.settings-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;padding:12px 0;border-top:1px solid #f0f1f5}
+.settings-row:first-child{border-top:0;padding-top:4px}
+.settings-row b{display:block;font-size:13px;color:var(--ink)}.settings-row small{display:block;margin-top:3px;max-width:62ch;font-size:12px;line-height:1.45;color:var(--muted)}
+.settings-row .secondary-button{height:34px;display:inline-flex;align-items:center;white-space:nowrap;text-decoration:none}
+.settings-row input{height:34px;width:220px;padding:0 10px;border:1px solid var(--line);border-radius:8px;font:500 13px "DM Sans";color:var(--ink)}
+.settings-row input:focus{border-color:#a99ff5;outline:none;box-shadow:0 0 0 3px rgba(99,87,229,.15)}
+@media(max-width:700px){.settings-row{grid-template-columns:1fr}.settings-row input{width:100%}}

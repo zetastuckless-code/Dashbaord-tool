@@ -37,11 +37,10 @@
           <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span>Data imports</button>
           <a class="nav-item" id="nav-sources" href="?view=sources"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>Data sources</a>
           <a class="nav-item" id="nav-automation" href="?view=automation" data-page-view="automation"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>Automation</a>
-          <a class="nav-item" href="#settings"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>Settings</a>
+          <a class="nav-item" id="nav-settings" href="?view=settings" data-page-view="settings"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>Settings</a>
         </nav>
 
         <div class="sidebar-bottom">
-          <button class="sky-toggle" id="sky-weather" type="button">Match my weather</button>
           <div class="health-card" id="data-health-card" data-state="empty">
             <div class="health-title"><span class="status-dot"></span><span id="data-health-title">No data yet</span></div>
             <p id="data-health-detail">Import a report to begin</p>
@@ -50,7 +49,7 @@
           <div class="user-card">
             <span class="avatar" id="profile-avatar">?</span>
             <span><strong id="profile-name">Your name</strong><small>Campaign manager</small></span>
-            <button id="edit-profile" aria-label="Edit display name" title="Edit display name">•••</button>
+            <button id="edit-profile" aria-label="Open settings" title="Settings">•••</button>
           </div>
         </div>
       </aside>
@@ -67,8 +66,6 @@
             <button class="secondary-button" id="undo-action" type="button" hidden>↶ Undo</button>
             <button class="icon-button" aria-label="Search"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
             <button class="icon-button notification" aria-label="Notifications"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg><span></span></button>
-            <button class="secondary-button" id="workspace-backup-button">Backup</button>
-            <button class="secondary-button" id="export-dashboard-button">Export CSV</button>
             <button class="secondary-button" id="client-io-button" type="button">Upload / revise IO</button>
             <input id="client-io-input" type="file" accept=".pdf,application/pdf" multiple hidden />
             <button class="primary-button" id="upload-button"><span>＋</span> Import report</button>
@@ -230,6 +227,56 @@
           </div>
           <form class="todo-quick-add" id="brief-quick-add"><select id="brief-quick-client" aria-label="Account"></select><input id="brief-quick-text" placeholder="Add a to-do…" aria-label="New to-do" autocomplete="off" /><input id="brief-quick-due" type="date" aria-label="Due date" /><button class="text-button" type="submit">Add</button></form>
           <div class="brief-groups" id="brief-groups"></div>
+        </section>
+
+        <section class="settings-page" id="settings-page" aria-label="Settings" hidden>
+          <article class="panel settings-section">
+            <div class="panel-header"><div><h2>You</h2><p>How the dashboard greets you</p></div></div>
+            <div class="settings-rows">
+              <div class="settings-row"><div><b>Display name</b><small>Used in the greeting and on the sidebar.</small></div><input id="settings-name" autocomplete="given-name" placeholder="Your name" /></div>
+              <div class="settings-row"><div><b>Background</b><small id="settings-sky-detail">The sky follows the time of day. Turn on weather to follow your local weather too.</small></div><button class="secondary-button" id="sky-weather" type="button">Match my weather</button></div>
+            </div>
+          </article>
+          <article class="panel settings-section">
+            <div class="panel-header"><div><h2>Alerts and KPIs</h2><p>When a campaign shows up as needing attention</p></div></div>
+            <div class="settings-rows">
+              <div class="settings-row"><div><b>Alert rules</b><small id="settings-alert-summary"></small></div><button class="secondary-button" type="button" data-settings-open="#alert-settings-button">Edit alert rules</button></div>
+              <div class="settings-row"><div><b>KPI goals</b><small id="settings-kpi-summary"></small></div><button class="secondary-button" type="button" data-settings-kpi>Open KPI watcher</button></div>
+            </div>
+          </article>
+          <article class="panel settings-section">
+            <div class="panel-header"><div><h2>Campaign table</h2><p>What each campaign row shows</p></div></div>
+            <div class="settings-rows">
+              <div class="settings-row"><div><b>Default metrics</b><small id="settings-metrics-summary"></small></div><button class="secondary-button" type="button" data-settings-open="#customize-all-metrics">Choose metrics</button></div>
+              <div class="settings-row"><div><b>Saved views</b><small id="settings-views-summary"></small></div><button class="secondary-button" type="button" data-settings-open="#manage-saved-views">Manage views</button></div>
+            </div>
+          </article>
+          <article class="panel settings-section">
+            <div class="panel-header"><div><h2>Data and automations</h2><p>Where your numbers come from</p></div></div>
+            <div class="settings-rows">
+              <div class="settings-row"><div><b>Morning brief</b><small id="settings-brief-status"></small></div><a class="secondary-button" href="?view=automation" data-page-view="automation">Set up</a></div>
+              <div class="settings-row"><div><b>Report folder</b><small id="settings-report-status"></small></div><a class="secondary-button" href="?view=automation" data-page-view="automation">Set up</a></div>
+              <div class="settings-row"><div><b>DCM and DSP emails</b><small id="settings-dcm-status"></small></div><a class="secondary-button" href="?view=automation" data-page-view="automation">Set up</a></div>
+              <div class="settings-row"><div><b>Report review</b><small id="settings-review-status"></small></div><a class="secondary-button" href="?view=review" data-page-view="review">Open</a></div>
+              <div class="settings-row"><div><b>Import history</b><small id="settings-history-status"></small></div><button class="secondary-button" type="button" data-settings-open="#view-import-audit">View all</button></div>
+              <div class="settings-row"><div><b>Data sources</b><small>Every report and IO, by client and source.</small></div><a class="secondary-button" href="?view=sources" data-settings-sources>Open</a></div>
+            </div>
+          </article>
+          <article class="panel settings-section">
+            <div class="panel-header"><div><h2>Billing</h2><p>Monthly billing files from DCM and DSP</p></div></div>
+            <div class="settings-rows">
+              <div class="settings-row"><div><b>Billing setup</b><small id="settings-billing-status"></small></div><a class="secondary-button" href="?view=billing" data-page-view="billing">Open billing</a></div>
+            </div>
+          </article>
+          <article class="panel settings-section">
+            <div class="panel-header"><div><h2>Workspace</h2><p>Everything lives in this Chrome profile</p></div></div>
+            <div class="settings-rows">
+              <div class="settings-row"><div><b>Backup and restore</b><small>Save a copy of the whole workspace, move it to another computer, or start over.</small></div><button class="secondary-button" id="workspace-backup-button" type="button">Backup or restore</button></div>
+              <div class="settings-row"><div><b>Export campaigns</b><small>A CSV of the campaigns the current filters show.</small></div><button class="secondary-button" id="export-dashboard-button" type="button">Export CSV</button></div>
+              <div class="settings-row"><div><b>Storage</b><small id="settings-storage"></small></div></div>
+              <div class="settings-row"><div><b>Getting started</b><small>The welcome checklist for new teammates.</small></div><button class="secondary-button" type="button" data-settings-welcome>Show checklist</button></div>
+            </div>
+          </article>
         </section>
 
         <section class="billing-page" id="billing-page" aria-label="Billing" hidden>
