@@ -37,7 +37,7 @@
           <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span>Data imports</button>
           <a class="nav-item" id="nav-sources" href="?view=sources"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>Data sources</a>
           <a class="nav-item" id="nav-automation" href="?view=automation" data-page-view="automation"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>Automation</a>
-          <a class="nav-item" id="nav-settings" href="?view=settings" data-page-view="settings"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>Settings</a>
+          <a class="nav-item" id="nav-settings" href="?view=settings" data-page-view="settings"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>Settings <span class="nav-badge" id="nav-settings-warning" hidden title="Storage is nearly full">!</span></a>
         </nav>
 
         <div class="sidebar-bottom">
@@ -273,7 +273,11 @@
             <div class="settings-rows">
               <div class="settings-row"><div><b>Backup and restore</b><small>Save a copy of the whole workspace, move it to another computer, or start over.</small></div><button class="secondary-button" id="workspace-backup-button" type="button">Backup or restore</button></div>
               <div class="settings-row"><div><b>Export campaigns</b><small>A CSV of the campaigns the current filters show.</small></div><button class="secondary-button" id="export-dashboard-button" type="button">Export CSV</button></div>
-              <div class="settings-row"><div><b>Storage</b><small id="settings-storage"></small></div></div>
+              <div class="settings-row settings-storage-row"><div class="storage-block"><b>Storage</b><small>Everything stays in this browser. If a bar turns red, download a backup and remove campaigns you no longer need.</small>
+                <div class="storage-meter" id="storage-local"><div class="storage-meter-head"><span>Campaigns and settings</span><span class="storage-meter-value"></span></div><div class="storage-bar" role="meter" aria-label="Campaigns and settings storage" aria-valuemin="0" aria-valuemax="100"><span></span></div></div>
+                <div class="storage-meter" id="storage-db"><div class="storage-meter-head"><span>DCM and DSP data</span><span class="storage-meter-value"></span></div><div class="storage-bar" role="meter" aria-label="DCM and DSP data storage" aria-valuemin="0" aria-valuemax="100"><span></span></div></div>
+                <small class="storage-note" id="storage-note"></small>
+              </div></div>
               <div class="settings-row"><div><b>Getting started</b><small>The welcome checklist for new teammates.</small></div><button class="secondary-button" type="button" data-settings-welcome>Show checklist</button></div>
             </div>
           </article>
