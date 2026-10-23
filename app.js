@@ -59,7 +59,8 @@ import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
-import { applyDcmTopUps, applyDelivery, DELIVERY_SOURCES, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import { deleteRawRows, readRawRows, saveRawRows } from "./lib/raw-delivery-store.js";
+import { applyDcmTopUps, applyDelivery, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
 import { attachLineDays, billingFileName, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
@@ -3510,6 +3511,8 @@ function commitDeliveryImport({ automatic = false } = {}) {
   const { fileName, fingerprint, parsed } = pendingValidatedImport;
   const plan = deliveryPlan();
   const result = applyDelivery(campaigns, parsed, plan, { fileName });
+  // The file's own rows are kept for billing's raw data tab.
+  saveRawRows(indexedDB, parsed.source, rawRowsForPlan(parsed, plan)).catch(() => {});
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: result.lineCount, campaignKeys: [], campaignTotals }));
   campaigns = result.campaigns;
   saveCampaigns();
@@ -3563,6 +3566,7 @@ document.querySelector("#dcm-remove").addEventListener("click", () => {
   const campaign = campaigns[activeCampaignIndex];
   if (!campaign) return;
   const { thirdPartyDelivery, thirdPartyAsOf, thirdPartyFiles, ...rest } = campaign;
+  deleteRawRows(indexedDB, campaign.name).catch(() => {});
   campaigns[activeCampaignIndex] = rest;
   saveCampaigns();
   renderDcmComparison(campaigns[activeCampaignIndex]);
@@ -3708,6 +3712,10 @@ async function downloadBilling(client, month) {
   const config = billingConfig(client);
   const result = billingResult(client, month);
   if (!result.rows.length) return;
+  for (const item of result.rows) {
+    if (item.row.source === "report") continue;
+    item.rawRows = await readRawRows(indexedDB, item.row.source, item.row.lines || [], item.period.from, item.period.to).catch(() => []);
+  }
   const blob = await writeExcelFile(billingSheets(config, result, client)).toBlob();
   const url = URL.createObjectURL(blob);
   const link = Object.assign(document.createElement("a"), { href: url, download: billingFileName(config, client, month) });

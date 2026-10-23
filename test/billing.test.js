@@ -60,3 +60,14 @@ test("the workbook has the Final Billing layout with live formulas and totals", 
   assert.equal(source.sheet, "3P Billing Data Source Data");
   assert.equal(previousMonth(new Date("2026-01-03T12:00:00Z")), "2025-12");
 });
+
+test("the raw data tab lists the DCM or DSP rows themselves, with totals, under Zeta blue headers", () => {
+  const result = computeClientBilling({ rows: [{ id: "a", lineName: "Display", source: "CM360", rateType: "cpm", rate: 5, lines: ["X"] }] }, [line("X", { CM360: days("2026-09-01", "2026-09-30", { impressions: 100 }) })], "2026-09");
+  result.rows[0].rawRows = [{ date: "2026-09-01", campaign: "NSP 2026", campaignId: "347", placement: "Zeta_Display_300x250", creative: "Ad A", impressions: 60, clicks: 1, spend: 0.2, line: "X" }, { date: "2026-09-01", campaign: "NSP 2026", campaignId: "347", placement: "Zeta_Display_300x250", creative: "Ad B", impressions: 40, clicks: 0, spend: 0.1, line: "X" }];
+  const [finalBilling, source] = billingSheets({}, result, "NSP");
+  assert.equal(finalBilling.data[1][0].backgroundColor, "#003399");
+  assert.equal(source.data[0][3].value, "Placement / Line item");
+  assert.equal(source.data.length, 4);
+  assert.equal(source.data[2][4], "Ad B");
+  assert.equal(source.data[3][5].value, "SUM(F2:F3)");
+});
