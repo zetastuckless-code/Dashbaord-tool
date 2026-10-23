@@ -66,6 +66,8 @@ import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
 import { attachLineDays, billingFileName, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
+import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
+import { buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 // Each line's DCM and DSP days load from IndexedDB just after the page opens; until then the saved top-ups stand as they are.
@@ -226,6 +228,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientDocuments();
   renderClientTodos();
   renderClientBilling();
+  renderClientReporting();
   updateBillingReminder();
   renderMorningBrief();
   applySourcesView();
@@ -400,6 +403,8 @@ let onboarding = readOnboarding(localStorage);
 let reviewedImports = readReviewedImports(localStorage);
 let lastKpiWatch = null;
 let billing = readBilling(localStorage);
+let salesforce = readSalesforce(localStorage);
+let reporting = readReporting(localStorage);
 let thirdPartyLinks = readThirdPartyLinks(localStorage);
 const SKIP_DELIVERY = "__skip";
 const SHORT_SOURCE = { CM360: "DCM", DSP: "DSP" };
@@ -494,7 +499,7 @@ function renderCampaignList(rows, activeAlerts) {
         ${cells}
         <span class="campaign-card-actions">${manualOrder && group.status !== "completed" ? `<span class="campaign-move"><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="up" aria-label="Move ${escapeHtml(group.name)} up" title="Move up">↑</button><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="down" aria-label="Move ${escapeHtml(group.name)} down" title="Move down">↓</button></span>` : ""}${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(group.key)}">Edit campaign…</button><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
+      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}${salesforceLink(group.key, "Open in Salesforce ↗")}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(group.key)}">Edit campaign…</button><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
@@ -590,9 +595,11 @@ let bulkEditGroup = null;
 
 let bulkEditCampaign = null;
 
+let campaignEditPrefill = {};
 function setBulkEditMode(campaignMode) {
   document.querySelector("#bulk-edit-eyebrow").textContent = campaignMode ? "Campaign details" : "Bulk edit";
   document.querySelector("#bulk-channel-label").hidden = campaignMode;
+  document.querySelector("#bulk-sfid-label").hidden = !campaignMode;
 }
 
 /** Edits the details every line of a campaign shares: owner, primary KPI and target, billing source, report cadence. */
@@ -611,6 +618,9 @@ function openCampaignEdit(key) {
   document.querySelector("#bulk-billing").value = shared(record => record.billingSource) || "";
   if (!document.querySelector("#bulk-billing").value) document.querySelector("#bulk-billing").value = "";
   document.querySelector("#bulk-cadence").value = shared(record => record.reportCadence || "none") || "";
+  document.querySelector("#bulk-sfid").value = salesforce.ids[key] || "";
+  // What the form starts with, so leaving a field as it was isn't counted as a change.
+  campaignEditPrefill = { owner: document.querySelector("#bulk-owner").value, kpi: document.querySelector("#bulk-kpi").value, target: document.querySelector("#bulk-target").value, billingSource: document.querySelector("#bulk-billing").value, reportCadence: document.querySelector("#bulk-cadence").value };
   const name = campaignGroupName(records[0]);
   document.querySelector("#bulk-edit-title").textContent = `Edit ${name}`;
   document.querySelector("#bulk-edit-summary").textContent = `Changes apply to all ${records.length} line${records.length === 1 ? "" : "s"} of this campaign. Blank fields keep their current values.`;
@@ -642,10 +652,22 @@ document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
   event.preventDefault();
   const value = id => document.querySelector(id).value.trim();
   const edits = { owner: value("#bulk-owner"), channel: value("#bulk-channel"), kpi: value("#bulk-kpi"), target: value("#bulk-target"), billingSource: value("#bulk-billing"), reportCadence: value("#bulk-cadence"), startDate: value("#bulk-start"), endDate: value("#bulk-end"), budget: value("#bulk-budget") };
+  if (bulkEditCampaign) for (const [field, start] of Object.entries(campaignEditPrefill)) if (edits[field] === start.trim()) edits[field] = "";
   const errors = validateBulkEdits(edits);
   const error = document.querySelector("#bulk-edit-error");
-  if (Object.values(edits).every(field => field === "")) errors.push("Fill in at least one field to change.");
+  // A campaign's Salesforce opportunity is kept with the campaign, not on its lines.
+  const sfid = bulkEditCampaign ? value("#bulk-sfid") : "";
+  const sfidChanged = Boolean(bulkEditCampaign) && sfid !== (salesforce.ids[bulkEditCampaign] || "");
+  if (sfid && !isOpportunityId(sfid)) errors.push("A Salesforce opportunity ID starts with 006 and is 15 or 18 characters.");
+  if (Object.values(edits).every(field => field === "") && !sfidChanged) errors.push("Fill in at least one field to change.");
   if (errors.length) { error.textContent = errors.join(" "); error.hidden = false; return; }
+  if (sfidChanged) setOpportunity(bulkEditCampaign, sfid);
+  if (bulkEditCampaign && Object.values(edits).every(field => field === "")) {
+    bulkEditDialog.close();
+    renderCampaigns(document.querySelector("#client-filter").value);
+    showToast("Salesforce link saved", sfid ? `Opens opportunity ${sfid}.` : "The Salesforce link was removed.");
+    return;
+  }
   if (bulkEditCampaign) {
     const keys = campaigns.map((record, index) => groupKey(record) === bulkEditCampaign && !isCampaignArchived(record) ? lineKey(index, "record") : null).filter(Boolean);
     const name = lastCampaignGroups.find(group => group.key === bulkEditCampaign)?.name || "the campaign";
@@ -1393,7 +1415,7 @@ document.querySelector("#workspace-backup-button").addEventListener("click", () 
 });
 document.querySelectorAll(".close-workspace-backup").forEach(button => button.addEventListener("click", () => workspaceBackupDialog.close()));
 document.querySelector("#download-workspace-backup").addEventListener("click", () => {
-  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder, todos });
+  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder, todos, billing, salesforce, reporting });
   const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-workspace-${new Date().toISOString().slice(0, 10)}.json` });
   link.click();
@@ -2139,6 +2161,8 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `${created ? "creating" : "applying order to"} ${targetName}` }));
   if (created) campaigns.push(created);
   campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, key, io, fileName));
+  const ioOpportunity = findOpportunityId(fileName) || findOpportunityId(io.orderNumber);
+  if (ioOpportunity && !salesforce.ids[key]) setOpportunity(key, ioOpportunity);
   const index = campaigns.findIndex(record => groupKey(record) === key);
   campaigns[index] = { ...campaigns[index], ioFileName: fileName, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || null };
   saveCampaigns();
@@ -2331,10 +2355,10 @@ function renderClientIo() {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
     const tracking = `<div class="io-tracking"><span><small>Spend to date</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
-    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
+    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
     const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
-    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div>
+    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div>
       <div class="io-facts"><span><small>Total IO budget</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
       ${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
   };
@@ -2756,7 +2780,7 @@ if (folderSupported) {
     todoFolder = handle;
     renderFolderStatus();
     return checkTodoFolder();
-  }).catch(() => renderFolderStatus());
+  }).then(() => writeDuePacks()).catch(() => renderFolderStatus());
   setInterval(() => { if (todoFolder && !folderState.needsClick && document.visibilityState === "visible") checkTodoFolder(); }, 5 * 60_000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && todoFolder && !folderState.needsClick) checkTodoFolder(); });
 } else renderFolderStatus();
@@ -2797,7 +2821,7 @@ function applyPageView() {
   if (pageView === "brief") renderBriefPage();
   else if (pageView === "billing") renderBillingPage();
   else if (pageView === "settings") renderSettingsPage();
-  else if (pageView === "automation") { renderAutomationPage(); renderReportAutomation(); }
+  else if (pageView === "automation") { renderAutomationPage(); renderReportAutomation(); renderPromptBuilder(); }
   else renderReportAutomation();
 }
 
@@ -3771,6 +3795,8 @@ document.querySelector("#billing-template-input").addEventListener("change", asy
     if (parsed.periods.length) { config.periodMode = "custom"; config.periods = parsed.periods; }
     config.rows = parsed.rows.map(row => {
       const matched = guessLines(row, lines);
+      // A billing row's Salesforce ID also links the campaigns its lines belong to.
+      if (isOpportunityId(row.sfid)) for (const key of new Set(lines.filter(line => matched.includes(line.name)).map(groupKey))) if (!salesforce.ids[key]) setOpportunity(key, row.sfid);
       return { id: newRowId(), ...row, source: defaultSource(lines.filter(line => matched.includes(line.name))), lines: matched };
     });
     saveBilling();
@@ -3861,6 +3887,7 @@ function renderSettingsPage() {
   const setUp = Object.values(billing).filter(config => config.rows?.length).length;
   document.querySelector("#settings-billing-status").textContent = setUp ? `${setUp} client${setUp === 1 ? "" : "s"} set up.` : "No clients set up yet. Upload a past billing file on a client's tab.";
   renderStorageMeters();
+  renderSalesforceSettings();
 }
 document.querySelector("#settings-name").addEventListener("change", event => {
   const name = event.target.value.trim().slice(0, 60);
@@ -3908,4 +3935,170 @@ async function updateStorageWarning() {
   document.querySelector("#nav-settings-warning").hidden = !full;
   if (full && !storageWarned && !storageFullShown) { storageWarned = true; showToast("Storage is nearly full", "Open Settings to see what’s using it, and download a backup."); }
   if (pageView === "settings") renderStorageMeters();
+}
+
+// --- Salesforce: each campaign's opportunity, one click away ---
+function setOpportunity(key, id) {
+  const ids = { ...salesforce.ids };
+  if (id) ids[key] = id; else delete ids[key];
+  salesforce = writeSalesforce(localStorage, { ...salesforce, ids });
+}
+function salesforceLink(key, label = "Salesforce ↗") {
+  const id = salesforce.ids[key];
+  return id ? `<a class="text-button salesforce-link" href="${escapeHtml(opportunityUrl(id, salesforce.domain))}" target="_blank" rel="noopener" title="Opportunity ${escapeHtml(id)}">${escapeHtml(label)}</a>` : "";
+}
+function renderSalesforceSettings() {
+  const groups = groupCampaigns(campaigns.filter(record => !isCampaignArchived(record) && !isPlaceholder(record)));
+  const linked = groups.filter(group => salesforce.ids[group.key]).length;
+  document.querySelector("#settings-salesforce-status").textContent = `${linked} of ${groups.length} campaign${groups.length === 1 ? "" : "s"} linked to an opportunity. Add an ID with Edit campaign; IDs in billing files and IO file names are picked up on their own. Links open through Salesforce’s login unless you enter your Salesforce address.`;
+  const input = document.querySelector("#settings-salesforce-domain");
+  if (document.activeElement !== input) input.value = salesforce.domain;
+}
+document.querySelector("#settings-salesforce-domain").addEventListener("change", event => {
+  salesforce = writeSalesforce(localStorage, { ...salesforce, domain: cleanDomain(event.target.value) });
+  event.target.value = salesforce.domain;
+  renderCampaigns(document.querySelector("#client-filter").value);
+});
+
+// --- Reporting packs: each client's numbers saved on a schedule for a ChatGPT task to turn into insights and an email ---
+function todayLocal() { const now = new Date(); return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10); }
+function reportingSchedule(client) { return (reporting.clients ||= {})[client] ||= { cadence: "off", weekday: 1, monthDay: 1, note: "" }; }
+function saveReporting() { reporting = writeReporting(localStorage, reporting); }
+let pendingPacks = [];
+
+function clientPack(client) {
+  const records = campaigns.filter(record => record.client === client && !isCampaignArchived(record) && !isPlaceholder(record) && ["live", "completed"].includes(dashboardFlightStatus(record)))
+    .filter(record => dashboardFlightStatus(record) === "live" || (record.endDate && record.endDate >= addDaysIso(todayLocal(), -14)));
+  const alerts = unacknowledgedAlerts(evaluateAlerts(records), acknowledgedAlertIds);
+  const open = todos.filter(item => item.client === client && isOpen(item));
+  return buildReportingPack({ client, records, totals: campaignTotals, alerts, todos: open, today: todayLocal(), schedule: reportingSchedule(client), kpiTolerance: alertRules.kpiTolerance });
+}
+function addDaysIso(day, count) { return new Date(Date.parse(`${day}T00:00:00Z`) + count * 86_400_000).toISOString().slice(0, 10); }
+
+/** Saves a client's pack into "Reporting packs" in the morning brief folder. Asking for write access needs a click. */
+async function savePack(client, { ask = false } = {}) {
+  if (!todoFolder) throw new Error("Connect your morning brief folder on the Automation page first.");
+  let permission = await todoFolder.queryPermission({ mode: "readwrite" });
+  if (permission !== "granted" && ask) permission = await todoFolder.requestPermission({ mode: "readwrite" });
+  if (permission !== "granted") return false;
+  const folder = await todoFolder.getDirectoryHandle(PACK_FOLDER, { create: true });
+  const pack = clientPack(client);
+  const names = packFileNames(client, todayLocal());
+  for (const [name, text] of [[names.markdown, pack.markdown], [names.csv, pack.csv]]) {
+    const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
+    await writable.write(text);
+    await writable.close();
+  }
+  const schedule = reportingSchedule(client);
+  schedule.lastWritten = todayLocal();
+  schedule.lastFile = names.markdown;
+  saveReporting();
+  return true;
+}
+
+/** Saves every pack that's due; those that need Chrome's permission wait behind a one-click chip. */
+async function writeDuePacks({ ask = false } = {}) {
+  await deliveryReady;
+  const due = Object.entries(reporting.clients || {}).filter(([client, schedule]) => isPackDue(schedule, todayLocal()) && campaigns.some(record => record.client === client)).map(([client]) => client);
+  pendingPacks = [];
+  const saved = [];
+  for (const client of due) {
+    try { if (await savePack(client, { ask })) saved.push(client); else pendingPacks.push(client); } catch { pendingPacks.push(client); }
+  }
+  if (saved.length) showToast("Reporting packs saved", `${saved.join(", ")} ${saved.length === 1 ? "is" : "are"} ready for ChatGPT in “${PACK_FOLDER}”.`);
+  const chip = document.querySelector("#reporting-pending-chip");
+  chip.hidden = !pendingPacks.length || !todoFolder;
+  chip.textContent = `Save ${pendingPacks.length} reporting pack${pendingPacks.length === 1 ? "" : "s"}`;
+  renderClientReporting();
+}
+document.querySelector("#reporting-pending-chip").addEventListener("click", () => writeDuePacks({ ask: true }));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && todoFolder) writeDuePacks(); });
+
+function renderClientReporting() {
+  const panel = document.querySelector("#client-reporting");
+  panel.hidden = !clientScope;
+  if (!clientScope) return;
+  const schedule = reportingSchedule(clientScope);
+  const option = (value, label, selected) => `<option value="${value}"${String(value) === String(selected) ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const fields = document.querySelector("#reporting-fields");
+  if (!fields.contains(document.activeElement)) fields.innerHTML = `
+    <label>Schedule<select data-reporting="cadence">${Object.entries(CADENCES).map(([value, label]) => option(value, label, schedule.cadence)).join("")}</select></label>
+    ${["weekly", "biweekly"].includes(schedule.cadence) ? `<label>Day<select data-reporting="weekday">${[1, 2, 3, 4, 5, 6, 0].map(day => option(day, weekdayName(day), schedule.weekday)).join("")}</select></label>` : ""}
+    ${schedule.cadence === "monthly" ? `<label>Day of the month<select data-reporting="monthDay">${Array.from({ length: 28 }, (_, index) => option(index + 1, String(index + 1), schedule.monthDay)).join("")}</select></label>` : ""}
+    <label class="wide">Notes for ChatGPT<textarea data-reporting="note" rows="2" placeholder="Like: trim the YouTube lines, lead with CPA, the email goes to Brad.">${escapeHtml(schedule.note || "")}</textarea></label>`;
+  const due = lastDueDate(schedule, todayLocal());
+  document.querySelector("#reporting-status").textContent = schedule.cadence === "off" ? "No schedule. Save a pack now any time, or pick a schedule." : `${schedule.lastWritten ? `Last saved ${shortDate(schedule.lastWritten)}${schedule.lastFile ? ` as ${schedule.lastFile}` : ""}. ` : ""}${isPackDue(schedule, todayLocal()) ? `Due ${due ? shortDate(due) : "now"}${todoFolder ? "" : "; connect your morning brief folder on the Automation page to save it"}.` : "Up to date."}`;
+}
+document.querySelector("#client-reporting").addEventListener("change", event => {
+  const field = event.target.closest("[data-reporting]");
+  if (!field || !clientScope) return;
+  const schedule = reportingSchedule(clientScope);
+  const key = field.dataset.reporting;
+  schedule[key] = ["weekday", "monthDay"].includes(key) ? Number(field.value) : field.value;
+  if (key === "cadence") schedule.since = todayLocal();
+  saveReporting();
+  document.querySelector("#reporting-fields").innerHTML = "";
+  document.activeElement?.blur?.();
+  renderClientReporting();
+});
+document.querySelector("#reporting-save-now").addEventListener("click", async () => {
+  if (!clientScope) return;
+  try {
+    if (await savePack(clientScope, { ask: true })) showToast("Reporting pack saved", `${clientScope}’s pack is in “${PACK_FOLDER}” in your morning brief folder.`);
+    else showToast("Not saved", "Chrome didn’t allow saving to the folder. Use Download instead, or try again and choose Allow.");
+  } catch (error) {
+    showToast("Not saved", error.message);
+  }
+  renderClientReporting();
+});
+document.querySelector("#reporting-download").addEventListener("click", () => {
+  if (!clientScope) return;
+  const pack = clientPack(clientScope);
+  const names = packFileNames(clientScope, todayLocal());
+  for (const [name, text, type] of [[names.markdown, pack.markdown, "text/markdown"], [names.csv, pack.csv, "text/csv"]]) {
+    const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
+    Object.assign(document.createElement("a"), { href: url, download: name }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+});
+
+// --- The ChatGPT side: a few questions fill in the skill prompt and the scheduled-task prompt ---
+function promptAnswers() { return { ...DEFAULT_PROMPT_ANSWERS, signOff: localStorage.getItem("northstar-profile-name") || "", ...(reporting.prompt || {}) }; }
+function renderPromptBuilder() {
+  const answers = promptAnswers();
+  const form = document.querySelector("#prompt-builder");
+  if (!form.contains(document.activeElement)) {
+    document.querySelector("#prompt-includes").innerHTML = Object.entries(PROMPT_INCLUDES).map(([key, label]) => `<label><input type="checkbox" name="includes" value="${key}"${answers.includes.includes(key) ? " checked" : ""} /> ${escapeHtml(label)}</label>`).join("");
+    document.querySelector("#prompt-outputs").innerHTML = Object.entries(PROMPT_OUTPUTS).map(([key, label]) => `<label><input type="checkbox" name="outputs" value="${key}"${answers.outputs.includes(key) ? " checked" : ""} /> ${escapeHtml(label)}</label>`).join("");
+    for (const name of ["skillName", "tone", "insightCount", "emailExample", "fileExample", "signOff", "weekday", "time"]) form.elements[name].value = answers[name] ?? "";
+    form.elements.attachExample.checked = Boolean(answers.attachExample);
+  }
+  document.querySelector("#reporting-skill-preview").textContent = buildSkillPrompt(answers);
+  document.querySelector("#reporting-prompt-preview").textContent = buildSchedulePrompt(answers, { folder: todoFolder?.name || "your morning brief folder" });
+  const scheduled = Object.values(reporting.clients || {}).filter(schedule => schedule.cadence && schedule.cadence !== "off").length;
+  stepStatus("pfolder", todoFolder ? "done" : "todo");
+  stepStatus("pschedule", scheduled ? "done" : "todo");
+  stepStatus("pprompt", reporting.promptCopiedAt ? "done" : "todo");
+  document.querySelector("#reporting-folder-detail").textContent = todoFolder ? `Packs go in “${todoFolder.name}/${PACK_FOLDER}”.` : "Connect your morning brief folder in the steps above first.";
+  document.querySelector("#reporting-schedule-detail").textContent = scheduled ? `${scheduled} client${scheduled === 1 ? " has" : "s have"} a schedule.` : "No client has a schedule yet.";
+}
+document.querySelector("#prompt-builder").addEventListener("input", () => {
+  const form = document.querySelector("#prompt-builder");
+  const checked = name => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map(input => input.value);
+  reporting.prompt = { skillName: form.elements.skillName.value.trim() || DEFAULT_PROMPT_ANSWERS.skillName, includes: checked("includes"), outputs: checked("outputs"), tone: form.elements.tone.value, insightCount: form.elements.insightCount.value, emailExample: form.elements.emailExample.value, fileExample: form.elements.fileExample.value, attachExample: form.elements.attachExample.checked, signOff: form.elements.signOff.value.trim(), weekday: form.elements.weekday.value === "weekdays" ? "weekdays" : Number(form.elements.weekday.value), time: form.elements.time.value || "10:00" };
+  saveReporting();
+  renderPromptBuilder();
+});
+for (const [button, preview, label] of [["#reporting-copy-skill", "#reporting-skill-preview", "Skill prompt"], ["#reporting-copy-prompt", "#reporting-prompt-preview", "Schedule prompt"]]) {
+  document.querySelector(button).addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(document.querySelector(preview).textContent);
+      reporting.promptCopiedAt = new Date().toISOString();
+      saveReporting();
+      renderPromptBuilder();
+      showToast(`${label} copied`, "Paste it into ChatGPT.");
+    } catch {
+      showToast("Couldn’t copy", "Open the preview and copy the text from there.");
+    }
+  });
 }

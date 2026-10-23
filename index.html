@@ -259,6 +259,7 @@
               <div class="settings-row"><div><b>DCM and DSP emails</b><small id="settings-dcm-status"></small></div><a class="secondary-button" href="?view=automation" data-page-view="automation">Set up</a></div>
               <div class="settings-row"><div><b>Report review</b><small id="settings-review-status"></small></div><a class="secondary-button" href="?view=review" data-page-view="review">Open</a></div>
               <div class="settings-row"><div><b>Import history</b><small id="settings-history-status"></small></div><button class="secondary-button" type="button" data-settings-open="#view-import-audit">View all</button></div>
+              <div class="settings-row"><div><b>Salesforce</b><small id="settings-salesforce-status"></small></div><input id="settings-salesforce-domain" placeholder="yourcompany.lightning.force.com" spellcheck="false" aria-label="Salesforce address (optional)" /></div>
               <div class="settings-row"><div><b>Data sources</b><small>Every report and IO, by client and source.</small></div><a class="secondary-button" href="?view=sources" data-settings-sources>Open</a></div>
             </div>
           </article>
@@ -375,6 +376,46 @@
             </li>
           </ol>
 
+          <h3 class="automation-heading" id="reporting-automation-title">Reporting packs for ChatGPT</h3>
+          <p class="automation-lede">On each client’s schedule, the dashboard saves a pack of that client’s numbers into a “Reporting packs” folder inside your morning brief folder. A ChatGPT scheduled task reads the new packs and uses your reporting skills to write insights and draft the client email. The dashboard saves a pack the first time it’s open on or after the due day, so set the ChatGPT task for a little later that morning.</p>
+          <ol class="automation-steps" id="reporting-steps">
+            <li class="automation-step" data-step="pfolder">
+              <div class="step-head"><span class="step-status" id="step-pfolder-status"></span><h4>Use your morning brief folder</h4></div>
+              <p>Packs go in a <b>Reporting packs</b> folder inside the morning brief folder you connected above. The first time a pack is saved, Chrome asks to let the dashboard save files there; choose <b>Allow</b>.</p>
+              <p class="step-detail" id="reporting-folder-detail"></p>
+            </li>
+            <li class="automation-step" data-step="pschedule">
+              <div class="step-head"><span class="step-status" id="step-pschedule-status"></span><h4>Set each client’s schedule</h4></div>
+              <p>On each client’s tab, open <b>Reporting pack</b> and choose weekly, every two weeks, or monthly, and the day. Add notes for ChatGPT there too, like which lines to trim or who the email goes to.</p>
+              <p class="step-detail" id="reporting-schedule-detail"></p>
+            </li>
+            <li class="automation-step" data-step="pprompt">
+              <div class="step-head"><span class="step-status" id="step-pprompt-status"></span><h4>Schedule the ChatGPT task</h4></div>
+              <p>Answer a few questions and the dashboard writes two prompts: one that sets up your reporting skill in ChatGPT, and one that schedules it. Your answers are saved, so you can come back and change them.</p>
+              <form class="prompt-builder" id="prompt-builder">
+                <label class="wide">Skill name<input name="skillName" autocomplete="off" /></label>
+                <fieldset class="wide"><legend>What should the insights cover?</legend><div class="prompt-checks" id="prompt-includes"></div></fieldset>
+                <fieldset class="wide"><legend>What should ChatGPT give you?</legend><div class="prompt-checks" id="prompt-outputs"></div></fieldset>
+                <label>Style<select name="tone"><option value="direct">Short and direct</option><option value="detailed">Detailed, with the numbers</option><option value="executive">Executive summary</option></select></label>
+                <label>How many insights<select name="insightCount"><option>2 to 3</option><option>3 to 5</option><option>5 to 7</option></select></label>
+                <label class="wide">Paste an email you normally send <small>Old numbers are fine; it shows ChatGPT your length, structure, and tone.</small><textarea name="emailExample" rows="5" placeholder="Hi Brad, here's where Nature's Sunshine landed this week…"></textarea></label>
+                <label class="wide">Describe the finished report file <small>Only if you want a trimmed file: tabs, columns, what gets cut.</small><textarea name="fileExample" rows="3" placeholder="One Summary tab with spend, impressions, CTR, and CPA by line; drop lines under $500."></textarea></label>
+                <label class="wide prompt-attach"><input type="checkbox" name="attachExample" /> I’ll attach an example of the finished report in ChatGPT when I paste the skill prompt</label>
+                <label>Sign the email as<input name="signOff" autocomplete="off" placeholder="Your name" /></label>
+                <label>Run it<select name="weekday"><option value="weekdays">Every weekday</option><option value="1">Mondays</option><option value="2">Tuesdays</option><option value="3">Wednesdays</option><option value="4">Thursdays</option><option value="5">Fridays</option></select></label>
+                <label>At<input type="time" name="time" /></label>
+              </form>
+              <ol class="step-substeps">
+                <li>In ChatGPT, open the project you use for reporting and turn on the <b>OneDrive</b> connector.</li>
+                <li>Paste the <b>skill prompt</b>, attaching your example report if you said you would. Send it.</li>
+                <li>Then paste the <b>schedule prompt</b> and send it. ChatGPT sets it up as a scheduled task.</li>
+              </ol>
+              <details class="prompt-preview"><summary>See the skill prompt</summary><pre id="reporting-skill-preview"></pre></details>
+              <details class="prompt-preview"><summary>See the schedule prompt</summary><pre id="reporting-prompt-preview"></pre></details>
+              <div class="step-actions"><button class="primary-button" id="reporting-copy-skill" type="button">Copy the skill prompt</button><button class="secondary-button" id="reporting-copy-prompt" type="button">Copy the schedule prompt</button></div>
+            </li>
+          </ol>
+
           <h3 class="automation-heading" id="report-automation-title">Report uploads</h3>
           <ol class="automation-steps" id="report-steps">
             <li class="automation-step" data-step="rfolder">
@@ -438,7 +479,7 @@
         </section>
 
         <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
-          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button report-review-chip" id="report-review-chip" type="button" hidden></button><button class="text-button" id="report-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your report folder">Check report folder</button><button class="text-button" id="todo-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your to-do folder">Check to-do folder</button><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
+          <div class="client-rollup-header"><div><h2 id="client-rollup-title">Clients</h2><p id="client-rollup-context">Live campaigns by client</p></div><div class="panel-actions"><button class="text-button report-review-chip" id="report-review-chip" type="button" hidden></button><button class="text-button report-review-chip" id="reporting-pending-chip" type="button" hidden title="Chrome needs a click before the dashboard can save files"></button><button class="text-button" id="report-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your report folder">Check report folder</button><button class="text-button" id="todo-folder-reconnect" type="button" hidden title="Chrome asks once per visit before the dashboard can read your to-do folder">Check to-do folder</button><button class="text-button" id="overview-todo-import" type="button">Add to-dos</button></div></div>
           <div class="client-grid" id="client-grid"></div>
         </section>
 
@@ -480,6 +521,15 @@
           <div class="billing-client-fields" id="billing-client-fields"></div>
           <div class="billing-rows" id="billing-rows"></div>
           <div class="billing-preview" id="billing-preview"></div>
+        </section>
+
+        <section class="panel client-reporting" id="client-reporting" aria-labelledby="client-reporting-title" hidden>
+          <div class="panel-header">
+            <div><h2 id="client-reporting-title">Reporting pack</h2><p id="client-reporting-context">A file of this client’s numbers that a ChatGPT scheduled task turns into insights and an email draft.</p></div>
+            <div class="panel-actions"><button class="secondary-button" id="reporting-save-now" type="button">Save a pack now</button><button class="text-button" id="reporting-download" type="button">Download</button></div>
+          </div>
+          <div class="reporting-fields" id="reporting-fields"></div>
+          <p class="reporting-status" id="reporting-status"></p>
         </section>
 
         <section class="content-grid">
@@ -659,6 +709,7 @@
       <form class="dialog-card" id="bulk-edit-form" method="dialog">
         <div class="dialog-header"><div><p class="eyebrow" id="bulk-edit-eyebrow">Bulk edit</p><h2 id="bulk-edit-title">Edit selected lines</h2><p id="bulk-edit-summary"></p></div><button class="close-button close-bulk-edit" type="button" aria-label="Close">×</button></div>
         <fieldset class="bulk-edit-group" id="bulk-edit-lines"><legend>Report lines</legend><div class="settings-grid">
+          <label class="wide" id="bulk-sfid-label">Salesforce opportunity ID<input id="bulk-sfid" autocomplete="off" placeholder="006…" spellcheck="false" /></label>
           <label>Owner<input id="bulk-owner" autocomplete="off" /></label><label id="bulk-channel-label">Channel<input id="bulk-channel" autocomplete="off" /></label>
           <label>Primary KPI<input id="bulk-kpi" autocomplete="off" placeholder="CTR" list="kpi-options" /><datalist id="kpi-options"><option value="CTR"></option><option value="CPA"></option><option value="ROAS"></option><option value="VCR"></option><option value="CPM"></option><option value="CPC"></option><option value="ACR"></option></datalist></label><label>KPI target<input id="bulk-target" autocomplete="off" placeholder="0.25%" /></label>
           <label>Billing source<select id="bulk-billing"><option value="">Keep</option><option value="first">1st party</option><option value="third">3rd party</option><option value="reported">Reported spend</option></select></label>

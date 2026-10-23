@@ -519,3 +519,20 @@ body.settings-view .main-content>:not(.topbar):not(#settings-page){display:none!
 .storage-meter[data-level=full] .storage-bar span{background:#db4f61}.storage-meter[data-level=full] .storage-meter-value{color:#a8384a;font-weight:600}
 .storage-note{color:var(--muted)}
 .toast.toast-error>span{background:#c93c50}
+
+/* Reporting pack on a client tab, and the ChatGPT prompt builder on the Automation page */
+.client-reporting[hidden]{display:none}.client-reporting{margin:0 0 20px}
+.reporting-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 14px;padding:0 20px}
+.reporting-fields label,.prompt-builder label{display:grid;gap:4px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.reporting-fields .wide{grid-column:1/-1}
+.reporting-fields select,.reporting-fields textarea,.prompt-builder input,.prompt-builder select,.prompt-builder textarea{min-height:34px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font:500 13px "DM Sans";color:var(--ink);text-transform:none;letter-spacing:0}
+.reporting-fields textarea,.prompt-builder textarea{resize:vertical;line-height:1.45}
+.reporting-status{margin:0;padding:10px 20px 16px;font-size:12px;color:var(--muted)}
+.prompt-builder{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px;margin:12px 0}
+.prompt-builder .wide{grid-column:1/-1}
+.prompt-builder label small{font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)}
+.prompt-builder fieldset{margin:0;padding:0;border:0}.prompt-builder legend{margin-bottom:6px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.prompt-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px}
+.prompt-checks label,.prompt-builder .prompt-attach{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:13px;font-weight:500;letter-spacing:0;text-transform:none;color:#30384b}
+.prompt-checks input,.prompt-attach input{min-height:0;accent-color:var(--primary)}
+@media(max-width:800px){.reporting-fields,.prompt-builder,.prompt-checks{grid-template-columns:1fr}}
