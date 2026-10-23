@@ -22,7 +22,7 @@
         <nav class="nav-list">
           <a class="nav-item active" id="nav-overview" href="./" aria-current="page"><span class="nav-icon">⌂</span>Overview</a>
           <a class="nav-item" href="#campaign-list"><span class="nav-icon">◫</span>Campaigns</a>
-          <a class="nav-item" href="#reports"><span class="nav-icon">↗</span>Reports</a>
+          <a class="nav-item" id="nav-brief" href="?view=brief" data-page-view="brief"><span class="nav-icon">☑</span>Daily brief</a>
           <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon">◇</span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
         </nav>
 
@@ -33,6 +33,7 @@
         <nav class="nav-list">
           <button class="nav-item button-reset" id="upload-nav"><span class="nav-icon">⇧</span>Data imports</button>
           <a class="nav-item" id="nav-sources" href="?view=sources"><span class="nav-icon">⌁</span>Data sources</a>
+          <a class="nav-item" id="nav-automation" href="?view=automation" data-page-view="automation"><span class="nav-icon">⟳</span>Automation</a>
           <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>Settings</a>
         </nav>
 
@@ -200,6 +201,95 @@
           <div class="panel-header"><div><h2 id="morning-brief-title">Morning brief</h2><p id="morning-brief-context"></p></div><div class="panel-actions"><button class="text-button" id="brief-add" type="button">Add brief</button></div></div>
           <div class="brief-deadlines" id="morning-brief-deadlines"></div>
           <div class="brief-body" id="morning-brief-body"></div>
+        </section>
+
+        <section class="panel brief-page" id="brief-page" aria-labelledby="brief-page-title" hidden>
+          <div class="panel-header">
+            <div><h2 id="brief-page-title">All to-dos</h2><p id="brief-page-context">Every account, most urgent first</p></div>
+            <div class="panel-actions"><label class="brief-filter">Show<select id="brief-filter"><option value="open">Open items</option><option value="all">Everything, including done</option></select></label></div>
+          </div>
+          <form class="todo-quick-add" id="brief-quick-add"><select id="brief-quick-client" aria-label="Account"></select><input id="brief-quick-text" placeholder="Add a to-do…" aria-label="New to-do" autocomplete="off" /><input id="brief-quick-due" type="date" aria-label="Due date" /><button class="text-button" type="submit">Add</button></form>
+          <div class="brief-groups" id="brief-groups"></div>
+        </section>
+
+        <section class="automation-page" id="automation-page" aria-labelledby="automation-title" hidden>
+          <div class="automation-intro panel">
+            <h2 id="automation-title">Set up your daily automations</h2>
+            <p>Two automations keep the dashboard current without any copying and pasting. The morning brief turns your Outlook, Jira, and Slack into a to-do list for each client. Report uploads (coming next) will bring new client reports in on their own. Work through the steps in order; each one shows a check when it is done.</p>
+            <div class="automation-progress" id="automation-progress"></div>
+          </div>
+
+          <h3 class="automation-heading">Morning brief and to-dos</h3>
+          <ol class="automation-steps">
+            <li class="automation-step" data-step="clients">
+              <div class="step-head"><span class="step-status" id="step-clients-status"></span><h4>Add your clients to the dashboard</h4></div>
+              <p>The brief is written per client, and the prompt you copy in step 4 lists every client on the dashboard. So add your clients first. The quickest way is to upload each client's insertion order (IO). That creates the client and its campaign.</p>
+              <p class="step-detail" id="step-clients-detail"></p>
+              <div class="step-actions"><button class="primary-button" id="step-clients-upload" type="button">Upload an IO</button><button class="text-button" id="step-clients-report" type="button">Or import a report</button></div>
+            </li>
+            <li class="automation-step" data-step="folder">
+              <div class="step-head"><span class="step-status" id="step-folder-status"></span><h4>Make a folder for the brief in OneDrive</h4></div>
+              <p>ChatGPT saves each morning's brief as a file, and the dashboard picks it up from there. On your Mac, open <b>Finder</b>, click <b>OneDrive</b> in the sidebar, and create a new folder named:</p>
+              <p class="step-code"><code id="step-folder-name">Northstar To-dos</code><button class="text-button" type="button" data-copy-target="step-folder-name">Copy name</button></p>
+              <p class="step-hint">On Windows, use File Explorer › OneDrive. You can use another name; change it in step 4 so the prompt matches.</p>
+            </li>
+            <li class="automation-step" data-step="connect">
+              <div class="step-head"><span class="step-status" id="step-connect-status"></span><h4>Connect that folder to the dashboard</h4></div>
+              <p>Use <b>Chrome</b> or <b>Edge</b> (Safari can't watch a folder). Click the button, pick the folder from step 2, and choose <b>Allow</b>. If Chrome offers <b>Allow on every visit</b>, pick that so it never asks again.</p>
+              <p class="step-detail" id="step-connect-detail"></p>
+              <div class="step-actions"><button class="primary-button" id="step-connect-button" type="button">Connect folder…</button></div>
+            </li>
+            <li class="automation-step" data-step="prompt">
+              <div class="step-head"><span class="step-status" id="step-prompt-status"></span><h4>Fill in your details and copy the prompt</h4></div>
+              <p>These details go straight into the prompt. Anything left blank shows as [brackets] so you can see what is missing. They're saved in this browser.</p>
+              <div class="settings-grid automation-form">
+                <label>Your first name<input id="auto-name" autocomplete="given-name" placeholder="Jake" /></label>
+                <label>Your work email<input id="auto-email" type="email" autocomplete="email" placeholder="you@zetaglobal.com" /></label>
+                <label>Your Jira username<input id="auto-jira-user" placeholder="jstuckless" /><small>The name people @mention you with in Jira, usually your email before the @.</small></label>
+                <label>Jira site<input id="auto-jira-site" placeholder="zetaglobal.atlassian.net" /></label>
+                <label>Time zone<input id="auto-timezone" placeholder="America/Chicago" /></label>
+                <label>Run time<input id="auto-run-time" placeholder="7:00 AM" /><small>Used in step 5 when you schedule the task.</small></label>
+                <label>OneDrive folder name<input id="auto-folder" placeholder="Northstar To-dos" /></label>
+                <label class="automation-check"><input type="checkbox" id="auto-slack" /> Include Slack (only if your ChatGPT has the Slack connector)</label>
+                <label class="automation-wide">Other accounts you work that aren't on the dashboard yet<textarea id="auto-extra" rows="2" placeholder="Farm Bureau Financial Services, MediaDesk"></textarea><small>Optional. One per line or separated by commas.</small></label>
+              </div>
+              <p class="step-detail" id="step-prompt-clients"></p>
+              <details class="prompt-preview"><summary>See the full prompt</summary><pre id="auto-prompt-preview"></pre></details>
+              <div class="step-actions"><button class="primary-button" id="auto-copy-prompt" type="button">Copy the prompt</button><button class="text-button" id="auto-download-template" type="button">Download a sample brief</button></div>
+            </li>
+            <li class="automation-step" data-step="schedule">
+              <div class="step-head"><span class="step-status" id="step-schedule-status"></span><h4>Schedule it in ChatGPT</h4></div>
+              <ol class="step-substeps">
+                <li>Open <b>ChatGPT</b> and start a new chat.</li>
+                <li>Click <b>+</b> (or the tools menu) and turn on these connectors: <b>Outlook Email</b>, <b>Outlook Calendar</b>, <b>Jira</b> (Atlassian), <b>OneDrive</b>, and <b>Slack</b> if you use it. The task only uses connectors turned on here.</li>
+                <li>Paste the prompt from step 4 and send it once. Check that a file named <code>northstar-brief-…md</code> appears in your OneDrive folder.</li>
+                <li>Then type: <span class="step-quote" id="step-schedule-quote">Run this every weekday at 7:00 AM.</span> ChatGPT turns it into a scheduled task. You'll see it under your profile › <b>Tasks</b>.</li>
+              </ol>
+              <div class="step-actions"><button class="secondary-button" id="step-schedule-done" type="button">I've scheduled it</button></div>
+            </li>
+            <li class="automation-step" data-step="test">
+              <div class="step-head"><span class="step-status" id="step-test-status"></span><h4>Check that it worked</h4></div>
+              <p>Open <b>Daily brief</b> in the sidebar. You should see today's date, your calendar, and to-dos under each client. The dashboard checks the folder when you open it, when you come back to its tab, and every 5 minutes.</p>
+              <p class="step-detail" id="step-test-detail"></p>
+              <details class="troubleshoot"><summary>Something's missing?</summary><ul>
+                <li><b>Only Jira items, no email:</b> the Outlook Email connector wasn't on for the task. Edit the task, turn it on, and run it again.</li>
+                <li><b>Nothing shows up:</b> check the file landed in the folder you connected in step 3. If the dashboard says it needs a click, use <b>Check to-do folder</b> next to Clients on the Overview.</li>
+                <li><b>Items under the wrong client:</b> the heading in the brief should match the client's name on the dashboard. Agency names in brackets are fine, like "Carter Blood Care (Dieste)".</li>
+                <li><b>An account shows under "other accounts":</b> it isn't on the dashboard yet. Upload its IO and copy the prompt again so it's included.</li>
+                <li><b>No file was saved:</b> paste ChatGPT's reply into <b>Add brief</b> on the Daily brief page instead, and tell us so we can set up the email route.</li>
+              </ul></details>
+            </li>
+          </ol>
+
+          <h3 class="automation-heading">Report uploads <span class="coming-next">Coming next</span></h3>
+          <div class="panel automation-coming">
+            <p>Soon the dashboard will watch a folder of client reports the same way and import new ones on its own, adding each to its campaign when the match is clear and asking you only when it isn't. Until then, import reports with <b>Import report</b> at the top of the page. The setup will look like this:</p>
+            <ol class="step-substeps">
+              <li>In SharePoint, open the folder that holds your clients' reports and click <b>Add shortcut to My files</b> (or <b>Sync</b>) so it shows up in OneDrive on your computer.</li>
+              <li>Connect that folder here, the same way as step 3.</li>
+              <li>Pick how long to keep raw report files before they're cleared (180 days to start).</li>
+            </ol>
+          </div>
         </section>
 
         <section class="client-rollup" id="clients" aria-labelledby="client-rollup-title">
