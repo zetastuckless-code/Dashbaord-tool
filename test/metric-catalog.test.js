@@ -26,7 +26,8 @@ test("rolls several lines up from components rather than averaging ratios", () =
   assert.equal(metrics.impressions, 500_000);
   assert.ok(Math.abs(metrics.ctr - 850 / 500_000 * 100) < 1e-9);
   assert.equal(metrics.vcr, 70);
-  assert.equal(metrics.kpi, "Mixed KPIs");
+  // Lines on different primary KPIs show each one with its value.
+  assert.equal(metrics.kpi, "0.2% CTR · 70% VCR");
 });
 
 test("leaves unavailable metrics null and never divides by zero", () => {

@@ -143,7 +143,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const portfolio = { pacing: unitsPacing(activeUnits) };
   const portfolioValue = document.querySelector("#portfolio-pacing-value");
   const portfolioStatus = document.querySelector("#portfolio-pacing-status");
-  portfolioValue.textContent = portfolio.pacing === null ? "—" : `${portfolio.pacing.toFixed(1)}%`;
+  portfolioValue.textContent = portfolio.pacing === null ? "—" : `${portfolio.pacing.toFixed(0)}%`;
   portfolioValue.classList.remove("pace-over", "pace-under", "pace-on-track");
   if (paceClass(portfolio.pacing)) portfolioValue.classList.add(paceClass(portfolio.pacing));
   portfolioStatus.textContent = portfolio.pacing === null ? "No pacing data" : portfolio.pacing > alertRules.overPacing ? "Above plan" : portfolio.pacing < alertRules.underPacing ? "Below plan" : "On track";
@@ -225,6 +225,7 @@ function applyClientScopeChrome() {
   const heading = document.querySelector("#greeting");
   const subtitle = document.querySelector("#page-subtitle");
   if (!scoped) {
+    document.querySelector("#client-data-through").hidden = true;
     eyebrow.textContent = "PERFORMANCE CENTER";
     subtitle.textContent = "Here’s how your campaigns are tracking today.";
     renderProfile();
@@ -233,6 +234,11 @@ function applyClientScopeChrome() {
   }
   const rows = campaigns.filter(campaign => campaign.client === clientScope && !isCampaignArchived(campaign));
   const groups = groupCampaigns(rows);
+  // How current this client's numbers are: the newest report date, and the oldest when campaigns differ.
+  const throughDates = groups.filter(group => group.status !== "completed").map(group => group.records.map(record => record.dataAsOf).filter(Boolean).sort().at(-1)).filter(Boolean).sort();
+  const through = document.querySelector("#client-data-through");
+  through.hidden = !throughDates.length;
+  through.innerHTML = throughDates.length ? `<span class="data-through-dot"></span>Data through <strong>${escapeHtml(longDate(throughDates.at(-1)))}</strong>${throughDates[0] !== throughDates.at(-1) ? ` · oldest campaign through ${escapeHtml(longDate(throughDates[0]))}` : ""}` : "";
   const live = groups.filter(group => group.status === "live").length;
   eyebrow.textContent = "CLIENT ACCOUNT";
   heading.textContent = clientScope;
@@ -861,7 +867,7 @@ function renderPacingDetail() {
   const periodSub = period.daysWithData === 0 ? "No reports cover this period yet"
     : `${formatMoney(period.actualTotal)} over ${period.daysWithData} day${period.daysWithData === 1 ? "" : "s"}${period.baselineTotal > 0 ? ` · ${percentText(period.percent)} of a 100% pace (${perDay(period.avgBaseline)})` : ""}`;
   document.querySelector("#pacing-stats").innerHTML = [
-    stat("Pacing", detail.pacing === null ? "—" : `${detail.pacing.toFixed(1)}%`, `${status} · target ${alertRules.underPacing}–${alertRules.overPacing}%`, paceClass(detail.pacing)),
+    stat("Pacing", detail.pacing === null ? "—" : `${detail.pacing.toFixed(0)}%`, `${status} · target ${alertRules.underPacing}–${alertRules.overPacing}%`, paceClass(detail.pacing)),
     stat("Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
     stat("Expected at 100% pace", detail.expected > 0 ? formatMoney(detail.expected) : "—", detail.expected > 0 ? `${detail.spend >= detail.expected ? "ahead by" : "behind by"} ${formatMoney(Math.abs(detail.spend - detail.expected))}` : "Needs a budget and flight dates"),
     stat(range.label, perDay(period.avgActual), periodSub),
@@ -1538,16 +1544,10 @@ function renderImportAssignments() {
     const chip = choice === SKIP ? '<em class="preview-action replace">skipped</em>' : choice || sameName ? '<em class="preview-action update">added to campaign</em>' : updates ? '<em class="preview-action update">updates existing</em>' : '<em class="preview-action add">new campaign</em>';
     const budgetTotal = group.rows.reduce((sum, row) => sum + (Number.isFinite(row.budget) ? row.budget : 0), 0);
     const meta = [group.client, `${group.rows.length} line${group.rows.length === 1 ? "" : "s"}`, budgetTotal ? `${formatMoney(budgetTotal)} budget in report` : ""].filter(Boolean).map(escapeHtml).join(" · ");
-    let setup = "";
-    if (!choice) {
-      const values = { ...setupFieldsFromRow(group.rows[0]), name: group.name, ...edits };
-      const fields = [...SETUP_FIELDS, ...(group.rows.length === 1 ? SINGLE_LINE_FIELDS : [])];
-      const open = pending.openSetup.has(group.key) ? " open" : "";
-      setup = `<details class="import-setup" data-setup-details="${escapeHtml(group.key)}"${open}><summary>Review campaign setup</summary><div class="settings-grid import-setup-grid">${fields.map(([field, label, type]) => `<label>${label}<input type="${type}" data-setup-key="${escapeHtml(group.key)}" data-setup-field="${field}" value="${escapeHtml(values[field] ?? "")}" autocomplete="off" /></label>`).join("")}<label>Billing source<select data-setup-key="${escapeHtml(group.key)}" data-setup-field="billingSource">${[["first", "1st party"], ["third", "3rd party"], ["reported", "Reported spend"]].map(([value, label]) => `<option value="${value}"${values.billingSource === value ? " selected" : ""}>${label}</option>`).join("")}</select></label><label>Expected report<select data-setup-key="${escapeHtml(group.key)}" data-setup-field="reportCadence">${[["none", "Not monitored"], ["daily", "Daily"], ["weekly", "Weekly"]].map(([value, label]) => `<option value="${value}"${values.reportCadence === value ? " selected" : ""}>${label}</option>`).join("")}</select></label></div><small class="field-hint">Pulled from the report; correct anything that is wrong. ${group.rows.length > 1 ? "Budgets and dates stay per line, as reported." : ""}</small></details>`;
-    }
     const skippedHere = group.rows.filter(row => pending.skippedLines.has(assignmentKey(row))).length;
-    const lines = `<details class="import-group-lines"${skippedHere ? " open" : ""}><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} in this report${skippedHere ? ` · ${skippedHere} skipped` : ""} <small>(untick a line to leave it out)</small></summary>${group.rows.map(row => `<label class="import-line-include"><input type="checkbox" data-line-include="${escapeHtml(assignmentKey(row))}"${pending.skippedLines.has(assignmentKey(row)) ? "" : " checked"} /><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></label>`).join("")}</details>`;
-    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${setup}${lines}</div>`;
+    // The line selector is the one thing to review here; campaign details are edited from the campaign afterwards.
+    const lines = `<details class="import-group-lines" open><summary>${group.rows.length} line${group.rows.length === 1 ? "" : "s"} to import${skippedHere ? ` · ${skippedHere} left out` : ""} <small>(untick a line to leave it out)</small></summary>${group.rows.map(row => `<label class="import-line-include"><input type="checkbox" data-line-include="${escapeHtml(assignmentKey(row))}"${pending.skippedLines.has(assignmentKey(row)) ? "" : " checked"} /><span>${escapeHtml(lineLabel(row))}</span><span>${formatMoney(row.spend)} spend${Number.isFinite(row.budget) ? ` · ${formatMoney(row.budget)} budget` : ""}</span></label>`).join("")}</details>`;
+    return `<div class="import-assignment-block"><div class="import-assignment-row"><span><strong>${escapeHtml(group.name)}</strong><small>${meta} ${chip}</small></span><select data-group-choice="${escapeHtml(group.key)}" aria-label="What to do with ${escapeHtml(group.name)}"><option value="${KEEP}"${!choice ? " selected" : ""}>${keepLabel}</option>${targetOptions(choice)}</select></div>${lines}</div>`;
   }).join("");
 }
 
