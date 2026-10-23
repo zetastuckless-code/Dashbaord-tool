@@ -26,6 +26,7 @@ import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
+import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
 import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
@@ -1373,11 +1374,65 @@ document.querySelector("#remove-file").addEventListener("click", () => {
 });
 dialog.addEventListener("close", resetImportForm);
 let allowDuplicateOnce = false;
+let reviewingReportKey = null;
 validationResult.addEventListener("click", event => {
   if (!event.target.closest("#import-anyway")) return;
   allowDuplicateOnce = true;
   validateButton.click();
 });
+/**
+ * Reads and checks one report file and matches its campaigns, the same way for the import dialog and the watched report
+ * folder. Returns `{ status: "ready", pending }`, or `{ status: "duplicate" | "rejected", messages }` (already recorded).
+ */
+async function prepareImport(file, { allowDuplicate = false } = {}) {
+  const fileBytes = await file.arrayBuffer();
+  const fingerprint = await fingerprintBytes(fileBytes);
+  if (hasSuccessfulFingerprint(importHistory, fingerprint) && !allowDuplicate) {
+    recordImport(file.name, fingerprint, "Duplicate", 0, ["This exact report has already been imported."]);
+    return { status: "duplicate", messages: ["This exact report has already been imported. No dashboard data was changed."] };
+  }
+  let report;
+  try {
+    report = await readReportFile(file, fileBytes);
+  } catch (error) {
+    recordImport(file.name, fingerprint, "Rejected", 0, [error.message]);
+    return { status: "rejected", messages: [error.message] };
+  }
+  if (report.kind === "daily-delivery" || report.kind === "line-items") {
+    // Daily files and DSP line-item exports are no longer imported on their own; campaign reports carry the lines.
+    const message = "This file is a daily delivery or DSP line-item export. Import the campaign's performance report instead; its line breakdown is read automatically.";
+    recordImport(file.name, fingerprint, "Rejected", 0, [message]);
+    return { status: "rejected", messages: [message] };
+  }
+  const result = validateCampaignCsv(report.csvText);
+  if (result.valid && report.notes?.length) result.warnings.push(...report.notes);
+  if (!result.valid) {
+    recordImport(file.name, fingerprint, "Rejected", 0, result.errors);
+    return { status: "rejected", messages: result.errors };
+  }
+  const pending = { fileName: file.name, fingerprint, report, result, choices: defaultImportChoices(result.campaigns), groupEdits: {}, skippedLines: new Set() };
+  // Rows going into a campaign with an IO take their budget from the IO, so a missing report budget is not a problem.
+  if (result.campaigns.every(row => campaignTotals[pending.choices[assignmentKey(row)]])) result.warnings = result.warnings.filter(warning => !/has no budget|have no budget/.test(warning));
+  return { status: "ready", pending };
+}
+
+/** Saves the prepared import (`pendingValidatedImport`) into the dashboard. Returns how many lines it brought in. */
+function commitPendingImport({ automatic = false } = {}) {
+  const { fileName, fingerprint, result } = pendingValidatedImport;
+  const effectiveRows = effectiveImport().campaigns;
+  rememberAssignments(localStorage, result.campaigns, { ...pendingValidatedImport.choices, ...Object.fromEntries([...pendingValidatedImport.skippedLines].map(key => [key, SKIP])) });
+  const uploadedAt = new Date().toISOString();
+  const shellGroups = new Set(campaigns.filter(isPlaceholder).map(groupKey));
+  const mergeResult = previewCampaignImport(campaigns, effectiveRows.map(row => ({ ...row, sourceFile: fileName, uploads: [makeUpload({ kind: "report", fileName, source: row.source, date: row.dataAsOf || null, uploadedAt })] })), "merge");
+  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
+  // Lines that join a campaign set up beforehand do not own it, so removing their report keeps the campaign.
+  campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows).map(record => shellGroups.has(groupKey(record)) && record.uploads ? { ...record, uploads: record.uploads.map(upload => upload.fileName === fileName ? { ...upload, created: false } : upload) } : record);
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  const warnings = automatic ? [...result.warnings, "Imported automatically from the watched report folder."] : result.warnings;
+  recordImport(fileName, fingerprint, result.warnings.length ? "Imported with warnings" : "Imported", effectiveRows.length, [], effectiveRows.map(campaignImportKey), warnings);
+  return effectiveRows.length;
+}
+
 validateButton.addEventListener("click", async () => {
   const file = fileInput.files[0];
   if (!file) return;
@@ -1385,49 +1440,17 @@ validateButton.addEventListener("click", async () => {
   validateButton.textContent = "Validating…";
   document.querySelector("#import-preview").hidden = true;
   document.querySelector("#mapping-review").hidden = true;
-  const fileBytes = await file.arrayBuffer();
-  const fingerprint = await fingerprintBytes(fileBytes);
-  if (hasSuccessfulFingerprint(importHistory, fingerprint) && !allowDuplicateOnce) {
-    recordImport(file.name, fingerprint, "Duplicate", 0, ["This exact report has already been imported."]);
-    showValidationResult(["This exact report has already been imported. No dashboard data was changed."], "error");
-    validationResult.insertAdjacentHTML("beforeend", '<p class="duplicate-hint">Removed it from the client\u2019s uploads, or imported only part of it? Importing again is safe: rows already in the dashboard are updated, not duplicated. <button type="button" class="text-button" id="import-anyway">Import it again anyway</button></p>');
-    validateButton.textContent = "Validate report";
-    validateButton.disabled = false;
-    return;
-  }
+  const prepared = await prepareImport(file, { allowDuplicate: allowDuplicateOnce });
   allowDuplicateOnce = false;
-  let report;
-  try {
-    report = await readReportFile(file, fileBytes);
-  } catch (error) {
-    recordImport(file.name, fingerprint, "Rejected", 0, [error.message]);
-    showValidationResult([error.message], "error");
-    validateButton.textContent = "Validate report";
-    validateButton.disabled = false;
-    return;
-  }
-  if (report.kind === "daily-delivery" || report.kind === "line-items") {
-    // Daily files and DSP line-item exports are no longer imported on their own; campaign reports carry the lines.
-    const message = "This file is a daily delivery or DSP line-item export. Import the campaign's performance report instead; its line breakdown is read automatically.";
-    recordImport(file.name, fingerprint, "Rejected", 0, [message]);
-    showValidationResult([message], "error");
-    validateButton.textContent = "Validate report";
-    validateButton.disabled = false;
-    return;
-  }
-  const result = validateCampaignCsv(report.csvText);
-  if (result.valid && report.notes?.length) result.warnings.push(...report.notes);
   validateButton.textContent = "Validate report";
-  if (!result.valid) {
-    recordImport(file.name, fingerprint, "Rejected", 0, result.errors);
-    showValidationResult(result.errors, "error");
+  if (prepared.status !== "ready") {
+    showValidationResult(prepared.messages, "error");
+    if (prepared.status === "duplicate") validationResult.insertAdjacentHTML("beforeend", '<p class="duplicate-hint">Removed it from the client\u2019s uploads, or imported only part of it? Importing again is safe: rows already in the dashboard are updated, not duplicated. <button type="button" class="text-button" id="import-anyway">Import it again anyway</button></p>');
     validateButton.disabled = false;
     return;
   }
-  pendingValidatedImport = { fileName: file.name, fingerprint, report, result, choices: defaultImportChoices(result.campaigns), groupEdits: {}, skippedLines: new Set() };
-  // Rows going into a campaign with an IO take their budget from the IO, so a missing report budget is not a problem.
-  const choices = pendingValidatedImport.choices;
-  if (result.campaigns.every(row => campaignTotals[choices[assignmentKey(row)]])) result.warnings = result.warnings.filter(warning => !/has no budget|have no budget/.test(warning));
+  pendingValidatedImport = prepared.pending;
+  const { report, result } = pendingValidatedImport;
   normalizeLineSkips();
   renderImportAssignments();
   const effectiveRows = effectiveImport().campaigns;
@@ -1440,23 +1463,13 @@ validateButton.addEventListener("click", async () => {
 });
 confirmImportButton.addEventListener("click", () => {
   if (!pendingValidatedImport) return;
-  const { fileName, fingerprint, result } = pendingValidatedImport;
-  const importMode = "merge";
-  const effectiveRows = effectiveImport().campaigns;
-  rememberAssignments(localStorage, result.campaigns, { ...pendingValidatedImport.choices, ...Object.fromEntries([...pendingValidatedImport.skippedLines].map(key => [key, SKIP])) });
   if (setupErrors().length) return;
-  const uploadedAt = new Date().toISOString();
-  const shellGroups = new Set(campaigns.filter(isPlaceholder).map(groupKey));
-  const mergeResult = previewCampaignImport(campaigns, effectiveRows.map(row => ({ ...row, sourceFile: fileName, uploads: [makeUpload({ kind: "report", fileName, source: row.source, date: row.dataAsOf || null, uploadedAt })] })), importMode);
-  writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
-  // Lines that join a campaign set up beforehand do not own it, so removing their report keeps the campaign.
-  campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows).map(record => shellGroups.has(groupKey(record)) && record.uploads ? { ...record, uploads: record.uploads.map(upload => upload.fileName === fileName ? { ...upload, created: false } : upload) } : record);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
-  const importStatus = result.warnings.length ? "Imported with warnings" : "Imported";
-  recordImport(fileName, fingerprint, importStatus, effectiveRows.length, [], effectiveRows.map(campaignImportKey), result.warnings);
+  const count = commitPendingImport();
+  // A report held for review is done once it is imported by hand.
+  if (reviewingReportKey) { localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== reviewingReportKey))); reviewingReportKey = null; renderReportAutomation(); }
   refreshClientFilter();
   renderCampaigns();
-  document.querySelector("#toast-message").textContent = `${effectiveRows.length} campaign row${effectiveRows.length === 1 ? "" : "s"} imported successfully.`;
+  document.querySelector("#toast-message").textContent = `${count} campaign row${count === 1 ? "" : "s"} imported successfully.`;
   document.querySelector("#toast-title").textContent = "Report imported";
   setTimeout(() => {
     dialog.close();
@@ -2637,7 +2650,7 @@ function applyPageView() {
   document.querySelector("#greeting").textContent = pageView === "brief" ? "Daily brief" : "Automation";
   document.querySelector("#page-subtitle").textContent = pageView === "brief" ? "Your morning brief and every client's to-dos in one place." : "Set up the morning brief and report uploads, step by step.";
   document.title = `Zeta | ${pageView === "brief" ? "Daily brief" : "Automation"}`;
-  if (pageView === "brief") renderBriefPage(); else renderAutomationPage();
+  if (pageView === "brief") renderBriefPage(); else { renderAutomationPage(); renderReportAutomation(); }
 }
 
 /** One to-do row with its checkbox, tag, due date, source, link, and remove button. */
@@ -2742,8 +2755,8 @@ function renderAutomationPage() {
   const recent = brief && (Date.parse(`${todayIso()}T00:00:00Z`) - Date.parse(`${brief.date}T00:00:00Z`)) / 86_400_000 <= 3;
   stepStatus("test", recent ? "done" : "todo");
   document.querySelector("#step-test-detail").textContent = brief ? `Last brief: ${longDate(brief.date)} from ${brief.sources || "the morning scan"}${brief.skipped ? ` (skipped: ${brief.skipped})` : ""}.` : "No brief has arrived yet.";
-  const done = document.querySelectorAll(".automation-step.is-done").length;
-  const total = document.querySelectorAll(".automation-step").length;
+  const done = document.querySelectorAll("#brief-steps .automation-step.is-done").length;
+  const total = document.querySelectorAll("#brief-steps .automation-step").length;
   document.querySelector("#automation-progress").innerHTML = `<div class="progress-track"><span style="width:${done / total * 100}%"></span></div><span>${done} of ${total} steps done${done === total ? " · your morning brief is set up" : ""}</span>`;
 }
 
@@ -2782,6 +2795,160 @@ document.querySelector("#step-schedule-done").addEventListener("click", () => {
   saveAutomation();
   renderAutomationPage();
 });
+
+// --- Watched report folder: new reports import on their own when every campaign in them matches one on the dashboard ---
+const REPORT_FOLDER_KEY = "report-folder";
+const REPORT_ACTIVITY_KEY = "northstar-report-activity";
+let reportFolder = null;
+let reportState = { lastChecked: null, needsClick: false, running: false, scanned: 0, truncated: false };
+let reportSettings = readReportSettings(localStorage);
+const readReportActivity = () => { try { const value = JSON.parse(localStorage.getItem(REPORT_ACTIVITY_KEY)); return Array.isArray(value) ? value : []; } catch { return []; } };
+
+/** Whether a prepared import can go in without a person: every campaign in it lands on one already on the dashboard. */
+function importIsClear() {
+  const existing = new Set(groupCampaigns(campaigns.filter(record => !isCampaignArchived(record))).map(group => group.key));
+  if (!effectiveImport().campaigns.length) return { clear: false, reason: "Every line in it is skipped" };
+  for (const group of importGroups()) {
+    const choice = groupChoice(group);
+    if (choice === SKIP || (choice && existing.has(choice)) || (choice === KEEP && existing.has(group.key))) continue;
+    const actions = previewCampaignImport(campaigns, group.rows).actions.map(item => item.action);
+    if (actions.length && actions.every(action => action === "update")) continue;
+    return { clear: false, reason: `“${group.name}” doesn't match a campaign on the dashboard. Upload its IO first, or pick the campaign yourself.` };
+  }
+  return { clear: true };
+}
+
+async function checkReportFolder({ ask = false } = {}) {
+  if (!reportFolder || reportState.running || dialog.open) return;
+  let permission = await reportFolder.queryPermission({ mode: "read" });
+  if (permission !== "granted" && ask) permission = await reportFolder.requestPermission({ mode: "read" });
+  reportState.needsClick = permission !== "granted";
+  if (reportState.needsClick) { renderReportAutomation(); return; }
+  reportState.running = true;
+  renderReportAutomation();
+  const imported = [];
+  try {
+    let ledger = readReportLedger(localStorage);
+    let inbox = readReportInbox(localStorage);
+    const activity = readReportActivity();
+    const scan = await findNewReports(reportFolder, ledger, reportSettings);
+    reportState.scanned = scan.scanned;
+    reportState.truncated = scan.truncated;
+    for (const entry of scan.files) {
+      let outcome;
+      let reason = "";
+      const prepared = await prepareImport(entry.file);
+      if (prepared.status === "duplicate") outcome = "already imported";
+      else if (prepared.status === "rejected") { outcome = "couldn't read"; reason = prepared.messages[0]; }
+      else {
+        pendingValidatedImport = prepared.pending;
+        normalizeLineSkips();
+        const check = importIsClear();
+        if (check.clear) {
+          const lines = commitPendingImport({ automatic: true });
+          outcome = "imported";
+          reason = `${lines} line${lines === 1 ? "" : "s"}`;
+          imported.push(entry.name);
+        } else { outcome = "needs review"; reason = check.reason; }
+        pendingValidatedImport = null;
+      }
+      ledger = noteReport(ledger, entry.key, entry.lastModified, outcome, reportSettings);
+      inbox = inbox.filter(item => item.key !== entry.key);
+      if (outcome === "needs review" || outcome === "couldn't read") inbox.push({ key: entry.key, name: entry.name, folder: entry.path.join(" › "), reason, outcome, foundAt: new Date().toISOString() });
+      activity.unshift({ at: new Date().toISOString(), name: entry.name, outcome, reason });
+    }
+    localStorage.setItem(REPORT_LEDGER_KEY, JSON.stringify(ledger));
+    localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(inbox));
+    localStorage.setItem(REPORT_ACTIVITY_KEY, JSON.stringify(activity.slice(0, 40)));
+    reportState.lastChecked = new Date();
+  } catch {
+    reportState.needsClick = true;
+  } finally {
+    reportState.running = false;
+  }
+  if (imported.length) {
+    refreshAfterDataChange();
+    showToast("Reports imported", `${imported.length} new report${imported.length === 1 ? "" : "s"} from “${reportFolder.name}”: ${imported.slice(0, 2).join(", ")}${imported.length > 2 ? "…" : ""}`);
+  } else renderCampaigns(document.querySelector("#client-filter").value);
+  renderReportAutomation();
+}
+
+const outcomeLabel = { imported: "Imported", "needs review": "Needs review", "couldn't read": "Couldn't read", "already imported": "Already imported" };
+function renderReportAutomation() {
+  const inbox = readReportInbox(localStorage);
+  const chip = document.querySelector("#report-review-chip");
+  chip.hidden = !inbox.length;
+  chip.textContent = `${inbox.length} report${inbox.length === 1 ? "" : "s"} to review`;
+  document.querySelector("#report-folder-reconnect").hidden = !(reportFolder && reportState.needsClick);
+  if (pageView !== "automation") return;
+  stepStatus("rfolder", reportFolder ? "done" : "todo");
+  stepStatus("rconnect", reportFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
+  stepStatus("rreview", !reportFolder ? "todo" : inbox.length ? "warn" : "done");
+  document.querySelector("#report-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : !reportFolder ? "Not connected yet." : reportState.needsClick ? `Connected to “${reportFolder.name}”. Chrome needs one click this visit: press Check now.` : reportState.running ? `Checking “${reportFolder.name}”…` : `Watching “${reportFolder.name}”${reportState.lastChecked ? ` · checked ${reportState.lastChecked.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}, ${reportState.scanned.toLocaleString()} items looked at` : ""}${reportState.truncated ? ". That folder is very large; pick a narrower one so nothing is missed" : ""}.`;
+  document.querySelector("#report-connect-button").textContent = reportFolder ? "Change folder…" : "Connect folder…";
+  document.querySelector("#report-connect-button").disabled = !folderSupported;
+  document.querySelector("#report-check-now").hidden = !reportFolder;
+  document.querySelector("#report-disconnect").hidden = !reportFolder;
+  document.querySelector("#report-only-folders").checked = reportSettings.onlyReportFolders;
+  document.querySelector("#report-lookback").value = reportSettings.lookbackDays;
+  document.querySelector("#report-retention").value = reportSettings.retentionDays;
+  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${escapeHtml(item.reason)}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
+  const activity = readReportActivity().slice(0, 8);
+  document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
+}
+
+document.querySelector("#report-connect-button").addEventListener("click", async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ id: "northstar-reports", mode: "read" });
+    reportFolder = handle;
+    await saveFolderHandle(indexedDB, REPORT_FOLDER_KEY, handle);
+    await checkReportFolder({ ask: true });
+  } catch { /* the picker was closed */ }
+  renderReportAutomation();
+});
+document.querySelector("#report-disconnect").addEventListener("click", async () => {
+  reportFolder = null;
+  await saveFolderHandle(indexedDB, REPORT_FOLDER_KEY, null).catch(() => {});
+  renderReportAutomation();
+});
+document.querySelector("#report-check-now").addEventListener("click", () => checkReportFolder({ ask: true }));
+document.querySelector("#report-folder-reconnect").addEventListener("click", () => checkReportFolder({ ask: true }));
+document.querySelector("#report-review-chip").addEventListener("click", () => { setPageView("automation"); setTimeout(() => document.querySelector("#report-inbox").scrollIntoView({ block: "center" }), 50); });
+document.querySelector("#automation-page").addEventListener("change", event => {
+  if (!["report-only-folders", "report-lookback", "report-retention"].includes(event.target.id)) return;
+  const days = (value, fallback) => Math.max(1, Math.min(3650, Math.round(Number(value)) || fallback));
+  reportSettings = { onlyReportFolders: document.querySelector("#report-only-folders").checked, lookbackDays: days(document.querySelector("#report-lookback").value, 30), retentionDays: days(document.querySelector("#report-retention").value, 180) };
+  localStorage.setItem(REPORT_SETTINGS_KEY, JSON.stringify(reportSettings));
+  renderReportAutomation();
+});
+document.querySelector("#report-inbox").addEventListener("click", async event => {
+  const dismiss = event.target.closest("[data-report-dismiss]");
+  if (dismiss) { localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== dismiss.dataset.reportDismiss))); renderReportAutomation(); return; }
+  const review = event.target.closest("[data-report-review]");
+  if (!review || !reportFolder) return;
+  try {
+    const file = await openReportAt(reportFolder, review.dataset.reportReview);
+    reviewingReportKey = review.dataset.reportReview;
+    openImportDialog();
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([file], file.name, { type: file.type, lastModified: file.lastModified }));
+    fileInput.files = transfer.files;
+    fileInput.dispatchEvent(new Event("change"));
+    allowDuplicateOnce = true;
+    validateButton.click();
+  } catch {
+    showToast("Couldn't open it", "The file moved or OneDrive hasn't finished syncing it. Try Check now, or import it with Import report.");
+  }
+});
+if (folderSupported) {
+  loadFolderHandle(indexedDB, REPORT_FOLDER_KEY).then(handle => {
+    reportFolder = handle;
+    renderReportAutomation();
+    return checkReportFolder();
+  }).catch(() => renderReportAutomation());
+  setInterval(() => { if (reportFolder && !reportState.needsClick && document.visibilityState === "visible") checkReportFolder(); }, 10 * 60_000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && reportFolder && !reportState.needsClick) checkReportFolder(); });
+} else renderReportAutomation();
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
 document.querySelector("#sources-kind").addEventListener("change", event => { sourcesFilter.kind = event.target.value; renderDataSources(); });
