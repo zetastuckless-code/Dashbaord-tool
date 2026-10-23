@@ -67,7 +67,7 @@ import readXlsxFile, { readSheetNames } from "read-excel-file";
 import { attachLineDays, billingFileName, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
-import { buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
+import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
 // Each line's DCM and DSP days load from IndexedDB just after the page opens; until then the saved top-ups stand as they are.
@@ -402,6 +402,8 @@ let campaignTotals = readCampaignTotals(localStorage);
 let onboarding = readOnboarding(localStorage);
 let reviewedImports = readReviewedImports(localStorage);
 let lastKpiWatch = null;
+// The client the ChatGPT prompt builder is writing for; "" is the shared all-clients skill.
+let promptTarget = "";
 let billing = readBilling(localStorage);
 let salesforce = readSalesforce(localStorage);
 let reporting = readReporting(localStorage);
@@ -3962,16 +3964,20 @@ document.querySelector("#settings-salesforce-domain").addEventListener("change",
 
 // --- Reporting packs: each client's numbers saved on a schedule for a ChatGPT task to turn into insights and an email ---
 function todayLocal() { const now = new Date(); return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10); }
-function reportingSchedule(client) { return (reporting.clients ||= {})[client] ||= { cadence: "off", weekday: 1, monthDay: 1, note: "" }; }
+function reportingSchedule(client) { return (reporting.clients ||= {})[client] ||= { cadence: "off", weekday: 1, monthDay: 1, window: "7", note: "" }; }
 function saveReporting() { reporting = writeReporting(localStorage, reporting); }
 let pendingPacks = [];
 
-function clientPack(client) {
+async function clientPack(client) {
   const records = campaigns.filter(record => record.client === client && !isCampaignArchived(record) && !isPlaceholder(record) && ["live", "completed"].includes(dashboardFlightStatus(record)))
     .filter(record => dashboardFlightStatus(record) === "live" || (record.endDate && record.endDate >= addDaysIso(todayLocal(), -14)));
   const alerts = unacknowledgedAlerts(evaluateAlerts(records), acknowledgedAlertIds);
   const open = todos.filter(item => item.client === client && isOpen(item));
-  return buildReportingPack({ client, records, totals: campaignTotals, alerts, todos: open, today: todayLocal(), schedule: reportingSchedule(client), kpiTolerance: alertRules.kpiTolerance });
+  // The DCM and DSP rows behind each line, far enough back for a full month against the month before.
+  const from = addDaysIso(todayLocal(), -70);
+  const names = records.map(record => record.name);
+  const rawRows = (await Promise.all(["CM360", "DSP"].map(source => readRawRows(indexedDB, source, names, from, todayLocal()).catch(() => [])))).flat();
+  return buildReportingPack({ client, records, totals: campaignTotals, alerts, todos: open, today: todayLocal(), schedule: reportingSchedule(client), kpiTolerance: alertRules.kpiTolerance, rawRows });
 }
 function addDaysIso(day, count) { return new Date(Date.parse(`${day}T00:00:00Z`) + count * 86_400_000).toISOString().slice(0, 10); }
 
@@ -3982,7 +3988,7 @@ async function savePack(client, { ask = false } = {}) {
   if (permission !== "granted" && ask) permission = await todoFolder.requestPermission({ mode: "readwrite" });
   if (permission !== "granted") return false;
   const folder = await todoFolder.getDirectoryHandle(PACK_FOLDER, { create: true });
-  const pack = clientPack(client);
+  const pack = await clientPack(client);
   const names = packFileNames(client, todayLocal());
   for (const [name, text] of [[names.markdown, pack.markdown], [names.csv, pack.csv]]) {
     const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
@@ -4025,6 +4031,7 @@ function renderClientReporting() {
     <label>Schedule<select data-reporting="cadence">${Object.entries(CADENCES).map(([value, label]) => option(value, label, schedule.cadence)).join("")}</select></label>
     ${["weekly", "biweekly"].includes(schedule.cadence) ? `<label>Day<select data-reporting="weekday">${[1, 2, 3, 4, 5, 6, 0].map(day => option(day, weekdayName(day), schedule.weekday)).join("")}</select></label>` : ""}
     ${schedule.cadence === "monthly" ? `<label>Day of the month<select data-reporting="monthDay">${Array.from({ length: 28 }, (_, index) => option(index + 1, String(index + 1), schedule.monthDay)).join("")}</select></label>` : ""}
+    <label>Compare<select data-reporting="window">${Object.entries(REPORT_WINDOWS).map(([value, label]) => option(value, label, schedule.window || "7")).join("")}</select></label>
     <label class="wide">Notes for ChatGPT<textarea data-reporting="note" rows="2" placeholder="Like: trim the YouTube lines, lead with CPA, the email goes to Brad.">${escapeHtml(schedule.note || "")}</textarea></label>`;
   const due = lastDueDate(schedule, todayLocal());
   document.querySelector("#reporting-status").textContent = schedule.cadence === "off" ? "No schedule. Save a pack now any time, or pick a schedule." : `${schedule.lastWritten ? `Last saved ${shortDate(schedule.lastWritten)}${schedule.lastFile ? ` as ${schedule.lastFile}` : ""}. ` : ""}${isPackDue(schedule, todayLocal()) ? `Due ${due ? shortDate(due) : "now"}${todoFolder ? "" : "; connect your morning brief folder on the Automation page to save it"}.` : "Up to date."}`;
@@ -4051,9 +4058,9 @@ document.querySelector("#reporting-save-now").addEventListener("click", async ()
   }
   renderClientReporting();
 });
-document.querySelector("#reporting-download").addEventListener("click", () => {
+document.querySelector("#reporting-download").addEventListener("click", async () => {
   if (!clientScope) return;
-  const pack = clientPack(clientScope);
+  const pack = await clientPack(clientScope);
   const names = packFileNames(clientScope, todayLocal());
   for (const [name, text, type] of [[names.markdown, pack.markdown, "text/markdown"], [names.csv, pack.csv, "text/csv"]]) {
     const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
@@ -4062,19 +4069,36 @@ document.querySelector("#reporting-download").addEventListener("click", () => {
   }
 });
 
-// --- The ChatGPT side: a few questions fill in the skill prompt and the scheduled-task prompt ---
-function promptAnswers() { return { ...DEFAULT_PROMPT_ANSWERS, signOff: localStorage.getItem("northstar-profile-name") || "", ...(reporting.prompt || {}) }; }
+// --- The ChatGPT side: a few questions per client fill in the skill, its scheduled task, or an update to a skill you have ---
+function promptAnswers(target = promptTarget) {
+  const saved = reporting.prompts?.[target] || (target === "" ? reporting.prompt : null) || {};
+  const schedule = target ? reportingSchedule(target) : {};
+  return { ...DEFAULT_PROMPT_ANSWERS, signOff: localStorage.getItem("northstar-profile-name")?.split(/\s+/)[0] || "", skillName: defaultSkillName(target), window: schedule.window || "7", ...saved };
+}
+function promptOptions() { return { client: promptTarget, schedule: promptTarget ? reportingSchedule(promptTarget) : {}, folder: todoFolder?.name || "your morning brief folder", owner: localStorage.getItem("northstar-profile-name") || "me" }; }
 function renderPromptBuilder() {
   const answers = promptAnswers();
   const form = document.querySelector("#prompt-builder");
   if (!form.contains(document.activeElement)) {
-    document.querySelector("#prompt-includes").innerHTML = Object.entries(PROMPT_INCLUDES).map(([key, label]) => `<label><input type="checkbox" name="includes" value="${key}"${answers.includes.includes(key) ? " checked" : ""} /> ${escapeHtml(label)}</label>`).join("");
-    document.querySelector("#prompt-outputs").innerHTML = Object.entries(PROMPT_OUTPUTS).map(([key, label]) => `<label><input type="checkbox" name="outputs" value="${key}"${answers.outputs.includes(key) ? " checked" : ""} /> ${escapeHtml(label)}</label>`).join("");
-    for (const name of ["skillName", "tone", "insightCount", "emailExample", "fileExample", "signOff", "weekday", "time"]) form.elements[name].value = answers[name] ?? "";
-    form.elements.attachExample.checked = Boolean(answers.attachExample);
+    const clients = trackedClients();
+    if (promptTarget && !clients.includes(promptTarget)) promptTarget = "";
+    document.querySelector("#prompt-client").innerHTML = `<option value="">All clients (one shared skill)</option>${clients.map(client => `<option${client === promptTarget ? " selected" : ""}>${escapeHtml(client)}</option>`).join("")}`;
+    form.elements.window.innerHTML = Object.entries(REPORT_WINDOWS).map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("");
+    const checks = (id, name, options, chosen) => { document.querySelector(id).innerHTML = Object.entries(options).map(([key, label]) => `<label><input type="checkbox" name="${name}" value="${key}"${chosen.includes(key) ? " checked" : ""} /> ${escapeHtml(label)}</label>`).join(""); };
+    checks("#prompt-includes", "includes", PROMPT_INCLUDES, answers.includes);
+    checks("#prompt-breakdowns", "breakdowns", PROMPT_BREAKDOWNS, answers.breakdowns);
+    checks("#prompt-outputs", "outputs", PROMPT_OUTPUTS, answers.outputs);
+    for (const name of ["skillName", "window", "source", "declines", "tone", "insightCount", "subject", "greeting", "closing", "emailExample", "fileExample", "extraRules", "existingSkill", "signOff", "weekday", "time"]) form.elements[name].value = answers[name] ?? "";
+    for (const name of ["attachExample", "privateNotes"]) form.elements[name].checked = Boolean(answers[name]);
   }
-  document.querySelector("#reporting-skill-preview").textContent = buildSkillPrompt(answers);
-  document.querySelector("#reporting-prompt-preview").textContent = buildSchedulePrompt(answers, { folder: todoFolder?.name || "your morning brief folder" });
+  const options = promptOptions();
+  const adapter = buildAdapterPrompt(answers, options);
+  document.querySelector("#reporting-skill-preview").textContent = buildSkillPrompt(answers, options);
+  document.querySelector("#reporting-adapter-preview").textContent = adapter;
+  document.querySelector("#reporting-adapter-details").hidden = !adapter;
+  document.querySelector("#reporting-copy-adapter").hidden = !adapter;
+  document.querySelector("#reporting-copy-skill").className = adapter ? "secondary-button" : "primary-button";
+  document.querySelector("#reporting-prompt-preview").textContent = buildSchedulePrompt(answers, options);
   const scheduled = Object.values(reporting.clients || {}).filter(schedule => schedule.cadence && schedule.cadence !== "off").length;
   stepStatus("pfolder", todoFolder ? "done" : "todo");
   stepStatus("pschedule", scheduled ? "done" : "todo");
@@ -4082,14 +4106,24 @@ function renderPromptBuilder() {
   document.querySelector("#reporting-folder-detail").textContent = todoFolder ? `Packs go in “${todoFolder.name}/${PACK_FOLDER}”.` : "Connect your morning brief folder in the steps above first.";
   document.querySelector("#reporting-schedule-detail").textContent = scheduled ? `${scheduled} client${scheduled === 1 ? " has" : "s have"} a schedule.` : "No client has a schedule yet.";
 }
-document.querySelector("#prompt-builder").addEventListener("input", () => {
+document.querySelector("#prompt-builder").addEventListener("input", event => {
   const form = document.querySelector("#prompt-builder");
+  if (event.target.name === "client") {
+    promptTarget = event.target.value;
+    document.activeElement.blur();
+    renderPromptBuilder();
+    return;
+  }
   const checked = name => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map(input => input.value);
-  reporting.prompt = { skillName: form.elements.skillName.value.trim() || DEFAULT_PROMPT_ANSWERS.skillName, includes: checked("includes"), outputs: checked("outputs"), tone: form.elements.tone.value, insightCount: form.elements.insightCount.value, emailExample: form.elements.emailExample.value, fileExample: form.elements.fileExample.value, attachExample: form.elements.attachExample.checked, signOff: form.elements.signOff.value.trim(), weekday: form.elements.weekday.value === "weekdays" ? "weekdays" : Number(form.elements.weekday.value), time: form.elements.time.value || "10:00" };
+  const value = name => form.elements[name].value;
+  const answers = { skillName: value("skillName").trim(), window: value("window"), source: value("source"), declines: value("declines"), includes: checked("includes"), breakdowns: checked("breakdowns"), outputs: checked("outputs"), tone: value("tone"), insightCount: value("insightCount"), privateNotes: form.elements.privateNotes.checked, subject: value("subject").trim(), greeting: value("greeting").trim(), closing: value("closing").trim(), emailExample: value("emailExample"), fileExample: value("fileExample"), attachExample: form.elements.attachExample.checked, extraRules: value("extraRules"), existingSkill: value("existingSkill"), signOff: value("signOff").trim(), weekday: value("weekday") === "weekdays" ? "weekdays" : Number(value("weekday")), time: value("time") || "10:00" };
+  reporting.prompts = { ...(reporting.prompts || {}), [promptTarget]: answers };
+  // The comparison window is the client's: the pack and the skill use the same dates.
+  if (promptTarget && event.target.name === "window") reportingSchedule(promptTarget).window = answers.window;
   saveReporting();
   renderPromptBuilder();
 });
-for (const [button, preview, label] of [["#reporting-copy-skill", "#reporting-skill-preview", "Skill prompt"], ["#reporting-copy-prompt", "#reporting-prompt-preview", "Schedule prompt"]]) {
+for (const [button, preview, label] of [["#reporting-copy-skill", "#reporting-skill-preview", "Skill prompt"], ["#reporting-copy-adapter", "#reporting-adapter-preview", "Update my skill prompt"], ["#reporting-copy-prompt", "#reporting-prompt-preview", "Schedule prompt"]]) {
   document.querySelector(button).addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(document.querySelector(preview).textContent);

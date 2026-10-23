@@ -393,26 +393,38 @@
               <div class="step-head"><span class="step-status" id="step-pprompt-status"></span><h4>Schedule the ChatGPT task</h4></div>
               <p>Answer a few questions and the dashboard writes two prompts: one that sets up your reporting skill in ChatGPT, and one that schedules it. Your answers are saved, so you can come back and change them.</p>
               <form class="prompt-builder" id="prompt-builder">
+                <label class="wide">Which client is this for?<select name="client" id="prompt-client"></select><small>Pick a client for a skill made just for them (best when each client's report is different), or one skill for all.</small></label>
+                <label class="wide">Already have a skill for this? Paste it <small>Optional. The dashboard writes a prompt that updates it to read the reporting pack, and keeps everything else about it.</small><textarea name="existingSkill" rows="4" placeholder="---&#10;name: &quot;natures-sunshine-biweekly-report&quot;&#10;…"></textarea></label>
                 <label class="wide">Skill name<input name="skillName" autocomplete="off" /></label>
+                <label>Compare<select name="window"></select></label>
+                <label>Client-facing numbers from<select name="source"><option value="report">The client's report</option><option value="dcm">DCM</option><option value="dsp">DSP</option></select></label>
+                <label>How to word declines<select name="declines"><option value="noDips">Current number only, list declines for me</option><option value="show">Show the change either way</option></select></label>
                 <fieldset class="wide"><legend>What should the insights cover?</legend><div class="prompt-checks" id="prompt-includes"></div></fieldset>
+                <fieldset class="wide"><legend>Break results down by</legend><div class="prompt-checks" id="prompt-breakdowns"></div></fieldset>
                 <fieldset class="wide"><legend>What should ChatGPT give you?</legend><div class="prompt-checks" id="prompt-outputs"></div></fieldset>
                 <label>Style<select name="tone"><option value="direct">Short and direct</option><option value="detailed">Detailed, with the numbers</option><option value="executive">Executive summary</option></select></label>
-                <label>How many insights<select name="insightCount"><option>2 to 3</option><option>3 to 5</option><option>5 to 7</option></select></label>
+                <label>How many insights<select name="insightCount"><option>2 to 3</option><option>3 to 5</option><option>4 to 5</option><option>5 to 7</option></select></label>
+                <label class="prompt-attach"><input type="checkbox" name="privateNotes" /> End with private notes for me to check before sending</label>
+                <label>Subject line<input name="subject" autocomplete="off" placeholder="Natures reporting M/D/YY" /></label>
+                <label>Greeting<input name="greeting" autocomplete="off" placeholder="Hi [Name]," /></label>
+                <label>Closing line<input name="closing" autocomplete="off" placeholder="Let us know if you have any questions!" /></label>
                 <label class="wide">Paste an email you normally send <small>Old numbers are fine; it shows ChatGPT your length, structure, and tone.</small><textarea name="emailExample" rows="5" placeholder="Hi Brad, here's where Nature's Sunshine landed this week…"></textarea></label>
                 <label class="wide">Describe the finished report file <small>Only if you want a trimmed file: tabs, columns, what gets cut.</small><textarea name="fileExample" rows="3" placeholder="One Summary tab with spend, impressions, CTR, and CPA by line; drop lines under $500."></textarea></label>
                 <label class="wide prompt-attach"><input type="checkbox" name="attachExample" /> I’ll attach an example of the finished report in ChatGPT when I paste the skill prompt</label>
+                <label class="wide">Client-specific rules <small>Data quirks and must-dos, one per line.</small><textarea name="extraRules" rows="3" placeholder="Skip LapsedWebsite placements; they're usually pennies.&#10;Aug 31, 2026 is permanently missing from the data."></textarea></label>
                 <label>Sign the email as<input name="signOff" autocomplete="off" placeholder="Your name" /></label>
                 <label>Run it<select name="weekday"><option value="weekdays">Every weekday</option><option value="1">Mondays</option><option value="2">Tuesdays</option><option value="3">Wednesdays</option><option value="4">Thursdays</option><option value="5">Fridays</option></select></label>
                 <label>At<input type="time" name="time" /></label>
               </form>
               <ol class="step-substeps">
                 <li>In ChatGPT, open the project you use for reporting and turn on the <b>OneDrive</b> connector.</li>
-                <li>Paste the <b>skill prompt</b>, attaching your example report if you said you would. Send it.</li>
+                <li>Paste the <b>skill prompt</b> (or, if you pasted a skill you already have, the <b>update my skill</b> prompt), attaching your example report if you said you would. Send it.</li>
                 <li>Then paste the <b>schedule prompt</b> and send it. ChatGPT sets it up as a scheduled task.</li>
               </ol>
               <details class="prompt-preview"><summary>See the skill prompt</summary><pre id="reporting-skill-preview"></pre></details>
+              <details class="prompt-preview" id="reporting-adapter-details" hidden><summary>See the update my skill prompt</summary><pre id="reporting-adapter-preview"></pre></details>
               <details class="prompt-preview"><summary>See the schedule prompt</summary><pre id="reporting-prompt-preview"></pre></details>
-              <div class="step-actions"><button class="primary-button" id="reporting-copy-skill" type="button">Copy the skill prompt</button><button class="secondary-button" id="reporting-copy-prompt" type="button">Copy the schedule prompt</button></div>
+              <div class="step-actions"><button class="primary-button" id="reporting-copy-skill" type="button">Copy the skill prompt</button><button class="primary-button" id="reporting-copy-adapter" type="button" hidden>Copy the update my skill prompt</button><button class="secondary-button" id="reporting-copy-prompt" type="button">Copy the schedule prompt</button></div>
             </li>
           </ol>
 
