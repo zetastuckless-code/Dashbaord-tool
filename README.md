@@ -194,3 +194,7 @@ Open **Automation** in the sidebar for a step-by-step setup. Both automations us
 
 - **Morning brief.** A scheduled ChatGPT task reads Outlook, Jira, and Slack and saves a brief in a OneDrive folder. The dashboard reads that folder and shows the brief on the Overview and the Daily brief page, with each client's to-dos. The Automation page builds the ChatGPT prompt from your details and the clients on the dashboard.
 - **Report uploads.** Add your SharePoint report folders to OneDrive with "Add shortcut to My files", then connect that folder. New or changed reports import on their own when every campaign in them matches one on the dashboard (upload each client's IO first). Reports that need a decision wait under "Review anything it couldn't place". The dashboard only reads the folder; it never moves or deletes files. It remembers which files it has seen for 180 days by default.
+
+## Design skills
+
+`.claude/skills` holds two design skill packs that Claude Code loads in this project: [Impeccable](https://github.com/pbakaus/impeccable) (Apache 2.0) and [Emil Kowalski's skills](https://github.com/emilkowalski/skills) (MIT). Their licenses sit next to each skill. Run `/impeccable audit` or `/impeccable polish` on a page, or `sh .claude/skills/impeccable/scripts/impeccable detect index.html styles.css app.js` for the rule-based checks. The detector downloads its engine on first run and verifies its checksum; turn usage reporting off with `impeccable telemetry off`.

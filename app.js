@@ -236,7 +236,7 @@ function applyClientScopeChrome() {
   document.querySelector("#clients").hidden = scoped;
   document.querySelector("#client-filter").closest(".filter-group").hidden = scoped;
   document.querySelector("#client-back").hidden = !scoped;
-  const eyebrow = document.querySelector("#page-eyebrow");
+  const eyebrow = { set textContent(_value) {} };
   const heading = document.querySelector("#greeting");
   const subtitle = document.querySelector("#page-subtitle");
   if (!scoped) {
@@ -510,7 +510,7 @@ let bulkEditGroup = null;
 let bulkEditCampaign = null;
 
 function setBulkEditMode(campaignMode) {
-  document.querySelector("#bulk-edit-eyebrow").textContent = campaignMode ? "CAMPAIGN DETAILS" : "BULK EDIT";
+  document.querySelector("#bulk-edit-eyebrow").textContent = campaignMode ? "Campaign details" : "Bulk edit";
   document.querySelector("#bulk-channel-label").hidden = campaignMode;
 }
 
@@ -886,7 +886,7 @@ function renderPacingDetail() {
   syncPacingRangeControls();
   const detail = buildPacingDetail({ campaigns: lastPacingRows, totals: campaignTotals, spendView: "billing", range: { preset: pacingRange.preset, custom: { start: pacingRange.start, end: pacingRange.end } } });
   const { period, range } = detail;
-  document.querySelector("#pacing-dialog-eyebrow").textContent = clientScope ? `${clientScope.toUpperCase()} · PACING DETAILS` : "PACING DETAILS";
+  document.querySelector("#pacing-dialog-eyebrow").textContent = clientScope ? `${clientScope} · Pacing details` : "Pacing details";
   const status = detail.pacing === null ? "No pacing data" : detail.pacing > alertRules.overPacing ? "Above plan" : detail.pacing < alertRules.underPacing ? "Below plan" : "On track";
   const stat = (label, value, sub, cls = "") => `<div class="pacing-stat"><small>${escapeHtml(label)}</small><strong class="${cls}">${escapeHtml(value)}</strong><span>${escapeHtml(sub)}</span></div>`;
   const periodSub = period.daysWithData === 0 ? "No reports cover this period yet"
@@ -1049,7 +1049,7 @@ function renderKpiDetail() {
 }
 
 function renderMetricDetail() {
-  document.querySelector("#metric-dialog-eyebrow").textContent = `${clientScope ? `${clientScope.toUpperCase()} · ` : ""}${{ budget: "BUDGET", spend: "SPEND", kpi: "KPI" }[metricDetailKind]} DETAILS`;
+  document.querySelector("#metric-dialog-eyebrow").textContent = `${clientScope ? `${clientScope} · ` : ""}${{ budget: "Budget", spend: "Spend", kpi: "KPI" }[metricDetailKind]} details`;
   document.querySelector("#metric-dialog-controls").innerHTML = "";
   ({ budget: renderBudgetDetail, spend: renderSpendDetail, kpi: renderKpiDetail })[metricDetailKind]();
   document.querySelector("#metric-dialog-controls").hidden = !document.querySelector("#metric-dialog-controls").innerHTML;
@@ -1943,7 +1943,7 @@ async function nextIo() {
 
 function renderIoReview() {
   const { io, fileName, presetKey } = pendingIo;
-  document.querySelector("#io-review-eyebrow").textContent = ioQueue.length ? `INSERTION ORDER · ${ioQueue.length} MORE AFTER THIS` : "INSERTION ORDER";
+  document.querySelector("#io-review-eyebrow").textContent = ioQueue.length ? `Insertion order · ${ioQueue.length} more after this` : "Insertion order";
   document.querySelector("#io-review-subtitle").textContent = [io.advertiser, io.campaign, fileName].filter(Boolean).join(" · ");
   const facts = [["Agency", io.agency], ["Order", orderLabel(io) || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? formatExactMoney(io.budget) : "—"]];
   document.querySelector("#io-review-facts").innerHTML = facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
@@ -2304,7 +2304,6 @@ function applySourcesView() {
   document.body.classList.toggle("sources-view", sourcesView);
   document.querySelector("#data-sources-page").hidden = !sourcesView;
   if (!sourcesView) return;
-  document.querySelector("#page-eyebrow").textContent = "WORKSPACE";
   document.querySelector("#greeting").textContent = "Data sources";
   document.querySelector("#page-subtitle").textContent = "Every report behind the dashboard, grouped by client or campaign, with when it was uploaded.";
   document.querySelector("#client-back").hidden = true;
@@ -2388,7 +2387,6 @@ function applyAlertsView() {
   if (!alertsView) return;
   document.querySelector("#nav-overview").classList.remove("active");
   document.querySelector("#nav-overview").removeAttribute("aria-current");
-  document.querySelector("#page-eyebrow").textContent = "MONITORING";
   document.querySelector("#greeting").textContent = "Alerts";
   document.querySelector("#page-subtitle").textContent = "Read each alert in full, see what it is based on, and jump into the campaign.";
   document.querySelector("#client-back").hidden = true;
@@ -2646,7 +2644,6 @@ function applyPageView() {
   document.querySelector("#automation-page").hidden = pageView !== "automation";
   if (!pageView) return;
   document.querySelector("#client-back").hidden = true;
-  document.querySelector("#page-eyebrow").textContent = pageView === "brief" ? "TODAY" : "WORKSPACE";
   document.querySelector("#greeting").textContent = pageView === "brief" ? "Daily brief" : "Automation";
   document.querySelector("#page-subtitle").textContent = pageView === "brief" ? "Your morning brief and every client's to-dos in one place." : "Set up the morning brief and report uploads, step by step.";
   document.title = `Zeta | ${pageView === "brief" ? "Daily brief" : "Automation"}`;
