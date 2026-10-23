@@ -26,7 +26,7 @@ import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
-import { mergeTodos, morningScanPrompt, parseTodoFile, pruneTodos, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
+import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
 import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
 import { removeDailySource, removeGroupRecords, removeLineItem, removeRecordAt, removeSnapshot } from "./lib/campaign-removal.js";
@@ -65,6 +65,10 @@ let sourcesView = new URLSearchParams(location.search).get("view") === "sources"
 if (sourcesView) clientScope = null;
 let alertsView = new URLSearchParams(location.search).get("view") === "alerts";
 if (alertsView) clientScope = null;
+// Full pages reached from the sidebar: the daily brief and the automation setup guide.
+const PAGE_VIEWS = ["brief", "automation"];
+let pageView = PAGE_VIEWS.includes(new URLSearchParams(location.search).get("view")) ? new URLSearchParams(location.search).get("view") : null;
+if (pageView) clientScope = null;
 let alertRules = loadAlertRules();
 let visibleColumns = readColumnPreferences(localStorage);
 let acknowledgedAlertIds = readAcknowledgedAlerts(localStorage);
@@ -161,8 +165,10 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   renderClientIo();
   renderClientDocuments();
   renderClientTodos();
+  renderMorningBrief();
   applySourcesView();
   applyAlertsView();
+  applyPageView();
 }
 
 function renderClientRollup(rows, activeAlerts, selectedClient) {
@@ -190,8 +196,8 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
     <p class="client-section-label">Campaigns</p>
     <ul class="client-campaigns">${client.campaigns.slice(0, 3).map(campaign => `<li><span class="client-campaign-name">${escapeHtml(campaign.name)}</span><span class="client-campaign-facts"><span class="${campaign.pacingBand}">${campaign.pacing === null ? "No pacing yet" : `${campaign.pacing.toFixed(0)}% paced${paceText[campaign.pacingBand] ? `, ${paceText[campaign.pacingBand]}` : ""}`}</span>${campaign.kpis.length ? ` · ${kpiText(campaign.kpis)}` : ""}${campaign.alertCount ? ` · <span class="warning-text">${campaign.alertCount} alert${campaign.alertCount === 1 ? "" : "s"}</span>` : ""}</span></li>`).join("")}${client.campaigns.length > 3 ? `<li class="client-more">+${client.campaigns.length - 3} more campaign${client.campaigns.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>
     ${(() => {
-      const open = sortTodos(todos.filter(item => item.client === client.client && !item.done));
-      return open.length ? `<p class="client-section-label">To-dos</p><ul class="client-todos-preview">${open.slice(0, 3).map(item => `<li><span class="todo-box"></span><span>${escapeHtml(item.text)}${item.due ? `<small class="${item.due < todayIso() ? "overdue" : ""}">Due ${escapeHtml(shortDate(item.due))}</small>` : ""}</span></li>`).join("")}${open.length > 3 ? `<li class="client-more">+${open.length - 3} more to-do${open.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>` : "";
+      const open = sortTodos(todos.filter(item => item.client === client.client && isOpen(item)));
+      return open.length ? `<p class="client-section-label">To-dos</p><ul class="client-todos-preview">${open.slice(0, 3).map(item => `<li><span class="todo-box"></span><span>${todoTag(item)}${escapeHtml(item.text)}${item.due ? `<small class="${item.due < todayIso() ? "overdue" : ""}">Due ${escapeHtml(shortDate(item.due))}</small>` : ""}</span></li>`).join("")}${open.length > 3 ? `<li class="client-more">+${open.length - 3} more to-do${open.length - 3 === 1 ? "" : "s"}</li>` : ""}</ul>` : "";
     })()}
     ${client.alerts.length ? `<p class="client-section-label">Needs attention</p><ul class="client-alerts">${client.alerts.slice(0, 2).map(alertLine).join("")}${client.alerts.length > 2 ? `<li class="client-more">+${client.alerts.length - 2} more on the Alerts page</li>` : ""}</ul>` : '<p class="client-all-clear">No alerts</p>'}
   </button>`;
@@ -216,6 +222,7 @@ function setClientScope(name, { replace = false } = {}) {
   clientScope = name || null;
   sourcesView = false;
   alertsView = false;
+  pageView = null;
   const url = clientScope ? `?client=${encodeURIComponent(clientScope)}` : location.pathname;
   if (replace) history.replaceState({ client: clientScope }, "", url); else history.pushState({ client: clientScope }, "", url);
   renderCampaigns();
@@ -258,8 +265,13 @@ function renderClientNav() {
   document.querySelector("#client-nav-label").hidden = clients.length === 0;
   document.querySelector("#client-nav").innerHTML = clients.map(campaign => `<a class="nav-item client-nav-item${campaign.client === clientScope ? " active" : ""}" href="?client=${encodeURIComponent(campaign.client)}" data-client-link="${escapeHtml(campaign.client)}"${campaign.client === clientScope ? ' aria-current="page"' : ""}><span class="client-nav-mark ${escapeHtml(campaign.className || "")}">${escapeHtml(campaign.short || "")}</span><span class="client-nav-name">${escapeHtml(campaign.client)}</span></a>`).join("");
   const overview = document.querySelector("#nav-overview");
-  overview.classList.toggle("active", !clientScope && !sourcesView && !alertsView);
-  if (clientScope || sourcesView || alertsView) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
+  overview.classList.toggle("active", !clientScope && !sourcesView && !alertsView && !pageView);
+  if (clientScope || sourcesView || alertsView || pageView) overview.removeAttribute("aria-current"); else overview.setAttribute("aria-current", "page");
+  for (const page of PAGE_VIEWS) {
+    const link = document.querySelector(`#nav-${page}`);
+    link.classList.toggle("active", pageView === page);
+    if (pageView === page) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+  }
   const sourcesLink = document.querySelector("#nav-sources");
   sourcesLink.classList.toggle("active", sourcesView);
   if (sourcesView) sourcesLink.setAttribute("aria-current", "page"); else sourcesLink.removeAttribute("aria-current");
@@ -270,14 +282,17 @@ document.querySelector(".sidebar").addEventListener("click", event => {
   if (link) { event.preventDefault(); setClientScope(link.dataset.clientLink); document.querySelector(".sidebar").classList.remove("open"); return; }
   if (event.target.closest("#nav-sources")) { event.preventDefault(); setSourcesView(true); document.querySelector(".sidebar").classList.remove("open"); return; }
   if (event.target.closest("#nav-alerts")) { event.preventDefault(); setAlertsView(true); document.querySelector(".sidebar").classList.remove("open"); return; }
-  if (event.target.closest("#nav-overview") && (clientScope || sourcesView || alertsView)) { event.preventDefault(); alertsView = false; setClientScope(null); }
+  const page = event.target.closest("[data-page-view]");
+  if (page) { event.preventDefault(); setPageView(page.dataset.pageView); document.querySelector(".sidebar").classList.remove("open"); return; }
+  if (event.target.closest("#nav-overview") && (clientScope || sourcesView || alertsView || pageView)) { event.preventDefault(); alertsView = false; setClientScope(null); }
 });
 document.querySelector("#client-back").addEventListener("click", event => { event.preventDefault(); setClientScope(null); });
 window.addEventListener("popstate", () => {
   sourcesView = new URLSearchParams(location.search).get("view") === "sources";
   alertsView = new URLSearchParams(location.search).get("view") === "alerts";
+  pageView = PAGE_VIEWS.includes(new URLSearchParams(location.search).get("view")) ? new URLSearchParams(location.search).get("view") : null;
   resetExpandedCampaigns();
-  clientScope = sourcesView || alertsView ? null : new URLSearchParams(location.search).get("client");
+  clientScope = sourcesView || alertsView || pageView ? null : new URLSearchParams(location.search).get("client");
   renderCampaigns();
 });
 
@@ -312,6 +327,7 @@ let campaignTotals = readCampaignTotals(localStorage);
 let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
 let todos = pruneTodos(readTodos(localStorage));
+let brief = readBrief(localStorage);
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
 let autoExpandedClient = null;
@@ -2285,7 +2301,7 @@ function applySourcesView() {
 
 function setSourcesView(on) {
   sourcesView = on;
-  if (on) { clientScope = null; alertsView = false; }
+  if (on) { clientScope = null; alertsView = false; pageView = null; }
   history.pushState({ view: on ? "sources" : null }, "", on ? "?view=sources" : location.pathname);
   renderCampaigns();
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -2369,7 +2385,7 @@ function applyAlertsView() {
 
 function setAlertsView(on) {
   alertsView = on;
-  if (on) { clientScope = null; sourcesView = false; }
+  if (on) { clientScope = null; sourcesView = false; pageView = null; }
   history.pushState({ view: on ? "alerts" : null }, "", on ? "?view=alerts" : location.pathname);
   renderCampaigns();
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -2409,34 +2425,65 @@ document.querySelector("#view-all-alerts").addEventListener("click", () => setAl
 
 // --- Client to-dos: the morning scan's checklist plus what the dashboard's own alerts say to do ---
 const saveTodos = () => { todos = pruneTodos(todos); writeTodos(localStorage, todos); };
-const trackedClients = () => [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].sort((a, b) => a.localeCompare(b));
+const TAG_LABEL = { urgent: "Urgent", waiting: "Waiting", todo: "To-do", upcoming: "Upcoming", fyi: "FYI" };
+const todoTag = item => item.tag && item.tag !== "todo" ? `<em class="todo-tag ${item.tag}">${TAG_LABEL[item.tag]}</em>` : "";
+
+/** Takes in one parsed file: a brief replaces the last brief's open items; a plain checklist adds to the list. */
+function takeInTodos(parsed) {
+  if (!parsed.brief) {
+    const result = mergeTodos(todos, parsed.items);
+    todos = result.todos;
+    return { added: result.added, updated: 0, removed: 0 };
+  }
+  const result = applyBrief(todos, parsed);
+  todos = result.todos;
+  if (!brief || parsed.brief.date >= brief.date) {
+    brief = { ...parsed.brief, receivedAt: new Date().toISOString() };
+    localStorage.setItem(BRIEF_KEY, JSON.stringify(brief));
+  }
+  return result;
+}
+
+// --- Morning brief on the overview: deadlines, today's calendar, what needs attention, and internal items ---
+function renderMorningBrief() {
+  const panel = document.querySelector("#morning-brief");
+  const show = !clientScope && !sourcesView && !alertsView && (pageView === "brief" || (!pageView && (brief || todos.some(isOpen))));
+  panel.hidden = !show;
+  if (!show) return;
+  const today = todayIso();
+  const open = sortTodos(todos.filter(isOpen));
+  const stale = brief && brief.date < today;
+  document.querySelector("#morning-brief-title").textContent = brief ? `Morning brief · ${new Date(`${brief.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}` : "To-dos";
+  document.querySelector("#morning-brief-context").innerHTML = brief ? `${escapeHtml(brief.sources || "Morning scan")}${brief.skipped ? ` · <span class="warning-text">${escapeHtml(brief.skipped)}</span>` : ""}${stale ? ' · <span class="warning-text">not today’s brief yet</span>' : ""}` : "Add a morning brief to see your day here";
+  const dated = open.filter(item => item.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 4);
+  document.querySelector("#morning-brief-deadlines").innerHTML = dated.map(item => `<span class="deadline-chip${item.due < today ? " overdue" : item.due === today ? " today" : ""}"><b>${item.due === today ? "Today" : escapeHtml(shortDate(item.due))}</b>${escapeHtml(item.client)} · ${escapeHtml(item.text)}</span>`).join("");
+  const itemRow = item => `<li><span class="todo-dot ${escapeHtml(item.tag || "todo")}"></span><span>${todoTag(item)}${escapeHtml(item.text)}<small>${escapeHtml(item.client)}${item.source ? ` · ${escapeHtml(item.source)}` : ""}${item.link ? ` · <a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(/browse\/([A-Z]+-\d+)/.exec(item.link)?.[1] || "Link")} ↗</a>` : ""}</small></span></li>`;
+  const attention = open.filter(item => ["urgent", "waiting"].includes(item.tag)).slice(0, 6);
+  const calendar = stale ? [] : brief?.calendar || [];
+  const internal = sortTodos(todos.filter(item => item.client === INTERNAL && !item.done));
+  const others = sortTodos(todos.filter(item => item.tracked === false && !item.done));
+  document.querySelector("#morning-brief-body").innerHTML = [
+    `<div><p class="client-section-label">Calendar</p>${calendar.length ? `<ul class="brief-calendar">${calendar.map(entry => `<li><b>${escapeHtml(entry.time)}</b><span>${escapeHtml(entry.title)}</span></li>`).join("")}</ul>` : `<p class="brief-empty">${stale ? "Waiting for today’s brief" : "Nothing on the calendar today"}</p>`}</div>`,
+    `<div><p class="client-section-label">Needs attention</p>${attention.length ? `<ul class="brief-items">${attention.map(itemRow).join("")}</ul>` : '<p class="brief-empty">Nothing urgent or waiting</p>'}</div>`,
+    `<div><p class="client-section-label">${escapeHtml(INTERNAL)}${others.length ? " and other accounts" : ""}</p>${internal.length || others.length ? `<ul class="brief-items">${[...internal, ...others].slice(0, 6).map(itemRow).join("")}</ul>` : '<p class="brief-empty">Nothing internal</p>'}</div>`
+  ].join("");
+}
+const trackedClients = () => [...new Set(campaigns.filter(record => !isCampaignArchived(record)).map(record => record.client))].filter(client => client !== INTERNAL).sort((a, b) => a.localeCompare(b));
 
 function renderClientTodos() {
   const panel = document.querySelector("#client-todos");
   panel.hidden = !clientScope;
   if (!clientScope) return;
   const mine = sortTodos(todos.filter(item => item.client === clientScope));
-  const open = mine.filter(item => !item.done).length;
+  const open = mine.filter(isOpen).length;
   const today = todayIso();
   document.querySelector("#client-todos-context").textContent = mine.length ? `${open} open${mine.length > open ? ` · ${mine.length - open} done (cleared after two weeks)` : ""}` : "Nothing yet. Add your morning scan, or type one below.";
-  document.querySelector("#client-todo-list").innerHTML = mine.map(item => `<li class="${item.done ? "done" : ""}"><label><input type="checkbox" data-todo-done="${escapeHtml(item.id)}"${item.done ? " checked" : ""} /><span>${escapeHtml(item.text)}</span></label><small>${[item.due ? `<span class="${!item.done && item.due < today ? "overdue" : ""}">Due ${escapeHtml(longDate(item.due))}</span>` : "", item.source ? escapeHtml(item.source) : "", item.addedOn ? `added ${escapeHtml(shortDate(item.addedOn))}` : ""].filter(Boolean).join(" · ")}</small><button class="todo-remove" type="button" data-todo-remove="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.text)}" title="Remove">✕</button></li>`).join("");
+  document.querySelector("#client-todo-list").innerHTML = mine.map(item => todoRowHtml(item)).join("");
   // The dashboard's own reasons to act on this client, read from its open alerts.
   const clientAlerts = unacknowledgedAlerts(evaluateAlerts(campaigns.filter(record => record.client === clientScope && !isCampaignArchived(record))), acknowledgedAlertIds);
   document.querySelector("#client-todo-auto").innerHTML = clientAlerts.length ? `<p class="client-section-label">From the dashboard</p><ul class="todo-auto-list">${clientAlerts.slice(0, 4).map(alert => `<li class="${alert.severity}"><span class="client-alert-dot"></span><span><b>${escapeHtml(ALERT_TYPES[alert.type]?.action || alert.title)}</b><small>${escapeHtml(ALERT_TYPES[alert.type]?.label || alert.title)} · ${escapeHtml(recordLineLabel(alert.campaign))} · ${escapeHtml(String(alert.detail).replace(/ · /g, ", "))}</small></span></li>`).join("")}</ul>${clientAlerts.length > 4 ? `<button class="text-button" type="button" data-todo-alerts>See all ${clientAlerts.length} alerts</button>` : ""}` : "";
 }
 
-document.querySelector("#client-todos").addEventListener("change", event => {
-  const box = event.target.closest("[data-todo-done]");
-  if (!box) return;
-  todos = setTodoDone(todos, box.dataset.todoDone, box.checked);
-  saveTodos();
-  renderCampaigns(document.querySelector("#client-filter").value);
-});
-document.querySelector("#client-todos").addEventListener("click", event => {
-  const remove = event.target.closest("[data-todo-remove]");
-  if (remove) { todos = todos.filter(item => item.id !== remove.dataset.todoRemove); saveTodos(); renderCampaigns(document.querySelector("#client-filter").value); return; }
-  if (event.target.closest("[data-todo-alerts]")) { alertsFilter.client = clientScope; setAlertsView(true); }
-});
 document.querySelector("#todo-quick-add").addEventListener("submit", event => {
   event.preventDefault();
   const text = document.querySelector("#todo-quick-text").value.trim();
@@ -2452,13 +2499,13 @@ const todoDialog = document.querySelector("#todo-dialog");
 let todoParsed = { items: [], unknownClients: [] };
 function previewTodos() {
   todoParsed = parseTodoFile(document.querySelector("#todo-text").value, { clients: trackedClients(), today: todayIso() });
-  const fresh = mergeTodos(todos, todoParsed.items).added;
-  const clientCount = new Set(todoParsed.items.map(item => item.client)).size;
-  const parts = todoParsed.items.length ? [`${todoParsed.items.length} to-do${todoParsed.items.length === 1 ? "" : "s"} for ${clientCount} client${clientCount === 1 ? "" : "s"}`] : [];
-  if (todoParsed.items.length && fresh < todoParsed.items.length) parts.push(`${todoParsed.items.length - fresh} already on your list`);
-  if (todoParsed.unknownClients.length) parts.push(`left out, no client named ${todoParsed.unknownClients.join(", ")}`);
-  document.querySelector("#todo-preview").textContent = parts.length ? parts.join(" · ") : document.querySelector("#todo-text").value.trim() ? "No to-dos found. Each client needs a \"## Client\" heading with \"- [ ] task\" lines under it." : "";
-  document.querySelector("#todo-add").disabled = fresh === 0;
+  const accountCount = new Set(todoParsed.items.map(item => item.client)).size;
+  const parts = todoParsed.brief ? [`Morning brief for ${shortDate(todoParsed.brief.date)}${todoParsed.brief.calendar.length ? ` · ${todoParsed.brief.calendar.length} meeting${todoParsed.brief.calendar.length === 1 ? "" : "s"}` : ""}`] : [];
+  if (todoParsed.items.length) parts.push(`${todoParsed.items.length} item${todoParsed.items.length === 1 ? "" : "s"} across ${accountCount} account${accountCount === 1 ? "" : "s"}`);
+  if (todoParsed.brief) parts.push("replaces the last brief’s open items");
+  if (todoParsed.unknownClients.length) parts.push(`not on the dashboard yet: ${todoParsed.unknownClients.join(", ")} (shown with the brief)`);
+  document.querySelector("#todo-preview").textContent = parts.length ? parts.join(" · ") : document.querySelector("#todo-text").value.trim() ? "Nothing found. Each account needs a \"## Account\" heading with \"- [ ] item\" lines under it." : "";
+  document.querySelector("#todo-add").disabled = !todoParsed.items.length && !todoParsed.brief;
 }
 function openTodoDialog() {
   document.querySelector("#todo-text").value = "";
@@ -2467,6 +2514,7 @@ function openTodoDialog() {
 }
 document.querySelector("#client-todo-import").addEventListener("click", openTodoDialog);
 document.querySelector("#overview-todo-import").addEventListener("click", openTodoDialog);
+document.querySelector("#brief-add").addEventListener("click", openTodoDialog);
 document.querySelector("#todo-text").addEventListener("input", previewTodos);
 document.querySelector("#todo-file").addEventListener("change", async event => {
   const file = event.target.files[0];
@@ -2503,6 +2551,7 @@ function renderFolderStatus() {
   document.querySelector("#todo-folder-disconnect").hidden = !todoFolder;
   document.querySelector("#todo-folder-reconnect").hidden = !(todoFolder && folderState.needsClick);
   if (!folderSupported) { status.textContent = "Watching a folder needs Chrome or Edge. In this browser, paste or drop the file instead."; return; }
+  if (pageView === "automation") renderAutomationPage();
   if (!todoFolder) return;
   status.textContent = folderState.needsClick
     ? `Watching “${todoFolder.name}”. Chrome needs one click this visit: use Check to-do folder next to Clients.`
@@ -2519,13 +2568,12 @@ async function checkTodoFolder({ ask = false } = {}) {
   try {
     const result = await readTodoFolder(todoFolder, readProcessedFiles(localStorage), { clients: trackedClients(), today: todayIso() });
     localStorage.setItem(TODO_FILES_KEY, JSON.stringify(result.processed));
-    const merged = mergeTodos(todos, result.items);
-    folderState = { lastChecked: new Date(), lastAdded: merged.added, needsClick: false };
-    if (merged.added) {
-      todos = merged.todos;
+    const totals = result.files.reduce((sum, file) => { const taken = takeInTodos(file.parsed); return { added: sum.added + taken.added, changed: sum.changed + taken.added + taken.updated + taken.removed }; }, { added: 0, changed: 0 });
+    folderState = { lastChecked: new Date(), lastAdded: totals.added, needsClick: false };
+    if (result.filesRead) {
       saveTodos();
       renderCampaigns(document.querySelector("#client-filter").value);
-      showToast("New to-dos", `${merged.added} added from ${result.filesRead} file${result.filesRead === 1 ? "" : "s"} in “${todoFolder.name}”.${result.unknownClients.length ? ` Left out: ${result.unknownClients.join(", ")}.` : ""}`);
+      if (totals.changed) showToast(result.files.some(file => file.parsed.brief) ? "Morning brief updated" : "New to-dos", `${totals.added} new item${totals.added === 1 ? "" : "s"} from ${result.filesRead} file${result.filesRead === 1 ? "" : "s"} in “${todoFolder.name}”.`);
     }
   } catch (error) {
     folderState.needsClick = true;
@@ -2561,12 +2609,178 @@ if (folderSupported) {
 } else renderFolderStatus();
 
 document.querySelector("#todo-add").addEventListener("click", () => {
-  const result = mergeTodos(todos, todoParsed.items);
-  todos = result.todos;
+  const result = takeInTodos(todoParsed);
   saveTodos();
   todoDialog.close();
   renderCampaigns(document.querySelector("#client-filter").value);
-  showToast("To-dos added", `${result.added} added${result.skipped ? `, ${result.skipped} already on your list` : ""}.`);
+  showToast(todoParsed.brief ? "Morning brief added" : "To-dos added", `${result.added} new${result.updated ? `, ${result.updated} updated` : ""}${result.removed ? `, ${result.removed} resolved since the last brief` : ""}.`);
+});
+
+// --- Daily brief and Automation pages ---
+function setPageView(page) {
+  pageView = PAGE_VIEWS.includes(page) ? page : null;
+  clientScope = null;
+  sourcesView = false;
+  alertsView = false;
+  history.pushState({ view: pageView }, "", pageView ? `?view=${pageView}` : location.pathname);
+  renderCampaigns();
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+function applyPageView() {
+  for (const page of PAGE_VIEWS) document.body.classList.toggle(`${page}-view`, pageView === page);
+  document.querySelector("#brief-page").hidden = pageView !== "brief";
+  document.querySelector("#automation-page").hidden = pageView !== "automation";
+  if (!pageView) return;
+  document.querySelector("#client-back").hidden = true;
+  document.querySelector("#page-eyebrow").textContent = pageView === "brief" ? "TODAY" : "WORKSPACE";
+  document.querySelector("#greeting").textContent = pageView === "brief" ? "Daily brief" : "Automation";
+  document.querySelector("#page-subtitle").textContent = pageView === "brief" ? "Your morning brief and every client's to-dos in one place." : "Set up the morning brief and report uploads, step by step.";
+  document.title = `Zeta | ${pageView === "brief" ? "Daily brief" : "Automation"}`;
+  if (pageView === "brief") renderBriefPage(); else renderAutomationPage();
+}
+
+/** One to-do row with its checkbox, tag, due date, source, link, and remove button. */
+function todoRowHtml(item, { showClient = false } = {}) {
+  const today = todayIso();
+  const meta = [
+    showClient ? escapeHtml(item.client) : "",
+    item.due ? `<span class="${!item.done && item.due < today ? "overdue" : ""}">Due ${escapeHtml(longDate(item.due))}</span>` : "",
+    item.source ? escapeHtml(item.source) : "",
+    item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(/browse\/([A-Z]+-\d+)/.exec(item.link)?.[1] || "Open link")} ↗</a>` : "",
+    item.origin === "brief" && item.briefDate ? `brief ${escapeHtml(shortDate(item.briefDate))}` : item.addedOn ? `added ${escapeHtml(shortDate(item.addedOn))}` : ""
+  ].filter(Boolean).join(" · ");
+  return `<li class="${item.done ? "done" : ""}${item.tag === "fyi" ? " fyi" : ""}"><label><input type="checkbox" data-todo-done="${escapeHtml(item.id)}"${item.done ? " checked" : ""} /><span>${todoTag(item)}${escapeHtml(item.text)}</span></label><small>${meta}</small><button class="todo-remove" type="button" data-todo-remove="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.text)}" title="Remove">✕</button></li>`;
+}
+
+function renderBriefPage() {
+  const showAll = document.querySelector("#brief-filter").value === "all";
+  const visible = todos.filter(item => showAll || !item.done);
+  const clients = trackedClients();
+  const accounts = [...clients, INTERNAL, ...[...new Set(todos.filter(item => item.tracked === false).map(item => item.client))].sort()];
+  const groups = accounts.map(account => ({ account, items: sortTodos(visible.filter(item => item.client === account)) })).filter(group => group.items.length);
+  const open = todos.filter(isOpen).length;
+  document.querySelector("#brief-page-context").textContent = `${open} open across ${new Set(todos.filter(isOpen).map(item => item.client)).size} account${new Set(todos.filter(isOpen).map(item => item.client)).size === 1 ? "" : "s"} · most urgent first`;
+  const select = document.querySelector("#brief-quick-client");
+  const chosen = select.value;
+  select.innerHTML = [...clients, INTERNAL].map(client => `<option${client === chosen ? " selected" : ""}>${escapeHtml(client)}</option>`).join("");
+  document.querySelector("#brief-groups").innerHTML = groups.length ? groups.map(group => {
+    const tracked = clients.includes(group.account);
+    return `<div class="brief-group"><div class="brief-group-head"><h3>${escapeHtml(group.account)}</h3>${tracked ? `<a class="text-button" href="?client=${encodeURIComponent(group.account)}" data-client-link="${escapeHtml(group.account)}">Open client ›</a>` : group.account === INTERNAL ? "" : '<small>Not on the dashboard yet</small>'}</div><ul class="todo-list">${group.items.map(item => todoRowHtml(item)).join("")}</ul></div>`;
+  }).join("") : `<p class="history-empty">No to-dos yet. Set up the morning brief on the <a href="?view=automation" data-page-view="automation">Automation</a> page, or add one above.</p>`;
+}
+
+// Checking, removing, and adding work the same on the client panel and the Daily brief page.
+for (const container of ["#client-todos", "#brief-page"]) {
+  document.querySelector(container).addEventListener("change", event => {
+    const box = event.target.closest("[data-todo-done]");
+    if (!box) return;
+    todos = setTodoDone(todos, box.dataset.todoDone, box.checked);
+    saveTodos();
+    renderCampaigns(document.querySelector("#client-filter").value);
+  });
+  document.querySelector(container).addEventListener("click", event => {
+    const remove = event.target.closest("[data-todo-remove]");
+    if (remove) { todos = todos.filter(item => item.id !== remove.dataset.todoRemove); saveTodos(); renderCampaigns(document.querySelector("#client-filter").value); return; }
+    if (event.target.closest("[data-todo-alerts]")) { alertsFilter.client = clientScope; setAlertsView(true); return; }
+    const page = event.target.closest("[data-page-view]");
+    if (page) { event.preventDefault(); setPageView(page.dataset.pageView); return; }
+    const client = event.target.closest("[data-client-link]");
+    if (client) { event.preventDefault(); setClientScope(client.dataset.clientLink); }
+  });
+}
+document.querySelector("#brief-filter").addEventListener("change", renderBriefPage);
+document.querySelector("#brief-quick-add").addEventListener("submit", event => {
+  event.preventDefault();
+  const text = document.querySelector("#brief-quick-text").value.trim();
+  const client = document.querySelector("#brief-quick-client").value;
+  if (!text || !client) return;
+  todos = mergeTodos(todos, [{ client, text, due: document.querySelector("#brief-quick-due").value || null, source: "Added by you", addedOn: todayIso() }]).todos;
+  saveTodos();
+  document.querySelector("#brief-quick-text").value = "";
+  document.querySelector("#brief-quick-due").value = "";
+  renderCampaigns();
+});
+
+// --- Automation setup guide ---
+let automation = readAutomationSettings(localStorage);
+const saveAutomation = () => localStorage.setItem(AUTOMATION_KEY, JSON.stringify(automation));
+const AUTOMATION_FIELDS = { "#auto-name": "name", "#auto-email": "email", "#auto-jira-user": "jiraUser", "#auto-jira-site": "jiraSite", "#auto-timezone": "timezone", "#auto-run-time": "runTime", "#auto-folder": "folder", "#auto-extra": "extraAccounts" };
+if (!automation.timezone) automation.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+for (const [selector, field] of Object.entries(AUTOMATION_FIELDS)) document.querySelector(selector).value = automation[field] ?? "";
+document.querySelector("#auto-slack").checked = Boolean(automation.slack);
+const currentPrompt = () => morningScanPrompt(trackedClients(), automation);
+
+function stepStatus(id, state, label) {
+  const badge = document.querySelector(`#step-${id}-status`);
+  badge.className = `step-status ${state}`;
+  badge.textContent = label || { done: "✓", todo: "", warn: "!" }[state];
+  badge.closest(".automation-step").classList.toggle("is-done", state === "done");
+}
+
+function renderAutomationPage() {
+  const clients = trackedClients();
+  stepStatus("clients", clients.length ? "done" : "todo");
+  document.querySelector("#step-clients-detail").textContent = clients.length ? `${clients.length} client${clients.length === 1 ? "" : "s"} on the dashboard: ${clients.join(", ")}. Add any that are missing before you copy the prompt.` : "No clients yet. Upload an IO to add your first one.";
+  stepStatus("folder", todoFolder ? "done" : "todo");
+  document.querySelector("#step-folder-name").textContent = automation.folder || "Northstar To-dos";
+  stepStatus("connect", todoFolder ? (folderState.needsClick ? "warn" : "done") : "todo");
+  document.querySelector("#step-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : todoFolder ? `Connected to “${todoFolder.name}”.${folderState.needsClick ? " Chrome needs one click this visit: press Connect folder again." : ""}` : "Not connected yet.";
+  document.querySelector("#step-connect-button").textContent = todoFolder ? "Change folder…" : "Connect folder…";
+  document.querySelector("#step-connect-button").disabled = !folderSupported;
+  // A prompt copied before clients were added leaves them out of the brief.
+  const copiedFor = automation.promptClients || null;
+  const missing = copiedFor ? clients.filter(client => !copiedFor.includes(client)) : [];
+  stepStatus("prompt", !automation.promptCopiedAt ? "todo" : missing.length ? "warn" : "done");
+  document.querySelector("#step-prompt-clients").innerHTML = missing.length
+    ? `<span class="warning-text">You've added ${escapeHtml(missing.join(", "))} since you copied the prompt. Copy it again and update your ChatGPT task.</span>`
+    : clients.length ? `The prompt includes ${clients.length} client${clients.length === 1 ? "" : "s"}${automation.promptCopiedAt ? ` · copied ${escapeHtml(new Date(automation.promptCopiedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}.` : '<span class="warning-text">Add your clients first (step 1), so the prompt lists them.</span>';
+  document.querySelector("#auto-prompt-preview").textContent = currentPrompt();
+  document.querySelector("#step-schedule-quote").textContent = `Run this every weekday at ${automation.runTime || "7:00 AM"}${automation.timezone ? ` ${automation.timezone}` : ""}.`;
+  stepStatus("schedule", automation.scheduledAt ? "done" : "todo");
+  document.querySelector("#step-schedule-done").textContent = automation.scheduledAt ? "Scheduled ✓" : "I've scheduled it";
+  const recent = brief && (Date.parse(`${todayIso()}T00:00:00Z`) - Date.parse(`${brief.date}T00:00:00Z`)) / 86_400_000 <= 3;
+  stepStatus("test", recent ? "done" : "todo");
+  document.querySelector("#step-test-detail").textContent = brief ? `Last brief: ${longDate(brief.date)} from ${brief.sources || "the morning scan"}${brief.skipped ? ` (skipped: ${brief.skipped})` : ""}.` : "No brief has arrived yet.";
+  const done = document.querySelectorAll(".automation-step.is-done").length;
+  const total = document.querySelectorAll(".automation-step").length;
+  document.querySelector("#automation-progress").innerHTML = `<div class="progress-track"><span style="width:${done / total * 100}%"></span></div><span>${done} of ${total} steps done${done === total ? " · your morning brief is set up" : ""}</span>`;
+}
+
+document.querySelector("#automation-page").addEventListener("input", event => {
+  const field = AUTOMATION_FIELDS[`#${event.target.id}`];
+  if (field) automation[field] = event.target.value;
+  if (event.target.id === "auto-slack") automation.slack = event.target.checked;
+  if (field || event.target.id === "auto-slack") { saveAutomation(); renderAutomationPage(); }
+});
+document.querySelector("#automation-page").addEventListener("change", event => {
+  if (event.target.id === "auto-slack") { automation.slack = event.target.checked; saveAutomation(); renderAutomationPage(); }
+});
+document.querySelector("#automation-page").addEventListener("click", async event => {
+  const copy = event.target.closest("[data-copy-target]");
+  if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", "Folder name copied."); } catch { /* the name stays visible to copy by hand */ } }
+});
+document.querySelector("#auto-copy-prompt").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(currentPrompt());
+    automation.promptCopiedAt = new Date().toISOString();
+    automation.promptClients = trackedClients();
+    saveAutomation();
+    renderAutomationPage();
+    showToast("Prompt copied", "Paste it into a new ChatGPT chat with your connectors turned on (step 5).");
+  } catch {
+    document.querySelector(".prompt-preview").open = true;
+    showToast("Copy it by hand", "Your browser blocked copying. Select the prompt in “See the full prompt” and copy it.");
+  }
+});
+document.querySelector("#auto-download-template").addEventListener("click", () => document.querySelector("#todo-download-template").click());
+document.querySelector("#step-clients-upload").addEventListener("click", () => document.querySelector("#client-io-button").click());
+document.querySelector("#step-clients-report").addEventListener("click", () => document.querySelector("#upload-button").click());
+document.querySelector("#step-connect-button").addEventListener("click", () => document.querySelector("#todo-folder-connect").click());
+document.querySelector("#step-schedule-done").addEventListener("click", () => {
+  automation.scheduledAt = automation.scheduledAt ? null : new Date().toISOString();
+  saveAutomation();
+  renderAutomationPage();
 });
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
