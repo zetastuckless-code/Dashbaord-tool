@@ -60,6 +60,7 @@ import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetri
 import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { deleteRawRows, readRawRows, saveRawRows } from "./lib/raw-delivery-store.js";
+import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, localStorageUsed, readLineDeliveries, storageLevel, writeLineDeliveries } from "./lib/line-delivery-store.js";
 import { applyDcmTopUps, applyDelivery, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
@@ -67,7 +68,12 @@ import { attachLineDays, billingFileName, billingSheets, computeClientBilling, m
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
-let campaigns = applyDcmTopUps(loadCampaigns());
+// Each line's DCM and DSP days load from IndexedDB just after the page opens; until then the saved top-ups stand as they are.
+let campaigns = loadCampaigns();
+let deliveryLoaded = false;
+const writtenDeliveries = new Map();
+let storageFullShown = false;
+let storageWarned = false;
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
 let clientScope = new URLSearchParams(location.search).get("client");
@@ -96,8 +102,41 @@ let savedViews = readSavedViews(localStorage);
 
 /** Saves campaigns, first bringing each line's DCM top-up in line with its latest report. */
 function saveCampaigns() {
+  if (!deliveryLoaded) {
+    // Before the days have loaded, save as-is so nothing stored inline is dropped.
+    trySaveLocal(JSON.stringify(campaigns));
+    return;
+  }
   campaigns = applyDcmTopUps(campaigns);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  writeLineDeliveries(indexedDB, campaigns, writtenDeliveries).catch(error => storageProblem(error));
+  trySaveLocal(JSON.stringify(campaigns, (key, value) => key === "thirdPartyDelivery" ? undefined : value));
+}
+
+/** Saves the campaigns, and says so plainly when the browser is out of room instead of failing silently. */
+function trySaveLocal(text) {
+  try {
+    localStorage.setItem("northstar-campaigns", text);
+    return true;
+  } catch (error) {
+    storageProblem(error);
+    return false;
+  }
+}
+function storageProblem(error) {
+  if (storageFullShown) return;
+  storageFullShown = true;
+  // Say it again on a later save if it still fails, but not on every save in a burst.
+  setTimeout(() => { storageFullShown = false; }, 60_000);
+  const full = /quota/i.test(`${error?.name} ${error?.message}`);
+  // Shown just after any "saved" message the same action raises, and held longer, so it isn't covered.
+  setTimeout(() => {
+    document.querySelector("#toast-title").textContent = full ? "Storage is full" : "Couldn’t save";
+    document.querySelector("#toast-message").textContent = full ? "This change shows now but wasn’t saved. Download a backup in Settings, then remove old campaigns." : "This change shows now but may not be saved. Download a backup in Settings.";
+    const toast = document.querySelector("#toast");
+    toast.classList.add("show", "toast-error");
+    setTimeout(() => toast.classList.remove("show", "toast-error"), 9000);
+  }, 900);
+  updateStorageWarning();
 }
 
 function loadCampaigns() {
@@ -1368,16 +1407,25 @@ document.querySelector("#workspace-backup-input").addEventListener("change", asy
   error.hidden = result.valid;
   document.querySelector("#restore-workspace-backup").disabled = !result.valid;
 });
-document.querySelector("#workspace-backup-form").addEventListener("submit", event => {
+document.querySelector("#workspace-backup-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (!pendingWorkspaceBackup) return;
-  restoreWorkspaceBackup(localStorage, pendingWorkspaceBackup);
+  // The backup's DCM and DSP days go to IndexedDB, so a large backup still fits local storage.
+  await clearDeliveryStores(indexedDB).catch(() => {});
+  await writeLineDeliveries(indexedDB, pendingWorkspaceBackup.campaigns, new Map()).catch(() => {});
+  const campaignsOnly = pendingWorkspaceBackup.campaigns.map(({ thirdPartyDelivery, ...record }) => record);
+  try {
+    restoreWorkspaceBackup(localStorage, { ...pendingWorkspaceBackup, campaigns: campaignsOnly });
+  } catch (error) {
+    storageProblem(error);
+    return;
+  }
   window.location.reload();
 });
 document.querySelector("#reset-workspace").addEventListener("click", () => {
   if (!window.confirm("Reset this browser workspace? Imported campaigns, audit history, settings, saved views, and acknowledgments will be removed. Download a backup first if you may need them.")) return;
   resetWorkspaceStorage(localStorage);
-  window.location.reload();
+  clearDeliveryStores(indexedDB).catch(() => {}).finally(() => window.location.reload());
 });
 document.querySelectorAll("#upload-button, #upload-nav, #client-documents-import").forEach(button => button.addEventListener("click", () => openImportDialog()));
 const fileInput = document.querySelector("#file-input");
@@ -2945,6 +2993,7 @@ function importIsClear() {
 }
 
 async function checkReportFolder({ ask = false } = {}) {
+  await deliveryReady;
   if (!watchedFolders().length || reportState.running || dialog.open) return;
   let granted = true;
   for (const [folder] of watchedFolders()) {
@@ -3322,6 +3371,22 @@ refreshClientFilter();
 applyDashboardView(dashboardView);
 renderDataHealth();
 renderCampaigns();
+// Attach each line's stored days (moving any still kept inline out of local storage), then bring top-ups up to date.
+const deliveryReady = readLineDeliveries(indexedDB).then(stored => {
+  campaigns = campaigns.map(record => {
+    if (record.thirdPartyDelivery) return record;
+    const delivery = stored.get(deliveryKey(record));
+    return delivery ? { ...record, thirdPartyDelivery: delivery } : record;
+  });
+  for (const [key, delivery] of stored) writtenDeliveries.set(key, JSON.stringify(delivery));
+}).catch(() => {}).finally(() => {
+  deliveryLoaded = true;
+  saveCampaigns();
+  renderCampaigns();
+  updateStorageWarning();
+});
+// Ask Chrome to keep the reports database even when the disk gets low.
+navigator.storage?.persisted?.().then(kept => kept || navigator.storage.persist?.()).catch(() => {});
 
 // --- The sky behind the dashboard: time of day always, local weather once you turn it on ---
 let sky = readSkySettings(localStorage);
@@ -3795,11 +3860,7 @@ function renderSettingsPage() {
   document.querySelector("#settings-history-status").textContent = importHistory.length ? `${importHistory.length} import${importHistory.length === 1 ? "" : "s"} recorded; the last on ${new Date(importHistory[0].importedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}.` : "No imports yet.";
   const setUp = Object.values(billing).filter(config => config.rows?.length).length;
   document.querySelector("#settings-billing-status").textContent = setUp ? `${setUp} client${setUp === 1 ? "" : "s"} set up.` : "No clients set up yet. Upload a past billing file on a client's tab.";
-  let bytes = 0;
-  try { for (let index = 0; index < localStorage.length; index += 1) { const key = localStorage.key(index); bytes += (key.length + (localStorage.getItem(key) || "").length) * 2; } } catch { bytes = 0; }
-  const storage = document.querySelector("#settings-storage");
-  storage.textContent = `${campaigns.length} line${campaigns.length === 1 ? "" : "s"} and their settings use ${(bytes / 1_048_576).toFixed(1)} MB of this browser’s local storage (about 5 MB).`;
-  navigator.storage?.estimate?.().then(estimate => { storage.textContent += ` DCM and DSP rows and folder links use ${((estimate.usage || 0) / 1_048_576).toFixed(1)} MB more.`; }).catch(() => {});
+  renderStorageMeters();
 }
 document.querySelector("#settings-name").addEventListener("change", event => {
   const name = event.target.value.trim().slice(0, 60);
@@ -3816,3 +3877,35 @@ document.querySelector("#settings-page").addEventListener("click", event => {
   const page = event.target.closest("[data-page-view]");
   if (page) { event.preventDefault(); setPageView(page.dataset.pageView); }
 });
+
+// --- Storage: how full each store is, shown in Settings and flagged on the sidebar when it's nearly full ---
+const STORAGE_TEXT = { ok: "", filling: "Getting full", full: "Nearly full" };
+function setMeter(id, share, valueText) {
+  const meter = document.querySelector(id);
+  const level = storageLevel(share);
+  meter.dataset.level = level;
+  meter.querySelector(".storage-bar span").style.width = `${Math.min(100, Math.max(1, share * 100))}%`;
+  meter.querySelector(".storage-bar").setAttribute("aria-valuenow", String(Math.round(share * 100)));
+  meter.querySelector(".storage-meter-value").textContent = `${valueText}${STORAGE_TEXT[level] ? ` · ${STORAGE_TEXT[level]}` : ""}`;
+}
+const megabytes = bytes => bytes >= 1_073_741_824 ? `${(bytes / 1_073_741_824).toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(1)} MB`;
+async function storageShares() {
+  const local = localStorageUsed(localStorage) / LOCAL_STORAGE_LIMIT;
+  const estimate = await navigator.storage?.estimate?.().catch(() => null) ?? null;
+  const persisted = await navigator.storage?.persisted?.().catch(() => false) ?? false;
+  return { local, estimate, persisted };
+}
+async function renderStorageMeters() {
+  const { local, estimate, persisted } = await storageShares();
+  setMeter("#storage-local", local, `${Math.round(local * 100)}% of about 5 MB`);
+  const dbShare = estimate?.quota ? estimate.usage / estimate.quota : 0;
+  setMeter("#storage-db", dbShare, estimate ? `${megabytes(estimate.usage || 0)} of ${megabytes(estimate.quota || 0)} available` : "Not available in this browser");
+  document.querySelector("#storage-note").textContent = persisted ? "Chrome keeps this data even when your disk is low." : "Chrome may clear the DCM and DSP data if your disk gets very low. Keeping a recent backup protects it.";
+}
+async function updateStorageWarning() {
+  const { local, estimate } = await storageShares();
+  const full = storageFullShown || local >= 0.8 || (estimate?.quota && estimate.usage / estimate.quota >= 0.8);
+  document.querySelector("#nav-settings-warning").hidden = !full;
+  if (full && !storageWarned && !storageFullShown) { storageWarned = true; showToast("Storage is nearly full", "Open Settings to see what’s using it, and download a backup."); }
+  if (pageView === "settings") renderStorageMeters();
+}

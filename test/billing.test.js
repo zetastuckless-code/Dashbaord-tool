@@ -71,3 +71,13 @@ test("the raw data tab lists the DCM or DSP rows themselves, with totals, under 
   assert.equal(source.data[2][4], "Ad B");
   assert.equal(source.data[3][5].value, "SUM(F2:F3)");
 });
+
+test("storage levels and local storage use", async () => {
+  const { localStorageUsed, storageLevel } = await import("../lib/line-delivery-store.js");
+  const items = { a: "12345", bb: "x" };
+  const storage = { get length() { return Object.keys(items).length; }, key: index => Object.keys(items)[index], getItem: key => items[key] };
+  assert.equal(localStorageUsed(storage), 1 + 5 + 2 + 1);
+  assert.equal(storageLevel(0.5), "ok");
+  assert.equal(storageLevel(0.65), "filling");
+  assert.equal(storageLevel(0.85), "full");
+});
