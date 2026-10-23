@@ -59,10 +59,10 @@ import { groupCampaigns } from "./lib/campaign-groups.js";
 import { metricsForCampaign, readMetricPrefs, reorderMetrics, resetCampaignMetrics, setCampaignMetrics, writeMetricPrefs } from "./lib/campaign-metric-prefs.js";
 import { importClients, markImportsReviewed, pendingImportReviews, readReviewedImports } from "./lib/report-review.js";
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
-import { applyDelivery, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import { applyDcmTopUps, applyDelivery, deliveryComparison, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import { readSkySettings, SKY_KEY, SKY_LABEL, skyTime, skyWeather, weatherUrl } from "./lib/sky.js";
 
-let campaigns = loadCampaigns();
+let campaigns = applyDcmTopUps(loadCampaigns());
 let importHistory = readImportHistory(localStorage);
 let selectedSource = "billing";
 let clientScope = new URLSearchParams(location.search).get("client");
@@ -88,6 +88,12 @@ let pendingWorkspaceBackup = null;
 let pendingValidatedImport = null;
 let selectedFile = null;
 let savedViews = readSavedViews(localStorage);
+
+/** Saves campaigns, first bringing each line's DCM top-up in line with its latest report. */
+function saveCampaigns() {
+  campaigns = applyDcmTopUps(campaigns);
+  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+}
 
 function loadCampaigns() {
   try {
@@ -119,7 +125,7 @@ const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDig
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
   // The insertion order decides each line's dates and IO line; keep the stored lines in step with it.
   const planned = applyCampaignStatus(applyIoPlan(campaigns, campaignTotals), campaignStatus);
-  if (planned !== campaigns) { campaigns = planned; localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns)); }
+  if (planned !== campaigns) { campaigns = planned; saveCampaigns(); }
   // The client account view ignores the saved client filter and always shows that client only.
   if (clientScope && !campaigns.some(campaign => campaign.client === clientScope)) { clientScope = null; history.replaceState({}, "", location.pathname); }
   filter = clientScope ?? filter;
@@ -274,7 +280,11 @@ function applyClientScopeChrome() {
   const throughDates = groups.filter(group => group.status !== "completed").map(group => group.records.map(record => record.dataAsOf).filter(Boolean).sort().at(-1)).filter(Boolean).sort();
   const through = document.querySelector("#client-data-through");
   through.hidden = !throughDates.length;
-  through.innerHTML = throughDates.length ? `<span class="data-through-dot"></span>Data through <strong>${escapeHtml(longDate(throughDates.at(-1)))}</strong>${throughDates[0] !== throughDates.at(-1) ? ` · oldest campaign through ${escapeHtml(longDate(throughDates[0]))}` : ""}` : "";
+  // When DCM carries a line past its last report, say so and name the report date it builds on.
+  const toppedUp = rows.filter(record => record.dcmTopUp);
+  const reportThrough = toppedUp.map(record => record.dcmTopUp.reportAsOf).sort().at(-1);
+  const dcmNote = toppedUp.length ? ` · <span class="dcm-through">DCM after the ${escapeHtml(shortDate(reportThrough))} report</span>` : "";
+  through.innerHTML = throughDates.length ? `<span class="data-through-dot"></span>Data through <strong>${escapeHtml(longDate(throughDates.at(-1)))}</strong>${dcmNote}${throughDates[0] !== throughDates.at(-1) ? ` · oldest campaign through ${escapeHtml(longDate(throughDates[0]))}` : ""}` : "";
   const live = groups.filter(group => group.status === "live").length;
   eyebrow.textContent = "CLIENT ACCOUNT";
   heading.textContent = clientScope;
@@ -596,7 +606,7 @@ document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
     const name = lastCampaignGroups.find(group => group.key === bulkEditCampaign)?.name || "the campaign";
     writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${name}` }));
     campaigns = applyBulkEdits(campaigns, keys, edits).campaigns;
-    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    saveCampaigns();
     bulkEditDialog.close();
     refreshAfterDataChange();
     showToast("Campaign updated", `${name} updated across ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
@@ -606,7 +616,7 @@ document.querySelector("#bulk-edit-form").addEventListener("submit", event => {
   if (!entries.length) { bulkEditDialog.close(); return; }
   writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `editing ${describeSelection(entries)}` }));
   campaigns = applyBulkEdits(campaigns, entries.map(entry => entry.key), edits).campaigns;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   bulkEditDialog.close();
   refreshAfterDataChange();
   showToast("Lines updated", `${describeSelection(entries)} updated. Use Undo to revert.`);
@@ -1114,7 +1124,7 @@ metricDialog.addEventListener("click", event => {
     const keys = group.records.map(record => campaigns.indexOf(record)).filter(position => position >= 0).map(position => lineKey(position, "record"));
     writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `setting the KPI for ${group.name}` }));
     campaigns = applyBulkEdits(campaigns, keys, { kpi, target }).campaigns;
-    localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+    saveCampaigns();
     refreshAfterDataChange();
     renderMetricDetail();
     showToast("KPI updated", `${group.name}: ${kpi || group.kpi || "KPI"}${target ? ` with a goal of ${target}` : ""} on ${keys.length} line${keys.length === 1 ? "" : "s"}. Use Undo to revert.`);
@@ -1463,7 +1473,7 @@ function commitPendingImport({ automatic = false } = {}) {
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: effectiveRows.length, campaignKeys: effectiveRows.map(campaignImportKey), campaignTotals }));
   // Lines that join a campaign set up beforehand do not own it, so removing their report keeps the campaign.
   campaigns = removeFilledShells(mergeResult.campaigns, effectiveRows).map(record => shellGroups.has(groupKey(record)) && record.uploads ? { ...record, uploads: record.uploads.map(upload => upload.fileName === fileName ? { ...upload, created: false } : upload) } : record);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   const warnings = automatic ? [...result.warnings, "Imported automatically from the watched report folder."] : result.warnings;
   recordImport(fileName, fingerprint, result.warnings.length ? "Imported with warnings" : "Imported", effectiveRows.length, [], effectiveRows.map(campaignImportKey), warnings);
   return effectiveRows.length;
@@ -1896,7 +1906,7 @@ document.querySelector("#campaign-settings-form").addEventListener("submit", eve
   if (datesChanged) writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label: `changing the flight dates of ${updatedCampaign.name}` }));
   if (flightEdited) campaignTotals = writeCampaignTotals(localStorage, setTotalsFlight(campaignTotals, totalsKey, pacingStart, pacingEnd));
   campaigns[activeCampaignIndex] = updatedCampaign;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   renderCampaigns(document.querySelector("#client-filter").value);
   renderUndoButton();
   campaignDialog.close();
@@ -1912,7 +1922,7 @@ document.querySelector("#archive-campaign-button").addEventListener("click", () 
   const campaign = campaigns[activeCampaignIndex];
   const archived = !isCampaignArchived(campaign);
   campaigns[activeCampaignIndex] = setCampaignArchived(campaign, archived);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   campaignDialog.close();
   renderCampaigns(document.querySelector("#client-filter").value);
   document.querySelector("#toast-title").textContent = archived ? "Campaign archived" : "Campaign restored";
@@ -1937,7 +1947,7 @@ function openCampaignDialog(index, alertId = null) {
   document.querySelector("#billing-cpm-input").value = Number.isFinite(campaign.billingCpm) ? campaign.billingCpm : "";
   document.querySelector("#campaign-kpi-input").value = campaign.kpi;
   document.querySelector("#campaign-kpi-value-input").value = campaign.value;
-  document.querySelector("#campaign-kpi-target-input").value = campaign.target.replace(/^Target\s*/i, "");
+  document.querySelector("#campaign-kpi-target-input").value = String(campaign.target || "").replace(/^Target\s*/i, "");
   document.querySelector("#archive-campaign-button").textContent = isCampaignArchived(campaign) ? "Restore campaign" : "Archive campaign";
   document.querySelector("#detail-first-spend").textContent = formatMoney(resolveSpend(campaign, "first"));
   document.querySelector("#detail-third-spend").textContent = formatMoney(resolveSpend(campaign, "third"));
@@ -2076,7 +2086,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   campaignTotals = writeCampaignTotals(localStorage, setCampaignTotals(campaignTotals, key, io, fileName));
   const index = campaigns.findIndex(record => groupKey(record) === key);
   campaigns[index] = { ...campaigns[index], ioFileName: fileName, ioOrder: [io.orderNumber, io.revision].filter(Boolean).join("-") || null };
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   const entry = campaignTotals[key];
   refreshAfterDataChange();
   if (activeCampaignIndex !== null && campaigns[activeCampaignIndex] && groupKey(campaigns[activeCampaignIndex]) === key) renderIoTotalsNote(campaigns[activeCampaignIndex]);
@@ -3135,7 +3145,7 @@ function performUndo() {
   campaigns = restored.campaigns;
   importHistory = restored.importHistory;
   if (restored.campaignTotals) campaignTotals = writeCampaignTotals(localStorage, restored.campaignTotals);
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   writeImportHistory(localStorage, importHistory);
   clearImportRollback(localStorage);
   refreshAfterDataChange();
@@ -3151,7 +3161,7 @@ function applyRemoval(label, confirmText, mutate) {
   if (!window.confirm(`${confirmText}\n\nYou can undo this from the Undo button.`)) return false;
   writeImportRollback(localStorage, createRemovalUndo({ campaigns, importHistory, campaignTotals, label }));
   mutate();
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   refreshAfterDataChange();
   showToast("Removed", `${label.charAt(0).toUpperCase()}${label.slice(1)}. Use Undo to bring it back.`);
   return true;
@@ -3452,7 +3462,7 @@ function showDeliveryImport() {
   const last = parsed.records.at(-1)?.date;
   renderDeliveryAssignments();
   document.querySelector("#mapping-review").hidden = true;
-  showValidationResult([`DCM delivery report: ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"}, ${parsed.placements.length ? `${new Set(parsed.placements.map(row => row.placement)).size} placements, ` : ""}${first} to ${last}, from header row ${report.headerRow}. It's kept beside each line's own report and compared over the same days; it doesn't change spend or pacing.`], "success");
+  showValidationResult([`DCM delivery report: ${parsed.campaigns.length} campaign${parsed.campaigns.length === 1 ? "" : "s"}, ${parsed.placements.length ? `${new Set(parsed.placements.map(row => row.placement)).size} placements, ` : ""}${first} to ${last}, from header row ${report.headerRow}. It fills in spend and delivery for the days after each line's latest report, and is compared to the report where both cover the same days.`], "success");
 }
 function renderDeliveryAssignments() {
   const plan = deliveryPlan();
@@ -3489,7 +3499,7 @@ function commitDeliveryImport({ automatic = false } = {}) {
   const result = applyDelivery(campaigns, parsed, plan, { fileName });
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: result.lineCount, campaignKeys: [], campaignTotals }));
   campaigns = result.campaigns;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   thirdPartyLinks = rememberThirdPartyLinks(localStorage, thirdPartyLinks, plan, parsed.source);
   const touched = campaigns.filter(record => plan.some(item => item.target && groupKey(record) === item.target) && record.thirdPartyFiles?.[0] === fileName);
   const warnings = [
@@ -3510,6 +3520,9 @@ function renderDcmComparison(campaign) {
   if (section.hidden) return;
   const comparison = deliveryComparison(campaign);
   const dates = Object.keys(days).sort();
+  const topUp = campaign.dcmTopUp;
+  document.querySelector("#dcm-topup").hidden = !topUp;
+  if (topUp) document.querySelector("#dcm-topup").innerHTML = `Spend and pacing include DCM for <b>${escapeHtml(shortDate(topUp.from))} to ${escapeHtml(shortDate(topUp.to))}</b> on top of the report through ${escapeHtml(shortDate(topUp.reportAsOf))}: +${escapeHtml(formatExactMoney(topUp.added.spend))} spend and +${escapeHtml(formatCount(topUp.added.impressions))} impressions.${topUp.factor !== 1 ? ` DCM cost is scaled ×${topUp.factor.toFixed(2)} to match this line’s report over the days both cover.` : ""} The next report replaces these days.`;
   if (!comparison) {
     document.querySelector("#dcm-window").textContent = `DCM data from ${shortDate(dates[0])} to ${shortDate(dates.at(-1))}. The comparison shows once this line’s report covers the same days (its next report usually does).`;
     document.querySelector("#dcm-table").innerHTML = "";
@@ -3534,7 +3547,7 @@ document.querySelector("#dcm-remove").addEventListener("click", () => {
   if (!campaign) return;
   const { thirdPartyDelivery, thirdPartyAsOf, thirdPartyFiles, ...rest } = campaign;
   campaigns[activeCampaignIndex] = rest;
-  localStorage.setItem("northstar-campaigns", JSON.stringify(campaigns));
+  saveCampaigns();
   renderDcmComparison(campaigns[activeCampaignIndex]);
   renderCampaigns();
 });

@@ -459,3 +459,5 @@ body.review-view .main-content>:not(.topbar):not(#review-page){display:none!impo
 .import-assign-all[hidden]{display:none}
 .delivery-note{margin:0 0 10px;font-size:12px;line-height:1.45;color:#8a5516}
 .automation-lede{margin:-4px 0 0;max-width:72ch;font-size:13px;line-height:1.55;color:#454e60}
+.dcm-topup[hidden]{display:none}.dcm-topup{margin:0 0 10px;padding:10px 12px;border-radius:8px;background:#f4f7fd;font-size:12px;line-height:1.5;color:#30384b}
+.dcm-through{color:#596273;font-weight:500}

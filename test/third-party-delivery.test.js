@@ -56,3 +56,34 @@ test("the comparison covers only the days both sources have, and flags a gap ove
   const gappy = { ...record, thirdPartyDelivery: { CM360: { "2026-10-01": days["2026-10-01"], "2026-10-03": days["2026-10-03"] } } };
   assert.equal(deliveryComparison(gappy), null);
 });
+
+test("DCM days after the latest report top up spend and delivery, and a newer report takes over", async () => {
+  const { applyDcmTopUp } = await import("../lib/third-party-delivery.js");
+  const days = Object.fromEntries(["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"].map(date => [date, { impressions: 1000, clicks: 10, spend: 20, conversions: 1, revenue: 30 }]));
+  const record = line("Display", {
+    startDate: "2026-01-01", endDate: "2026-12-31", dataAsOf: "2026-10-02", spend: 500, firstPartySpend: 500, impressions: 50000, clicks: 400, conversions: 9, revenue: 100,
+    thirdPartyDelivery: { CM360: days },
+    performanceSnapshots: [{ date: "2026-09-30", source: "Zeta Global", spend: 480, impressions: 48000, clicks: 380, conversions: 8, revenue: 70 }, { date: "2026-10-02", source: "Zeta Global", spend: 500, impressions: 50000, clicks: 400, conversions: 9, revenue: 100 }]
+  });
+  const topped = applyDcmTopUp(record);
+  // Over Oct 1–2 the report spent $20 where DCM priced $40, so DCM cost is scaled by 0.5.
+  assert.equal(topped.dcmTopUp.factor, 0.5);
+  assert.equal(topped.spend, 520);
+  assert.equal(topped.firstPartySpend, 520);
+  assert.equal(topped.impressions, 52000);
+  assert.equal(topped.dataAsOf, "2026-10-04");
+  assert.equal(topped.performanceSnapshots.filter(snapshot => snapshot.dcm).length, 2);
+  // Applying again changes nothing.
+  assert.deepEqual(applyDcmTopUp(topped), topped);
+  // A newer report replaces the topped-up numbers and DCM only adds what comes after it.
+  const fresh = applyDcmTopUp({ ...topped, dataAsOf: "2026-10-03", spend: 512, firstPartySpend: 512, impressions: 51200 });
+  assert.equal(fresh.reportBase.spend, 512);
+  assert.equal(fresh.dcmTopUp.from, "2026-10-04");
+  assert.equal(fresh.spend, 522);
+  // Removing the DCM data puts the report's own numbers back.
+  const { thirdPartyDelivery, ...withoutDcm } = topped;
+  const restored = applyDcmTopUp(withoutDcm);
+  assert.equal(restored.spend, 500);
+  assert.equal(restored.dataAsOf, "2026-10-02");
+  assert.equal(restored.dcmTopUp, undefined);
+});

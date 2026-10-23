@@ -347,7 +347,7 @@
           </ol>
 
           <h3 class="automation-heading" id="dcm-automation-title">DCM email reports</h3>
-          <p class="automation-lede">DCM (CM360) sends its scheduled reports to Outlook with the file attached. A Power Automate flow saves each one into a OneDrive folder, and the dashboard picks it up from there. DCM numbers sit beside each line’s own report and are compared over the same days; they never change spend or pacing. Flashtalking sends a download link, not a file, so it isn’t covered here.</p>
+          <p class="automation-lede">DCM (CM360) sends its scheduled reports to Outlook with the file attached. A Power Automate flow saves each one into a OneDrive folder, and the dashboard picks it up from there. DCM fills in each line’s spend, delivery, and pacing for the days after its latest full report, so you stay current between weekly reports. When the next report arrives, it takes over those days. Flashtalking sends a download link, not a file, so it isn’t covered here.</p>
           <ol class="automation-steps" id="dcm-steps">
             <li class="automation-step" data-step="dfolder">
               <div class="step-head"><span class="step-status" id="step-dfolder-status"></span><h4>Make a DCM folder in your own OneDrive</h4></div>
@@ -664,6 +664,7 @@
         </section>
         <section class="snapshot-history-section dcm-section" id="dcm-section" hidden>
           <div class="detail-section-heading"><span>DCM (CM360) vs this report</span><button class="text-button" id="dcm-remove" type="button">Remove DCM data</button></div>
+          <p class="dcm-topup" id="dcm-topup" hidden></p>
           <p class="dcm-window" id="dcm-window"></p>
           <div class="dcm-table" id="dcm-table"></div>
         </section>
