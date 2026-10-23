@@ -429,3 +429,21 @@ body.first-run #workspace-backup-button,body.first-run #export-dashboard-button,
 .welcome-browser p{margin:4px 0 0;max-width:72ch;font-size:13px;line-height:1.5;color:#454e60}
 .welcome-browser .welcome-browser-warning{color:#8a5516;font-weight:600}
 .campaign-card-head .metric-cell small{letter-spacing:.2px}
+
+/* Report review page */
+body.review-view .main-content>:not(.topbar):not(#review-page){display:none!important}
+.review-page[hidden]{display:none}.review-page{display:grid;gap:14px;max-width:980px;margin-bottom:24px}
+.review-section .report-inbox,.review-section .report-activity,.review-imports{margin:0;padding:0 20px 18px}
+.review-imports{list-style:none;display:grid;gap:10px}
+.review-import{padding:12px 14px;border:1px solid #f1dfcd;border-radius:10px;background:#fffaf4}.review-import.rejected{border-color:#f4ced4;background:#fff6f7}
+.review-import-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px;font-size:13px}.review-import-head b{overflow-wrap:anywhere}.review-import-head time{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.review-notes{margin:8px 0 0;padding-left:18px;font-size:12px;line-height:1.5;color:#454e60}
+.review-import-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px 14px;margin-top:10px}.review-import-actions .secondary-button{height:32px}
+.nav-badge.review{background:#b8641a}
+#data-health-card[role=link]{cursor:pointer;transition:border-color 150ms ease,background-color 150ms ease}#data-health-card[role=link]:hover{border-color:#55587a;background:#25263b}
+
+/* Import: a report campaign that matches nothing must be placed on purpose. */
+.import-assignment-block.needs-choice{margin:6px 0;padding:2px 12px 6px;border:1.5px solid #f0c48f;border-top:1.5px solid #f0c48f;border-radius:10px;background:#fffaf3}
+.import-assignment-block.needs-choice select{border-color:#e3973c;box-shadow:0 0 0 3px rgba(227,151,60,.18)}
+.preview-action.required{background:#fff0dc;color:#8a5516}
+.import-required-note{display:block;margin-top:4px;color:#8a5516;font-weight:600}

@@ -25,6 +25,7 @@
           <a class="nav-item" href="#campaign-list"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></span>Campaigns</a>
           <a class="nav-item" id="nav-brief" href="?view=brief" data-page-view="brief"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>Daily brief</a>
           <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
+          <a class="nav-item" id="nav-review" href="?view=review" data-page-view="review"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg></span>Report review <span class="nav-badge review" id="nav-review-count" hidden>0</span></a>
         </nav>
 
         <p class="nav-label" id="client-nav-label" hidden>Clients</p>
@@ -230,6 +231,21 @@
           <div class="brief-groups" id="brief-groups"></div>
         </section>
 
+        <section class="review-page" id="review-page" aria-label="Report review" hidden>
+          <article class="panel review-section">
+            <div class="panel-header"><div><h2>Waiting for a decision</h2><p id="review-inbox-context">Reports from your folder that couldn’t be matched on their own</p></div></div>
+            <ul class="report-inbox" id="report-inbox"></ul>
+          </article>
+          <article class="panel review-section">
+            <div class="panel-header"><div><h2>Imports to check</h2><p id="review-imports-context">Imports that came in with warnings, came in partly, or didn’t come in</p></div><div class="panel-actions"><button class="text-button" id="review-mark-all" type="button" hidden>Mark all reviewed</button></div></div>
+            <ul class="review-imports" id="review-imports"></ul>
+          </article>
+          <article class="panel review-section">
+            <div class="panel-header"><div><h2>Recent automatic imports</h2><p>What the report folder did on its last checks</p></div></div>
+            <ul class="report-activity" id="report-activity"></ul>
+          </article>
+        </section>
+
         <section class="automation-page" id="automation-page" aria-labelledby="automation-title" hidden>
           <div class="automation-intro panel">
             <h2 id="automation-title">Set up your daily automations</h2>
@@ -325,9 +341,8 @@
             </li>
             <li class="automation-step" data-step="rreview">
               <div class="step-head"><span class="step-status" id="step-rreview-status"></span><h4>Review anything it couldn't place</h4></div>
-              <p>A new report imports on its own when every campaign in it matches one on the dashboard. That's the same matching you see when you import by hand, so add each client's IO first. A report that needs a decision waits here. <b>Review</b> opens it in the import screen so you can pick the campaign.</p>
-              <ul class="report-inbox" id="report-inbox"></ul>
-              <details class="troubleshoot" open><summary>Recent activity</summary><ul class="report-activity" id="report-activity"></ul></details>
+              <p>A new report imports on its own when every campaign in it matches one on the dashboard. That's the same matching you see when you import by hand, so add each client's IO first. A report that needs a decision waits on the Report review page, where <b>Review</b> opens it in the import screen so you can pick the campaign.</p>
+              <p class="step-detail"><a href="?view=review" data-page-view="review" id="automation-review-link">Open Report review</a></p>
             </li>
           </ol>
         </section>
