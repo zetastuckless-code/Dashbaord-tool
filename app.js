@@ -505,6 +505,18 @@ function lineStatusLabel(status) {
   return { live: "Live", scheduled: "Scheduled", paused: "Paused", completed: "Completed", archived: "Archived" }[status] || "";
 }
 
+// Short labels for campaign and line rows: dates and counts sit in small pills, and the full story is a click away.
+function dateSpan(start, end) {
+  if (!start || !end) return "";
+  const day = (value, year) => new Date(`${value}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
+  const crossesYear = start.slice(0, 4) !== end.slice(0, 4);
+  return `${day(start, crossesYear)} – ${day(end, crossesYear)}`;
+}
+const metaPill = (text, { cls = "", title = "" } = {}) => text ? `<span class="meta-pill${cls ? ` ${cls}` : ""}"${title ? ` title="${escapeHtml(title)}"` : ""}>${escapeHtml(text)}</span>` : "";
+const datePill = (start, end, title = "") => start && end ? metaPill(dateSpan(start, end), { cls: "date", title: title || `${start} to ${end}` }) : "";
+// The IO lines on screen, so a click can open one with everything behind it.
+const shownIoLines = new Map();
+
 function renderCampaignList(rows, activeAlerts) {
   const period = currentPeriod();
   // Your order applies in portfolio order; completed campaigns always sit at the bottom.
@@ -523,6 +535,7 @@ function renderCampaignList(rows, activeAlerts) {
   syncAuditButton();
   document.querySelector("#toggle-all-campaigns").textContent = groups.length && groups.every(group => expandedCampaigns.has(group.key)) ? "Collapse all" : "Expand all";
   const options = { spendView: selectedSource, period };
+  shownIoLines.clear();
   container.innerHTML = groups.map(group => {
     const keys = metricsForCampaign(metricPrefs, group.key);
     const open = expandedCampaigns.has(group.key);
@@ -542,10 +555,10 @@ function renderCampaignList(rows, activeAlerts) {
     const ioLineRows = planLines.map(line => {
       const lineMetrics = line.records.length ? computeMetrics(line.records, { ...options, totals: { budget: line.budget, startDate: line.startDate, endDate: line.endDate } }) : { budget: line.budget };
       const lineStatus = ["paused", "completed"].includes(campaignStatus[group.key]) ? campaignStatus[group.key] : dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
-      const reportNames = line.records.map(record => recordLineLabel(record));
-      const meta = [`${line.startDate} → ${line.endDate}`, line.placements.length > 1 ? `${line.placements.length} IO flights combined` : "", reportNames.length ? `report: ${reportNames.join(", ")}` : "no report data yet"].filter(Boolean).join(" · ");
-      const index = line.records.length ? campaigns.indexOf(line.records[0]) : -1;
-      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line${lineStatus === "completed" ? " line-done" : ""}" title="${lineStatus === "completed" ? escapeHtml(meta) : ""}"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(meta)}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions">${index >= 0 ? `<button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button>` : ""}</span></div>` };
+      const ioKey = `${group.key}|${line.key}`;
+      shownIoLines.set(ioKey, { group, line, metrics: lineMetrics, status: lineStatus });
+      const pills = [datePill(line.startDate, line.endDate), line.placements.length > 1 ? metaPill(`${line.placements.length} flights`, { title: `${line.placements.length} IO flights combined` }) : "", line.records.length ? "" : metaPill("No report yet", { cls: "muted" })].join("");
+      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line clickable${lineStatus === "completed" ? " line-done" : ""}" data-io-line="${escapeHtml(ioKey)}"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><span class="meta-pills">${pills}</span></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-io-line="${escapeHtml(ioKey)}" aria-label="Details for ${escapeHtml(line.name)}">Details</button></span></div>` };
     });
     const reportLineRows = shownLines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
@@ -555,14 +568,14 @@ function renderCampaignList(rows, activeAlerts) {
       const shownStart = line.startDate || placement?.startDate || null;
       const shownEnd = line.endDate || placement?.endDate || null;
       const fromIo = !line.startDate && Boolean(placement);
-      const dates = shownStart && shownEnd ? `${escapeHtml(shownStart)} → ${escapeHtml(shownEnd)}${fromIo ? " · from IO" : ""}` : "";
+      const dates = datePill(shownStart, shownEnd, shownStart && shownEnd ? `${shownStart} to ${shownEnd}${fromIo ? ", dates from the IO" : ""}` : "");
       const lineStatus = line.kind === "record" ? dashboardFlightStatus({ ...line.record, startDate: shownStart || line.record.startDate, endDate: shownEnd || line.record.endDate }) : null;
       const planNote = entry && line.kind === "record" ? (line.record.ioLineStatus === "outside" ? "outside the IO flight" : "not on the IO") : "";
-      const meta = [planNote ? `<em class="plan-note">${planNote}</em>` : "", dates, line.rate ? `${escapeHtml(line.rateType || "CPM")} $${Number(line.rate).toFixed(2)}` : ""].filter(Boolean).join(" · ");
+      const meta = [planNote ? metaPill(planNote === "not on the IO" ? "Not on IO" : "Outside IO dates", { cls: "warning", title: planNote === "not on the IO" ? "This report line isn't on the insertion order" : "This line delivered outside the IO flight dates" }) : "", dates, line.rate ? metaPill(`${line.rateType || "CPM"} $${Number(line.rate).toFixed(2)}`) : ""].join("");
       const lineSelectKey = stableLineKey(line);
       const lineChecked = selectionFor(group.key).has(lineSelectKey);
       const done = lineStatus === "completed";
-      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong><small>${meta || "&nbsp;"}</small></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
+      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong>${meta ? `<span class="meta-pills">${meta}</span>` : ""}</span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
     });
     // Completed lines sit at the bottom of the campaign as compact rows, so live lines stay up front.
     const allRows = [...ioLineRows, ...reportLineRows];
@@ -571,11 +584,12 @@ function renderCampaignList(rows, activeAlerts) {
       const gaps = group.lines.filter(line => auditLine(line, auditOptions(line)).missing.some(label => ["Spend", "Budget", "Impressions", "Clicks", "CTR"].includes(label))).length;
       return gaps ? ` · ${gaps} line${gaps === 1 ? "" : "s"} missing data` : " · all lines complete";
     })();
+    const lineTotal = entry ? planLines.length + shownLines.length : group.lines.length;
     return `<article class="campaign-card${open ? " open" : ""}" data-group-key="${escapeHtml(group.key)}" style="--metric-count:${keys.length}">
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
         <button class="campaign-toggle" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}">›</button>
         <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
-        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.client)}${group.startDate && group.endDate ? ` · ${escapeHtml(group.startDate)} → ${escapeHtml(group.endDate)}` : ""} · ${entry ? planLines.length + shownLines.length : group.lines.length} line${(entry ? planLines.length + shownLines.length : group.lines.length) === 1 ? "" : "s"}${campaignTotals[group.key] ? ` · budget from ${campaignTotals[group.key].orders.length > 1 ? `${campaignTotals[group.key].orders.length} IOs` : "IO"}` : ""}${auditSummary}</small></span>
+        <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><span class="meta-pills">${clientScope ? "" : `<span class="meta-client">${escapeHtml(group.client)}</span>`}${datePill(group.startDate, group.endDate)}${metaPill(`${lineTotal} line${lineTotal === 1 ? "" : "s"}`)}${entry ? metaPill(entry.orders.length > 1 ? `${entry.orders.length} IOs` : "IO", { cls: "io", title: `Budget and dates from ${entry.orders.length > 1 ? `${entry.orders.length} insertion orders` : "the insertion order"}` }) : ""}${auditSummary ? metaPill(auditSummary.replace(/^ · /, ""), { cls: auditSummary.includes("missing") ? "warning" : "" }) : ""}</span></span>
         ${cells}
         <span class="campaign-card-actions">${manualOrder && group.status !== "completed" ? `<span class="campaign-move"><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="up" aria-label="Move ${escapeHtml(group.name)} up" title="Move up">↑</button><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="down" aria-label="Move ${escapeHtml(group.name)} down" title="Move down">↓</button></span>` : ""}${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
@@ -583,6 +597,39 @@ function renderCampaignList(rows, activeAlerts) {
     </article>`;
   }).join("");
 }
+
+// --- One IO line in full: its flights from the insertion order and the report lines matched to it ---
+function openIoLineDetail(ioKey) {
+  const shown = shownIoLines.get(ioKey);
+  if (!shown) return;
+  const { group, line, metrics, status } = shown;
+  metricDetailKind = null;
+  const daysLeft = status === "live" ? Math.max(0, Math.round((Date.parse(`${line.endDate}T00:00:00Z`) - Date.parse(`${todayLocal()}T00:00:00Z`)) / 86_400_000)) : null;
+  document.querySelector("#metric-dialog-eyebrow").textContent = `${group.client} · ${group.name}`;
+  document.querySelector("#metric-dialog-title").textContent = line.name;
+  document.querySelector("#metric-dialog-controls").innerHTML = "";
+  document.querySelector("#metric-dialog-controls").hidden = true;
+  document.querySelector("#metric-stats").innerHTML = [
+    metricStat("IO budget", formatExactMoney(line.budget), line.placements.length > 1 ? `${line.placements.length} flights combined` : "one flight"),
+    metricStat("Spend", Number.isFinite(metrics.spend) ? formatExactMoney(metrics.spend) : "—", Number.isFinite(metrics.spend) && line.budget ? `${shareText(metrics.spend, line.budget)} of the budget` : "no report data yet"),
+    metricStat("Pacing", Number.isFinite(metrics.pacing) ? `${Math.round(metrics.pacing)}%` : "—", lineStatusLabel(status), Number.isFinite(metrics.pacing) ? paceClass(metrics.pacing) : ""),
+    metricStat("Flight", dateSpan(line.startDate, line.endDate), daysLeft === null ? lineStatusLabel(status) : daysLeft === 0 ? "Ends today" : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`)
+  ].join("");
+  document.querySelector("#metric-table-title").textContent = "Flights on the insertion order";
+  document.querySelector("#metric-table-note").textContent = "Oldest first";
+  document.querySelector("#metric-table").innerHTML = metricTable(["Flight", "IO", "Dates", "Budget", "Status"], line.placements.map(placement => {
+    const placementStatus = dashboardFlightStatus({ startDate: placement.startDate, endDate: placement.endDate });
+    return `<tr><td><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.id && placement.name ? `<small>${escapeHtml(placement.id)}</small>` : ""}</td><td>${escapeHtml(placement.order || "—")}</td><td>${escapeHtml(dateSpan(placement.startDate, placement.endDate))}</td><td>${escapeHtml(formatExactMoney(Number(placement.budget) || 0))}</td><td><span class="status-dot-label ${placementStatus}">${lineStatusLabel(placementStatus)}</span></td></tr>`;
+  }), "This line has no flights on the IO.");
+  setMetricExtra("Report lines matched to it", line.records.length ? "Select one for its full detail" : "", line.records.length ? metricTable(["Report line", "Spend", "Impressions", "KPI", "Data through", ""], line.records.map(record => `<tr><td><strong>${escapeHtml(recordLineLabel(record))}</strong></td><td>${escapeHtml(formatExactMoney(resolveSpend(record, selectedSource) || 0))}</td><td>${escapeHtml(formatCount(Number(record.impressions) || 0))}</td><td>${escapeHtml(record.value ? `${record.value} ${record.kpi || ""}`.trim() : "—")}</td><td>${escapeHtml(record.dataAsOf ? shortDate(record.dataAsOf) : "—")}</td><td><button class="text-button" type="button" data-kpi-open="${campaigns.indexOf(record)}">Details</button></td></tr>`)) : '<p class="history-empty">No report has been matched to this line yet. Import the latest report and it matches on its own.</p>');
+  metricDialog.showModal();
+}
+document.querySelector("#campaign-list-rows").addEventListener("click", event => {
+  const row = event.target.closest("[data-io-line], [data-open-io-line]");
+  if (!row || (event.target.closest("button, a, input, select, label") && !event.target.closest("[data-open-io-line]"))) return;
+  event.stopPropagation();
+  openIoLineDetail(row.dataset.ioLine || row.dataset.openIoLine);
+});
 
 // --- Audit view: what each line carries and where it came from ---
 const AUDIT_MONEY = new Set(["Spend", "1st-party spend", "3rd-party spend", "Budget", "Revenue"]);
@@ -1234,6 +1281,7 @@ function renderKpiDetail() {
 function renderMetricDetail() {
   document.querySelector("#metric-dialog-eyebrow").textContent = `${clientScope ? `${clientScope} · ` : ""}${{ budget: "Budget", spend: "Spend", kpi: "KPI" }[metricDetailKind]} details`;
   document.querySelector("#metric-dialog-controls").innerHTML = "";
+  document.querySelector("#metric-table-title").textContent = "Campaigns";
   ({ budget: renderBudgetDetail, spend: renderSpendDetail, kpi: renderKpiDetail })[metricDetailKind]();
   document.querySelector("#metric-dialog-controls").hidden = !document.querySelector("#metric-dialog-controls").innerHTML;
 }
