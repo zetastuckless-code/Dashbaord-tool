@@ -563,3 +563,17 @@ body.settings-view .main-content>:not(.topbar):not(#settings-page){display:none!
 .client-nav.reordering .client-nav-item.dragging{transition:none;position:relative;z-index:2;background:var(--brand-active);box-shadow:0 8px 22px rgba(0,0,0,.35);cursor:grabbing}
 .client-nav-item.dragging .client-character{transform:rotate(-10deg) scale(1.12)}
 @media (prefers-reduced-motion:reduce){.client-character,.client-nav.reordering .client-nav-item{transition:none}}
+
+/* Campaign and line rows: a short name, then small pills for dates and counts. The full story is a click away. */
+.meta-pills{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:5px}
+.meta-client{font-size:11px;color:#636c7e;margin-right:2px}
+.meta-pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;background:#f0f1f6;color:#4a5266;font-size:11px;font-weight:600;white-space:nowrap;line-height:1}
+.meta-pill.date{background:#eef0fd;color:#4b44b8}
+.meta-pill.date::before{content:"";width:9px;height:9px;margin-right:5px;border:1.5px solid currentColor;border-top-width:3px;border-radius:2px;opacity:.75}
+.meta-pill.io{background:#e7f5ef;color:#17785a}
+.meta-pill.warning{background:#fdf1e3;color:#a75d0d}
+.meta-pill.muted{background:transparent;border:1px dashed #cfd3de;color:#7a8295}
+.campaign-line.line-done .meta-pills{display:none}
+.campaign-line.io-line.clickable{cursor:pointer}
+.campaign-line.io-line.clickable:hover{background:#f7f7fc}
+.campaign-line.io-line.clickable:hover .campaign-title strong{color:var(--primary-dark)}
