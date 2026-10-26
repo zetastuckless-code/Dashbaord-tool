@@ -647,3 +647,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .flow-prompt code{max-height:220px;overflow:auto;font:500 12.5px/1.55 "DM Sans",sans-serif;color:#2b3142;background:#f6f6fb;border:1px solid var(--line)}
 @keyframes step-open{from{opacity:0;transform:translateY(-3px)}}
 @media (prefers-reduced-motion:reduce){.step-body{animation:none}.automation-topic>summary::before,.automation-step>.step-head::after{transition:none}}
+.dsp-flow-form{margin:8px 0 4px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}

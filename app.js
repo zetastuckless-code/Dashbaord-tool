@@ -3294,6 +3294,35 @@ document.querySelector("#automation-page").addEventListener("click", async event
   const copy = event.target.closest("[data-copy-target]");
   if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", copy.dataset.copyLabel ? `${copy.dataset.copyLabel} copied. ${copy.dataset.copyHint || ""}`.trim() : "Folder name copied."); } catch { /* the text stays visible to copy by hand */ } }
 });
+// The DSP flow's Copilot description and ChatGPT prompt follow the folder and subject you type, so each flow takes one report.
+function renderDspFlowPrompts() {
+  const folderInput = document.querySelector("#dsp-folder");
+  const subjectInput = document.querySelector("#dsp-subject");
+  const copilot = document.querySelector("#dsp-copilot-prompt");
+  const help = document.querySelector("#dsp-help-prompt");
+  copilot.dataset.template ||= copilot.textContent;
+  help.dataset.template ||= help.textContent;
+  const folder = folderInput.value.trim() || "Inbox";
+  const subject = subjectInput.value.trim();
+  copilot.textContent = copilot.dataset.template
+    .replace('my Outlook folder "Inbox"', `my Outlook folder "${folder}"`)
+    .replace("from notifications@delivery.zetaglobal.net,", `from notifications@delivery.zetaglobal.net${subject ? ` with "${subject}" in the subject` : " [add: with \"the client's report name\" in the subject]"},`);
+  help.textContent = help.dataset.template
+    .replace("Folder: the Outlook folder my DSP report emails land in (I'll tell you which).", `Folder: ${folder}.`)
+    .replace("Subject Filter: text from the client's report email subject (I'll tell you which).", subject ? `Subject Filter: ${subject}.` : "Subject Filter: text from the client's report email subject (I'll tell you which).");
+  document.querySelector("#dsp-subject-check").textContent = subject || "the subject text you typed above";
+}
+{
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("northstar-dsp-flow")) || {}; } catch { /* starts blank */ }
+  document.querySelector("#dsp-folder").value = saved.folder || "";
+  document.querySelector("#dsp-subject").value = saved.subject || "";
+  renderDspFlowPrompts();
+  for (const id of ["#dsp-folder", "#dsp-subject"]) document.querySelector(id).addEventListener("input", () => {
+    try { localStorage.setItem("northstar-dsp-flow", JSON.stringify({ folder: document.querySelector("#dsp-folder").value, subject: document.querySelector("#dsp-subject").value })); } catch { /* the fields still fill the prompt */ }
+    renderDspFlowPrompts();
+  });
+}
 document.querySelector("#auto-copy-prompt").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(currentPrompt());
