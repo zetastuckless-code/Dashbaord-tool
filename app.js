@@ -12,7 +12,7 @@ import { readReportFile, rowsToCsv } from "./lib/workbook-import.js";
 import { evaluateDataHealth } from "./lib/data-health.js";
 import { calculatePortfolioPacing, calculateSpendPacing, campaignFlightStatus, effectivePacing } from "./lib/spend-pacing.js";
 import { calculateAvailableKpis, calculateKpi } from "./lib/metric-calculations.js";
-import { dashboardFlightStatus, filterCampaigns } from "./lib/campaign-filters.js";
+import { dashboardFlightStatus, filterCampaigns, ranThisMonth } from "./lib/campaign-filters.js";
 import { acknowledgeAlert, readAcknowledgedAlerts, removeAcknowledgment, unacknowledgedAlerts, writeAcknowledgedAlerts } from "./lib/alert-acknowledgments.js";
 import { exportCampaignsCsv } from "./lib/dashboard-export.js";
 import { campaignSnapshotHistory, compareLatestSnapshots, exportPerformanceSnapshotsCsv, periodMetrics, periodSpend } from "./lib/performance-snapshots.js";
@@ -184,7 +184,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const filteredRows = filterCampaignsByAttention(matchingRows, activeAlerts, document.querySelector("#attention-filter")?.value);
   const rows = sortCampaigns(filteredRows, { mode: document.querySelector("#campaign-sort")?.value, spendView: selectedSource });
   const period = currentPeriod();
-  const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => dashboardFlightStatus(campaign) === "live");
+  // Spend, budget and pacing cover campaigns live or run this month; one that ended mid-month stays until it's over.
+  const activeRows = activeRowsWithPooled(rows, campaignTotals, campaign => ranThisMonth(campaign));
   // The KPI watcher card: live lines whose primary KPI misses its goal by more than the KPI tolerance.
   // Finished flights stay in activeRows for pooled pacing, but only live lines are watched.
   const watch = kpiWatch(activeRows.filter(record => !isPlaceholder(record) && dashboardFlightStatus(record) === "live"), { tolerance: alertRules.kpiTolerance });
@@ -207,7 +208,7 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   const spend = period === "current" ? activeRows.reduce((sum, item) => sum + resolveSpend(item, selectedSource), 0) : comparablePeriodRows.reduce((sum, item) => sum + periodSpend(item, period), 0);
   document.querySelector("#budget-value").textContent = formatMoney(budget);
   const liveCampaignCount = new Set(activeRows.map(row => `${row.client}::${campaignGroupName(row)}`)).size;
-  document.querySelector("#budget-detail").textContent = liveCampaignCount ? `across ${liveCampaignCount} live campaign${liveCampaignCount === 1 ? "" : "s"}` : "No live campaigns yet";
+  document.querySelector("#budget-detail").textContent = liveCampaignCount ? `across ${liveCampaignCount} campaign${liveCampaignCount === 1 ? "" : "s"} running this month` : "No live campaigns yet";
   // A period no report reaches (data through Oct 12, "last 7 days" ending Oct 22) has no spend to show, not $0.
   document.querySelector("#spend-value").textContent = period !== "current" && !comparablePeriodRows.length ? "—" : formatMoney(spend);
   document.querySelector("#spend-metric-label").textContent = period === "current" ? "Spend to date" : `Spend · ${periodText(period)}`;
@@ -249,7 +250,7 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
   const kpiView = document.querySelector("#kpi-view")?.value || "primary";
   const rollup = buildClientRollup(rows, { spendView: selectedSource, period, kpiView, alerts: activeAlerts, rules: alertRules, totals: campaignTotals });
   const grid = document.querySelector("#client-grid");
-  document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with live campaigns · select one to open its account` : "No clients have live campaigns for the current filters";
+  document.querySelector("#client-rollup-context").textContent = rollup.length ? `${rollup.length} client${rollup.length === 1 ? "" : "s"} with campaigns running this month · select one to open its account` : "No clients have live campaigns for the current filters";
   const bandLabel = { over: "Above plan", under: "Below plan", "on-track": "On track", unknown: "No pacing" };
   const kpiText = kpis => kpis.map(kpi => `${escapeHtml(kpi.metric)} <strong>${escapeHtml(kpi.formatted)}</strong>`).join(" · ");
   grid.innerHTML = rollup.map(client => {
@@ -1335,12 +1336,12 @@ function renderBudgetDetail() {
   const largest = rows.find(row => row.budget);
   document.querySelector("#metric-dialog-title").textContent = "Active media budget";
   document.querySelector("#metric-stats").innerHTML = [
-    metricStat("Active media budget", formatMoney(detail.budget), `across ${rows.length} live campaign${rows.length === 1 ? "" : "s"}`),
+    metricStat("Active media budget", formatMoney(detail.budget), `across ${rows.length} campaign${rows.length === 1 ? "" : "s"} running this month`),
     metricStat("From insertion orders", formatMoney(ioBudget), `${fromIo.length} campaign${fromIo.length === 1 ? "" : "s"} · ${shareText(ioBudget, detail.budget)} of the budget`),
     metricStat("From reports", formatMoney(Math.max(detail.budget - ioBudget, 0)), missing ? `${missing} campaign${missing === 1 ? " has" : "s have"} no budget yet` : "Every live campaign has a budget"),
     metricStat("Largest campaign", largest ? formatMoney(largest.budget) : "—", largest ? largest.name : "No budgets yet")
   ].join("");
-  document.querySelector("#metric-table-note").textContent = "Live campaigns, largest budget first";
+  document.querySelector("#metric-table-note").textContent = "Campaigns running this month, largest budget first";
   document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Flight", "Budget", "Share", "Budget from", "Days left"], rows.map(row => `<tr>${rowCampaign(row)}<td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatExactMoney(row.budget)) : "—"}</td><td>${row.budget ? shareText(row.budget, detail.budget) : "—"}</td><td>${row.budget ? (row.fromOrder ? "Insertion order" : "Report") : '<span class="warning-text">Needs a budget</span>'}</td><td>${row.daysLeft ?? "—"}</td></tr>`));
   setMetricExtra("", "", "");
 }
@@ -1353,19 +1354,19 @@ function renderSpendDetail() {
   const lastWeek = detail.period.daysWithData ? detail.period.actualTotal : null;
   document.querySelector("#metric-dialog-title").textContent = "Spend to date";
   document.querySelector("#metric-stats").innerHTML = [
-    metricStat("Spend to date", formatMoney(spend), `${SOURCE_LABEL[selectedSource]} spend across ${rows.length} live campaign${rows.length === 1 ? "" : "s"}`),
+    metricStat("Spend to date", formatMoney(spend), `${SOURCE_LABEL[selectedSource]} spend across ${rows.length} campaign${rows.length === 1 ? "" : "s"} running this month`),
     metricStat("Budget used", shareText(spend, detail.budget), detail.budget > 0 ? `of ${formatMoney(detail.budget)}` : "No budget set"),
     metricStat("Remaining", detail.budget > 0 ? formatMoney(Math.max(detail.budget - spend, 0)) : "—", detail.requiredDaily ? `${perDay(detail.requiredDaily)} needed to finish on time` : "No live flight with budget left"),
     metricStat("Last 7 days", lastWeek === null ? "—" : formatMoney(lastWeek), lastWeek === null ? "No reports cover the last 7 days" : `${perDay(detail.period.avgActual)} on average (billing)`)
   ].join("");
-  document.querySelector("#metric-table-note").textContent = `Live campaigns, most spend first · ${SOURCE_LABEL[selectedSource]} spend`;
+  document.querySelector("#metric-table-note").textContent = `Campaigns running this month, most spend first · ${SOURCE_LABEL[selectedSource]} spend`;
   document.querySelector("#metric-table").innerHTML = metricTable(["Campaign", "Budget", "Spend", "Budget used", "Remaining", "Data through"], rows.map(row => {
     const through = row.records.map(record => record.dataAsOf).filter(Boolean).sort().at(-1);
     return `<tr>${rowCampaign(row)}<td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td><strong>${escapeHtml(formatExactMoney(row.shownSpend))}</strong></td><td>${row.budget ? shareText(row.shownSpend, row.budget) : "—"}</td><td>${row.budget ? escapeHtml(formatMoney(Math.max(row.budget - row.shownSpend, 0))) : "—"}</td><td>${escapeHtml(through || "—")}</td></tr>`;
   }));
   // On the overview, spend also rolls up by client.
   const byClient = clientScope ? [] : [...rows.reduce((map, row) => map.set(row.client, { spend: (map.get(row.client)?.spend || 0) + row.shownSpend, budget: (map.get(row.client)?.budget || 0) + (row.budget || 0), count: (map.get(row.client)?.count || 0) + 1 }), new Map())].sort((a, b) => b[1].spend - a[1].spend);
-  setMetricExtra("By client", "Live campaigns only", byClient.length > 1 ? metricTable(["Client", "Campaigns", "Budget", "Spend", "Budget used"], byClient.map(([client, item]) => `<tr><td><strong>${escapeHtml(client)}</strong></td><td>${item.count}</td><td>${item.budget ? escapeHtml(formatMoney(item.budget)) : "—"}</td><td>${escapeHtml(formatMoney(item.spend))}</td><td>${shareText(item.spend, item.budget)}</td></tr>`)) : "");
+  setMetricExtra("By client", "Campaigns running this month", byClient.length > 1 ? metricTable(["Client", "Campaigns", "Budget", "Spend", "Budget used"], byClient.map(([client, item]) => `<tr><td><strong>${escapeHtml(client)}</strong></td><td>${item.count}</td><td>${item.budget ? escapeHtml(formatMoney(item.budget)) : "—"}</td><td>${escapeHtml(formatMoney(item.spend))}</td><td>${shareText(item.spend, item.budget)}</td></tr>`)) : "");
 }
 
 const KPI_CHOICES = ["CTR", "VCR", "CPA", "ROAS"];
