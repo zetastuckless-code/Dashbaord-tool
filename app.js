@@ -2820,7 +2820,22 @@ function renderMorningBrief() {
   document.querySelector("#morning-brief-title").textContent = brief ? `Morning brief · ${new Date(`${brief.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}` : "To-dos";
   document.querySelector("#morning-brief-context").innerHTML = brief ? `${escapeHtml(brief.sources || "Morning scan")}${brief.skipped ? ` · <span class="warning-text">${escapeHtml(brief.skipped)}</span>` : ""}${stale ? ' · <span class="warning-text">not today’s brief yet</span>' : ""}` : "Add a morning brief to see your day here";
   const calendar = stale ? [] : brief?.calendar || [];
-  document.querySelector("#morning-brief-calendar").innerHTML = calendar.length ? `<span class="brief-strip-label">Today</span>${calendar.map(entry => `<span class="brief-meeting"><b>${escapeHtml(entry.time)}</b>${escapeHtml(entry.title)}</span>`).join("")}` : "";
+  // Today's meetings as small cards: the time, the meeting, and a link to the invite. Past ones fade; the next one stands out.
+  const now = new Date();
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+  const meetingMinutes = time => {
+    const match = /^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?/i.exec(String(time || "").trim());
+    return match ? (Number(match[1]) % 12 + (/p/i.test(match[3]) ? 12 : 0)) * 60 + Number(match[2] || 0) : null;
+  };
+  const isToday = brief?.date === todayLocal();
+  const nextIndex = isToday ? calendar.findIndex(entry => (meetingMinutes(entry.time) ?? -1) >= minutesNow - 10) : -1;
+  document.querySelector("#morning-brief-calendar").innerHTML = calendar.length ? `<span class="brief-strip-label">Today</span><div class="meeting-cards">${calendar.map((entry, index) => {
+    const start = meetingMinutes(entry.time);
+    const past = isToday && start !== null && start < minutesNow - 10 && index !== nextIndex;
+    const state = index === nextIndex ? " next" : past ? " past" : "";
+    const body = `<b class="meeting-time">${escapeHtml(entry.time || "Today")}</b><span class="meeting-title" title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</span>${entry.link ? '<span class="meeting-link">Open invite ↗</span>' : ""}`;
+    return entry.link ? `<a class="meeting-card${state}" href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(`${entry.time} ${entry.title}, open the invite in Outlook`)}">${body}</a>` : `<div class="meeting-card${state}">${body}</div>`;
+  }).join("")}</div>` : "";
   // The Daily brief page already lists every item by account, so the feed shows only on the overview.
   const feedShown = pageView !== "brief";
   for (const id of ["#morning-brief-filter", "#morning-brief-feed", "#morning-brief-more"]) document.querySelector(id).hidden = !feedShown;
