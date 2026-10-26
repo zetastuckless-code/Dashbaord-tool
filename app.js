@@ -2582,6 +2582,8 @@ function documentDetail(doc) {
 
 // --- Client account view: the insertion order(s) behind each campaign, so budget and flight are easy to find ---
 const IO_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const IO_SHORT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const CALENDAR_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>';
 const ioDate = value => value ? IO_DATE.format(new Date(`${value}T00:00:00Z`)) : "—";
 const ioRange = (start, end) => start && end ? `${ioDate(start)} → ${ioDate(end)}` : "Dates not set";
 
@@ -2592,33 +2594,34 @@ function renderClientIo() {
   const summary = buildClientIoSummary({ campaigns, totals: campaignTotals, client: clientScope });
   const withIo = summary.filter(item => item.hasIo).length;
   document.querySelector("#client-io-context").textContent = summary.length ? `${withIo} of ${summary.length} campaign${summary.length === 1 ? "" : "s"} paced on an insertion order · reports fill in spend and KPIs against these budgets and flights` : `No campaigns for ${clientScope} yet`;
+  // One card per campaign: live ones first, then completed ones in the same grid, smaller.
+  const shortRange = (start, end) => start && end ? `${IO_SHORT.format(new Date(`${start}T00:00:00Z`))} – ${IO_SHORT.format(new Date(`${end}T00:00:00Z`))}` : "Dates not set";
   const cardFor = item => {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
-    const tracking = `<div class="io-tracking"><span><small>${records.some(record => record.deliveredRate) ? "Delivered to date" : "Spend to date"}</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
-    if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
-    const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
-    const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
-    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-io="${escapeHtml(item.key)}">Edit IO</button><button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Campaign</button></div>
-      <div class="io-facts"><span><small>Total IO budget${campaignTotals[item.key]?.edits?.budget !== undefined ? " (edited)" : ""}</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
-      ${campaignTotals[item.key]?.edits ? `<p class="io-edited">Edited by hand ${escapeHtml(campaignTotals[item.key].edits.editedAt ? ioDate(campaignTotals[item.key].edits.editedAt.slice(0, 10)) : "")}. Uploading the updated IO replaces the edits.</p>` : ""}${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
+    const done = item.status === "completed";
+    const budget = item.budget || metrics.budget || null;
+    const spend = Number.isFinite(metrics.spend) ? metrics.spend : null;
+    const delivered = records.some(record => record.deliveredRate) ? "Delivered" : "Spent";
+    const plan = budget && item.startDate && item.endDate ? calculateSpendPacing({ budget, spend: spend || 0, startDate: item.startDate, endDate: item.endDate }) : null;
+    const share = value => `${Math.max(0, Math.min(100, value / budget * 100)).toFixed(1)}%`;
+    const bar = budget && spend !== null ? `<div class="io-progress"><div class="io-progress-label"><span><b>${escapeHtml(formatMoney(spend))}</b> ${delivered.toLowerCase()} of ${escapeHtml(formatMoney(budget))}</span>${done ? "" : `<b class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))} pacing</b>`}</div><div class="io-bar ${done ? "" : paceClass(metrics.pacing)}" role="img" aria-label="${escapeHtml(`${formatMoney(spend)} ${delivered.toLowerCase()} of ${formatMoney(budget)}`)}"><span style="width:${share(spend)}"></span>${!done && plan ? `<i title="Where 100% pacing would be today" style="left:${share(plan.expectedSpend)}"></i>` : ""}</div></div>` : "";
+    const chips = [`<span class="io-chip io-chip-date">${CALENDAR_ICON}${escapeHtml(shortRange(item.startDate, item.endDate))}</span>`, records.length ? `<span class="io-chip">${records.length} line${records.length === 1 ? "" : "s"}</span>` : "", item.hasIo ? item.orders.map(order => `<span class="io-chip io-chip-order" title="${escapeHtml(`${order.fileName || ""}${order.appliedAt ? ` · applied ${ioDate(order.appliedAt.slice(0, 10))}` : ""}`)}">${escapeHtml(order.order || "IO")}</span>`).join("") : '<span class="io-chip io-chip-muted">No IO</span>', campaignTotals[item.key]?.edits ? '<span class="io-chip io-chip-edited">Edited by hand</span>' : ""].join("");
+    const actions = `<div class="io-card-actions">${salesforceLink(item.key)}${item.hasIo ? `<button class="text-button" type="button" data-edit-io="${escapeHtml(item.key)}">Edit IO</button>` : ""}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(item.key)}">Campaign</button></div>`;
+    const details = item.hasIo && !done ? `<details class="io-more"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO${item.orders.length > 1 ? ` · ${item.orders.length} orders` : ""}</summary>${item.orders.length > 1 ? `<ul class="io-orders">${item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}</span></li>`).join("")}</ul>` : ""}<ul class="io-lines">${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong><small>${escapeHtml(shortRange(placement.startDate, placement.endDate))}${placement.flights > 1 ? ` · ${placement.flights} flights` : ""}</small></span><b>${Number.isFinite(placement.budget) ? escapeHtml(formatMoney(placement.budget)) : "—"}</b></li>`).join("")}</ul></details>` : "";
+    const note = !item.hasIo && !done ? `<p class="io-empty">No insertion order yet. Pacing uses the budget and dates from the reports.</p>` : "";
+    return `<article class="io-card${done ? " io-card-done" : ""}${item.hasIo ? "" : " no-io"}" data-io-key="${escapeHtml(item.key)}">
+      <div class="io-card-top"><span class="io-status ${item.status}">${lineStatusLabel(item.status)}</span>${actions}</div>
+      <h3 class="io-card-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h3>
+      <div class="io-chips">${chips}</div>
+      ${bar}${note}${details}
+    </article>`;
   };
-  // Completed campaigns stay out of the way: a collapsed card (status and name) in a side column, opened on click.
-  const collapse = (html, key) => html
-    .replace(/^<article class="([^"]*)"([^>]*)><div class="io-card-head">([\s\S]*?)<\/div>/, (_, classes, attributes, head) => `<details class="${classes} io-card-done"${attributes}${openDoneIo.has(key) ? " open" : ""}><summary class="io-card-head">${head}</summary>`)
-    .replace(/<\/article>$/, "</details>");
   const active = summary.filter(item => item.status !== "completed");
   const done = summary.filter(item => item.status === "completed");
-  document.querySelector("#client-io-list").innerHTML = active.length ? active.map(cardFor).join("") : summary.length ? '<p class="history-empty">No current campaigns. Completed ones are listed alongside.</p>' : '<p class="history-empty">Upload an insertion order to see its budget and flight here.</p>';
-  document.querySelector("#client-io-done").hidden = done.length === 0;
-  document.querySelector("#client-io-done-list").innerHTML = done.map(item => collapse(cardFor(item), item.key)).join("");
+  document.querySelector("#client-io-list").innerHTML = summary.length ? [...active, ...done].map(cardFor).join("") : '<p class="history-empty">Upload an insertion order to see its budget and flight here.</p>';
+  document.querySelector("#client-io-done").hidden = true;
 }
-const openDoneIo = new Set();
-document.querySelector("#client-io-done-list").addEventListener("toggle", event => {
-  const card = event.target.closest?.(".io-card-done");
-  if (!card) return;
-  if (card.open) openDoneIo.add(card.dataset.ioKey); else openDoneIo.delete(card.dataset.ioKey);
-}, true);
 document.querySelector("#client-io-upload").addEventListener("click", () => document.querySelector("#client-io-input").click());
 // --- Edit IO: budget, flight, line budgets and monthly amounts, until the updated IO arrives ---
 const ioEditDialog = document.querySelector("#io-edit-dialog");
