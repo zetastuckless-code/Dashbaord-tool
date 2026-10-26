@@ -105,3 +105,19 @@ test("a DSP export is read as DSP delivery split by line item, and fills in ahea
   assert.equal(topUpSource({ thirdPartyDelivery: { CM360: { "2026-10-01": {} }, DSP: { "2026-10-01": {} } } }), "DSP");
   assert.equal(topUpSource({ thirdPartyDelivery: { CM360: { "2026-10-01": {} } } }), "CM360");
 });
+
+test("IO format names match DCM's: Standard Display, Native Display and Online Video, with added value kept apart", () => {
+  const lines = ["Standard Display CPA", "Native Display CPA", "Online Video CPA", "Standard Display DE"].map(label => ({ name: `Highmark B2B — ${label}` }));
+  const prefix = "COMM-2026 B2B BECAUSE LIFE CAMPAIGN-AWARE-";
+  const { assigned, unassigned } = assignPlacements(lines, [
+    `${prefix}DISPLAY-ZETA-TRAFFIC-PROS-CPA`,
+    `${prefix}NATIVE-ZETA-TRAFFIC-PROS-CPA_N/A_N/A-A35:64_M/F_N/A_CONTEXTUAL, BEHAVIORAL AND COMPANY SIZE`,
+    `${prefix}OLV-ZETA-TRAFFIC-PROS-CPA_N/A_N/A-A35:64_M/F_N/A_BEHAVIORAL AND COMPANY SIZE`,
+    `${prefix}DISPLAY-ZETA-DE-ADDEDVALUE`
+  ]);
+  assert.deepEqual([...assigned.values()], [0, 1, 2]);
+  assert.deepEqual(unassigned, [`${prefix}DISPLAY-ZETA-DE-ADDEDVALUE`]);
+  // An added-value line still takes its own placements.
+  const withAv = assignPlacements([...lines, { name: "Highmark B2B — Standard Display DE Added Value" }], [`${prefix}DISPLAY-ZETA-DE-ADDEDVALUE`]);
+  assert.equal(withAv.assigned.get(`${prefix}DISPLAY-ZETA-DE-ADDEDVALUE`), 4);
+});
