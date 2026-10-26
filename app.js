@@ -4343,6 +4343,17 @@ function billingStatusText(result) {
 // The client's billing preview shows the month billing is on (this month, or last month in the first week); you can
 // switch to another recent month.
 function billingPreviewMonths() { return Array.from({ length: 4 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
+/** Why a row bills nothing: its lines ended, or none of them are on the dashboard; with the fix one click away. */
+function rowProblem(item, month) {
+  const lines = clientLines(clientScope);
+  const known = (item.row.lines || []).filter(name => lines.some(line => line.name === name));
+  const unbilled = unbilledCampaigns(clientScope, month, billingConfig(clientScope));
+  const move = unbilled.map(campaign => `<button class="text-button" type="button" data-billing-move-row="${escapeHtml(item.row.id)}" data-billing-campaign="${escapeHtml(campaign.key)}" data-billing-for="${month}">Bill ${escapeHtml(campaign.name)} on this row</button>`).join(" ");
+  if (!known.length) return `<small class="billing-problem">None of this row’s lines are on the dashboard. ${move || "Pick its lines under the setup below."}</small>`;
+  if (item.notLive) return `<small class="billing-problem">Its lines ran before or after ${escapeHtml(monthName(month))}. ${move || ""}</small>`;
+  if (!item.quantity && !item.unavailable) return `<small class="billing-problem">No delivery found for these dates in its ${known.length} line${known.length === 1 ? "" : "s"}${Object.keys(item.lineSources || {}).length ? "" : ""}. Check the DCM or DSP report covers them.</small>`;
+  return "";
+}
 /** Under a row's billable: how far it is from what the IO expects (shown once, on the row's last period). */
 function rowPaceText(result, item) {
   const pace = result.pace?.rows.find(row => row.id === item.row.id);
@@ -4352,7 +4363,7 @@ function rowPaceText(result, item) {
 }
 /** The always-visible line: the month, where it stands, its total so far, and the download. */
 function billingHead(result, month, config, client = clientScope) {
-  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${unbilledNotice(client, month, config)}${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
+  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${emptyRowsNotice(result)}${unbilledNotice(client, month, config)}${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
 }
 /** The client's campaigns live this month whose lines no billing row includes, one entry per campaign. */
 function unbilledCampaigns(client, month, config) {
@@ -4362,6 +4373,10 @@ function unbilledCampaigns(client, month, config) {
   const groups = new Map();
   for (const line of lines) groups.set(groupKey(line), [...(groups.get(groupKey(line)) || []), line]);
   return [...groups].map(([key, list]) => ({ key, name: campaignGroupName(list[0]), lines: list }));
+}
+function emptyRowsNotice(result) {
+  const empty = [...new Set(result.rows.filter(item => item.notLive || (item.unavailable && !item.quantity)).map(item => item.row.lineName || item.row.campaignName))];
+  return empty.length ? `<div class="billing-unbilled"><b>Billing nothing this month:</b> ${empty.map(escapeHtml).join(", ")}. Open Line items and setup below to see why and fix it.</div>` : "";
 }
 function unbilledNotice(client, month, config) {
   if (!config.rows?.length) return "";
@@ -4420,7 +4435,7 @@ function renderBillingPreview() {
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
   document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your reports.</p>';
-  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.row.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : `${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.source !== item.row.source ? ` (no ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${rowPaceText(result, item)}</td></tr>`).join("")}</tbody></table>` : "";
+  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.row.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : `${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.source !== item.row.source ? ` (no ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>`).join("")}</tbody></table>` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
@@ -4457,6 +4472,20 @@ document.querySelector("#client-billing").addEventListener("click", event => {
     saveBilling();
     renderClientBilling();
   }
+});
+// Moves a row whose lines have ended onto a campaign no row bills yet (the next IO for the same placement).
+document.querySelector("#client-billing").addEventListener("click", event => {
+  const button = event.target.closest("[data-billing-move-row]");
+  if (!button || !clientScope) return;
+  const config = billingConfig(clientScope);
+  const row = config.rows.find(item => item.id === button.dataset.billingMoveRow);
+  const campaign = unbilledCampaigns(clientScope, button.dataset.billingFor, config).find(item => item.key === button.dataset.billingCampaign);
+  if (!row || !campaign) return;
+  row.lines = campaign.lines.map(line => line.name);
+  row.source = defaultSource(campaign.lines);
+  saveBilling();
+  renderCampaigns(document.querySelector("#client-filter").value);
+  showToast("Row updated", `${row.lineName || row.campaignName} now bills ${campaign.name}. Rename the row under Line items and setup if the billing file should show the new name.`);
 });
 // A row for a campaign no row bills yet: its lines, the source they have data from, and the IO's rate.
 document.querySelector("#client-billing").addEventListener("click", event => {

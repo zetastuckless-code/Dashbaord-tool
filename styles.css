@@ -673,3 +673,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .io-edited{margin:6px 0 0;font-size:12px;color:#8a5516}
 .billing-unbilled{margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#fff8ee;border:1px solid #f1d3a8;font-size:12.5px;color:#5c4320}.billing-unbilled b{color:#8a5516}
 .status-facts{margin:-4px 0 10px;font-size:12px;color:#596273}.status-field input[readonly]{background:#f6f7fa;color:#596273}.status-last{margin-top:8px;font-size:12.5px;color:#454e60}.status-last summary{cursor:pointer;font-weight:600;color:#4b40c4;font-size:12px}.status-last p{margin:6px 0 0}
+.billing-problem{display:block;margin-top:3px;font-size:11.5px;color:#8a5516;white-space:normal}.billing-problem .text-button{font-size:11.5px}
