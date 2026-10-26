@@ -3294,7 +3294,7 @@ document.querySelector("#automation-page").addEventListener("click", async event
   const copy = event.target.closest("[data-copy-target]");
   if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", copy.dataset.copyLabel ? `${copy.dataset.copyLabel} copied. ${copy.dataset.copyHint || ""}`.trim() : "Folder name copied."); } catch { /* the text stays visible to copy by hand */ } }
 });
-// The DSP flow's checklist and ChatGPT prompt follow the folder and subject you type, so each flow takes one report.
+// The DSP flow's steps and ChatGPT prompt follow the folder and subject you type, so each flow takes one report.
 function renderDspFlowPrompts() {
   const folderInput = document.querySelector("#dsp-folder");
   const subjectInput = document.querySelector("#dsp-subject");
@@ -3307,24 +3307,8 @@ function renderDspFlowPrompts() {
     .replace("Subject Filter: text from the client's report email subject (I'll tell you which).", subject ? `Subject Filter: ${subject}.` : "Subject Filter: text from the client's report email subject (I'll tell you which).");
   document.querySelector("#dsp-subject-check").textContent = subject || "the subject text you typed above";
   document.querySelector("#dsp-folder-check").textContent = folder;
-  // Describe it to design it builds the whole flow from this, with the expressions left for you to paste. A required box
-  // left empty makes Copilot drop the step, so the upload gets a placeholder path you then replace. The same
-  // details go to the editor's Copilot panel when Copilot leaves settings blank.
-  const subjectText = subject || "[the client's report email subject]";
-  document.querySelector("#dsp-copilot-prompt").textContent = [
-    `When a new email arrives in my Outlook folder "${folder}" from notifications@delivery.zetaglobal.net with "${subjectText}" in the subject (Include Attachments: No), do this:`,
-    '1. Add a Condition: the email Body contains "Download Report".',
-    '2. If true, add a Compose action named "Report link". Leave its Inputs empty.',
-    '3. Then, under True after "Report link", add the OneDrive for Business action "Upload file from URL". Set Source URL to the Outputs of "Report link", Destination File Path to "/DCM Reports/report.csv" for now, and Overwrite to Yes.',
-    "Don't type any expressions; I'll add them."
-  ].join("\n");
-  document.querySelector("#dsp-copilot-details").textContent = [
-    "Fill in this flow's settings:",
-    `1. Trigger "When a new email arrives (V3)": Folder "${folder}", From "notifications@delivery.zetaglobal.net", Subject Filter "${subjectText}", Include Attachments No.`,
-    '2. Condition: the email Body contains "Download Report".',
-    '3. "Upload file from URL": Source URL is the Outputs of "Report link", Overwrite is Yes.',
-    "Leave the Compose Inputs and the Destination File Path as they are; don't type any expressions."
-  ].join("\n");
+  // Each client's flow is named after its report, so a list of several flows stays readable.
+  document.querySelector("#dsp-flow-name").textContent = subject ? `DSP ${subject} to dashboard` : "DSP report to dashboard";
 }
 {
   let saved = {};
