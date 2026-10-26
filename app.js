@@ -39,7 +39,7 @@ import { purgeDemoCampaigns } from "./lib/demo-purge.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { readIoPdf } from "./lib/io-reader.js";
-import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsEdits, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
 import { applyIoPlan, ioLines, recordLineLabel } from "./lib/io-plan.js";
@@ -48,6 +48,7 @@ import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_K
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
+import { BRIEF_LOG_KEY, campaignStatusRow, logItems, readJson, STATUS_DRAFTS_KEY, statusDue, statusPrompt, statusRowTsv, statusWeeks, weekKey } from "./lib/status-doc.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
@@ -85,7 +86,7 @@ if (sourcesView) clientScope = null;
 let alertsView = new URLSearchParams(location.search).get("view") === "alerts";
 if (alertsView) clientScope = null;
 // Full pages reached from the sidebar: the daily brief and the automation setup guide.
-const PAGE_VIEWS = ["brief", "automation", "review", "billing", "settings"];
+const PAGE_VIEWS = ["brief", "automation", "review", "billing", "status", "settings"];
 // The "new campaign" choice shared by the IO and report dialogs.
 const NEW_CAMPAIGN = "__new";
 let pageView = PAGE_VIEWS.includes(new URLSearchParams(location.search).get("view")) ? new URLSearchParams(location.search).get("view") : null;
@@ -495,6 +496,11 @@ let campaignStatus = readCampaignStatus(localStorage);
 let campaignOrder = readCampaignOrder(localStorage);
 let todos = pruneTodos(readTodos(localStorage));
 let brief = readBrief(localStorage);
+// Everything the briefs said and what you checked off, kept a few weeks for the Monday status doc.
+let briefLog = readJson(localStorage, BRIEF_LOG_KEY, []);
+let statusDrafts = readJson(localStorage, STATUS_DRAFTS_KEY, {});
+if (!briefLog.length && todos.length) briefLog = todos.reduce((log, item) => logItems(log, [item], item.briefDate || item.addedOn || new Date().toISOString().slice(0, 10)), []);
+function saveBriefLog() { try { localStorage.setItem(BRIEF_LOG_KEY, JSON.stringify(briefLog)); } catch { /* the log rebuilds from the next brief */ } }
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
 const expandedCampaigns = new Set();
 let autoExpandedClient = null;
@@ -2548,9 +2554,9 @@ function renderClientIo() {
     if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
     const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
-    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div>
-      <div class="io-facts"><span><small>Total IO budget</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
-      ${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
+    return `<article class="io-card" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-io="${escapeHtml(item.key)}">Edit IO</button><button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Campaign</button></div>
+      <div class="io-facts"><span><small>Total IO budget${campaignTotals[item.key]?.edits?.budget !== undefined ? " (edited)" : ""}</small><strong>${item.budget ? escapeHtml(formatExactMoney(item.budget)) : "—"}</strong></span><span><small>Flight${item.flightEdited ? " (edited)" : ""}</small><strong>${escapeHtml(ioRange(item.startDate, item.endDate))}</strong></span></div>
+      ${campaignTotals[item.key]?.edits ? `<p class="io-edited">Edited by hand ${escapeHtml(campaignTotals[item.key].edits.editedAt ? ioDate(campaignTotals[item.key].edits.editedAt.slice(0, 10)) : "")}. Uploading the updated IO replaces the edits.</p>` : ""}${tracking}${orders ? `<ul class="io-orders">${orders}</ul>` : ""}${placements}</article>`;
   };
   // Completed campaigns stay out of the way: a collapsed card (status and name) in a side column, opened on click.
   const collapse = (html, key) => html
@@ -2569,7 +2575,82 @@ document.querySelector("#client-io-done-list").addEventListener("toggle", event 
   if (card.open) openDoneIo.add(card.dataset.ioKey); else openDoneIo.delete(card.dataset.ioKey);
 }, true);
 document.querySelector("#client-io-upload").addEventListener("click", () => document.querySelector("#client-io-input").click());
+// --- Edit IO: budget, flight, line budgets and monthly amounts, until the updated IO arrives ---
+const ioEditDialog = document.querySelector("#io-edit-dialog");
+let ioEditKey = null;
+const monthsBetween = (from, to) => { const list = []; for (let month = from.slice(0, 7); month <= to.slice(0, 7) && list.length < 24; month = previousMonth(new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) + 1, 15)))) list.push(month); return list; };
+function openIoEdit(key) {
+  const entry = campaignTotals[key];
+  if (!entry) return;
+  ioEditKey = key;
+  const name = lastCampaignGroups.find(group => group.key === key)?.name || buildClientIoSummary({ campaigns, totals: campaignTotals, client: clientScope }).find(item => item.key === key)?.name || "this campaign";
+  document.querySelector("#io-edit-title").textContent = `Edit IO · ${name}`;
+  const money = value => Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "";
+  document.querySelector("#io-edit-body").innerHTML = `<div class="settings-grid io-edit-campaign"><label>Total IO budget<input data-io-edit="budget" inputmode="decimal" value="${money(entry.budget)}" /></label><label>Flight start<input type="date" data-io-edit="startDate" value="${entry.startDate || ""}" /></label><label>Flight end<input type="date" data-io-edit="endDate" value="${entry.endDate || ""}" /></label></div>
+    ${ioLines(entry).map(line => `<fieldset class="io-edit-line" data-io-line="${escapeHtml(line.key)}"><legend>${escapeHtml(line.name)}${line.edited ? " · edited" : ""}</legend><div class="settings-grid"><label>Line budget<input data-io-line-field="budget" inputmode="decimal" value="${money(line.budget)}" /></label><label>Start<input type="date" data-io-line-field="startDate" value="${line.startDate}" /></label><label>End<input type="date" data-io-line-field="endDate" value="${line.endDate}" /></label></div><details class="io-edit-months"${line.months ? "" : ""}><summary>Monthly amounts${line.months ? "" : " (none on this IO)"}</summary><div class="io-month-grid">${monthsBetween(line.startDate, line.endDate).map(month => `<label>${escapeHtml(monthLabel(month))}<input inputmode="decimal" data-io-month="${month}" value="${line.months && Number.isFinite(line.months[month]) ? money(line.months[month]) : ""}" placeholder="—" /></label>`).join("")}</div></details></fieldset>`).join("")}`;
+  document.querySelector("#io-edit-reset").hidden = !entry.edits && !entry.datesOverride;
+  document.querySelector("#io-edit-error").hidden = true;
+  ioEditDialog.showModal();
+}
+document.querySelectorAll(".close-io-edit").forEach(button => button.addEventListener("click", () => ioEditDialog.close()));
+document.querySelector("#io-edit-campaign").addEventListener("click", () => { ioEditDialog.close(); openCampaignEdit(ioEditKey); });
+document.querySelector("#io-edit-reset").addEventListener("click", () => {
+  campaignTotals = writeCampaignTotals(localStorage, setTotalsFlight(setTotalsEdits(campaignTotals, ioEditKey, null), ioEditKey, null, null));
+  ioEditDialog.close();
+  renderCampaigns(document.querySelector("#client-filter").value);
+  showToast("Back to the IO", "Pacing and billing use the uploaded IO again.");
+});
+document.querySelector("#io-edit-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const entry = campaignTotals[ioEditKey];
+  if (!entry) return;
+  const amount = input => { const text = input.value.trim().replace(/[$,\s]/g, ""); return text === "" ? null : Number(text); };
+  const form = document.querySelector("#io-edit-body");
+  const errors = [];
+  // What the uploaded orders say, so only real changes are kept as edits.
+  const original = setTotalsEdits({ [ioEditKey]: { orders: entry.orders } }, ioEditKey, null)[ioEditKey];
+  const originalLines = new Map(ioLines(original).map(line => [line.key, line]));
+  const budget = amount(form.querySelector('[data-io-edit="budget"]'));
+  if (budget !== null && !(budget > 0)) errors.push("The total budget needs to be a number above 0.");
+  const lines = {};
+  for (const fieldset of form.querySelectorAll("[data-io-line]")) {
+    const before = originalLines.get(fieldset.dataset.ioLine) || {};
+    const lineBudget = amount(fieldset.querySelector('[data-io-line-field="budget"]'));
+    const startDate = fieldset.querySelector('[data-io-line-field="startDate"]').value;
+    const endDate = fieldset.querySelector('[data-io-line-field="endDate"]').value;
+    if (lineBudget !== null && !Number.isFinite(lineBudget)) errors.push(`${fieldset.querySelector("legend").textContent}: the budget isn't a number.`);
+    if (startDate && endDate && endDate < startDate) errors.push(`${fieldset.querySelector("legend").textContent}: the end is before the start.`);
+    const months = {};
+    for (const input of fieldset.querySelectorAll("[data-io-month]")) {
+      const value = amount(input);
+      if (value === null) continue;
+      if (!Number.isFinite(value)) { errors.push(`${input.closest("label").textContent.trim()}: not a number.`); continue; }
+      if (before.months?.[input.dataset.ioMonth] !== value) months[input.dataset.ioMonth] = value;
+    }
+    const change = {
+      ...(lineBudget !== null && Math.abs(lineBudget - (before.budget || 0)) > 0.004 ? { budget: lineBudget } : {}),
+      ...(startDate && startDate !== before.startDate ? { startDate } : {}),
+      ...(endDate && endDate !== before.endDate ? { endDate } : {}),
+      ...(Object.keys(months).length ? { months } : {})
+    };
+    if (Object.keys(change).length) lines[fieldset.dataset.ioLine] = change;
+  }
+  const error = document.querySelector("#io-edit-error");
+  if (errors.length) { error.textContent = errors.join(" "); error.hidden = false; return; }
+  const edits = { ...(budget !== null && Math.abs(budget - original.budget) > 0.004 ? { budget } : {}), lines };
+  let next = setTotalsEdits(campaignTotals, ioEditKey, edits.budget !== undefined || Object.keys(lines).length ? edits : null);
+  const startDate = form.querySelector('[data-io-edit="startDate"]').value;
+  const endDate = form.querySelector('[data-io-edit="endDate"]').value;
+  if (startDate !== (entry.startDate || "") || endDate !== (entry.endDate || "")) next = setTotalsFlight(next, ioEditKey, startDate !== original.startDate ? startDate : null, endDate !== original.endDate ? endDate : null);
+  campaignTotals = writeCampaignTotals(localStorage, next);
+  ioEditDialog.close();
+  renderCampaigns(document.querySelector("#client-filter").value);
+  showToast("IO updated", "Pacing and billing use your changes until the updated IO is uploaded.");
+});
+
 document.querySelector("#client-io").addEventListener("click", event => {
+  const editIo = event.target.closest("[data-edit-io]");
+  if (editIo) { event.preventDefault(); openIoEdit(editIo.dataset.editIo); return; }
   const edit = event.target.closest("[data-edit-campaign]");
   if (!edit) return;
   event.preventDefault();
@@ -2798,6 +2879,8 @@ function takeInTodos(parsed) {
   }
   const result = applyBrief(todos, parsed);
   todos = result.todos;
+  briefLog = logItems(briefLog, parsed.items, parsed.brief.date || todayIso());
+  saveBriefLog();
   if (!brief || parsed.brief.date >= brief.date) {
     brief = { ...parsed.brief, receivedAt: new Date().toISOString() };
     localStorage.setItem(BRIEF_KEY, JSON.stringify(brief));
@@ -3016,15 +3099,17 @@ function applyPageView() {
   document.querySelector("#review-page").hidden = pageView !== "review";
   document.querySelector("#billing-page").hidden = pageView !== "billing";
   document.querySelector("#settings-page").hidden = pageView !== "settings";
+  document.querySelector("#status-page").hidden = pageView !== "status";
   if (!pageView) return;
   document.querySelector("#client-back").hidden = true;
-  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review", billing: "Billing", settings: "Settings" };
-  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look.", billing: "Monthly billing for each client, filled from DCM and DSP.", settings: "Every setting and workspace tool in one place." };
+  const titles = { brief: "Daily brief", automation: "Automation", review: "Report review", billing: "Billing", status: "Weekly status", settings: "Settings" };
+  const subtitles = { brief: "Your morning brief and every client's to-dos in one place.", automation: "Set up the morning brief and report uploads, step by step.", review: "Reports the automation held for you, and imports that need a look.", billing: "Monthly billing for each client, filled from DCM and DSP.", status: "Each Monday’s team status doc, drafted from the week’s numbers and your briefs.", settings: "Every setting and workspace tool in one place." };
   document.querySelector("#greeting").textContent = titles[pageView];
   document.querySelector("#page-subtitle").textContent = subtitles[pageView];
   document.title = `Zeta | ${titles[pageView]}`;
   if (pageView === "brief") renderBriefPage();
   else if (pageView === "billing") renderBillingPage();
+  else if (pageView === "status") renderStatusPage();
   else if (pageView === "settings") renderSettingsPage();
   else if (pageView === "automation") { renderAutomationPage(); renderReportAutomation(); renderPromptBuilder(); }
   else renderReportAutomation();
@@ -3074,6 +3159,8 @@ for (const container of ["#client-todos", "#brief-page", "#morning-brief"]) {
     const box = event.target.closest("[data-todo-done]");
     if (!box) return;
     todos = setTodoDone(todos, box.dataset.todoDone, box.checked);
+    const checked = todos.find(item => item.id === box.dataset.todoDone);
+    if (checked?.done) { briefLog = logItems(briefLog, [checked], todayIso()); saveBriefLog(); }
     saveTodos();
     renderCampaigns(document.querySelector("#client-filter").value);
   });
@@ -4219,8 +4306,11 @@ function projectionField(config, month, pace, client) {
   const latest = latestProjection(config, month);
   const due = projectionDue(config, todayLocal());
   const versus = latest && pace?.expected > 0 ? Math.round((latest.amount - pace.expected) / pace.expected * 100) : null;
-  const detail = [latest ? `Updated ${new Date(latest.at).toLocaleDateString([], { month: "short", day: "numeric" })}` : "Not set yet", versus === null ? "" : Math.abs(versus) <= 1 ? "in line with the IO" : `${Math.abs(versus)}% ${versus > 0 ? "over" : "under"} the IO’s ${moneyText(pace.expected)}`].filter(Boolean).join(" · ");
-  return `<div class="projection-field${due ? " due" : ""}"><label>Projected spend for ${escapeHtml(monthName(month))}<input inputmode="decimal" data-billing-projection="${escapeHtml(client)}" data-projection-month="${month}" value="${latest ? escapeHtml(String(latest.amount)) : ""}" placeholder="From Friday’s doc" /></label><small>${escapeHtml(detail)}${due ? ' · <b>Update for this week</b>' : ""}</small></div>`;
+  // Until you type one in, the projection is what the IO expects for the month: its monthly amounts, else its daily share.
+  const fromIo = pace?.expected > 0 ? `IO projection ${moneyText(pace.expected)} (${pace.basis === "days" ? "IO spread by day" : pace.basis === "mixed" ? "IO monthly amounts and daily share" : "IO monthly amounts"})` : "";
+  const detail = latest ? [`Updated ${new Date(latest.at).toLocaleDateString([], { month: "short", day: "numeric" })}`, versus === null ? "" : Math.abs(versus) <= 1 ? "in line with the IO" : `${Math.abs(versus)}% ${versus > 0 ? "over" : "under"} the IO’s ${moneyText(pace.expected)}`].filter(Boolean).join(" · ") : fromIo || "Not set yet";
+  const hint = pace?.basis === "days" ? '<small class="projection-hint">This IO has no monthly amounts saved. Re-upload the IO PDF, or use Edit IO, to project from its monthly amounts.</small>' : "";
+  return `<div class="projection-field${due ? " due" : ""}"><label>Projected spend for ${escapeHtml(monthName(month))}<input inputmode="decimal" data-billing-projection="${escapeHtml(client)}" data-projection-month="${month}" value="${latest ? escapeHtml(String(latest.amount)) : pace?.expected > 0 ? escapeHtml(String(pace.expected)) : ""}" placeholder="From Friday’s doc" /></label><small>${escapeHtml(detail)}${due ? ' · <b>Update for this week</b>' : ""}</small>${hint}</div>`;
 }
 /** Saves a projection typed anywhere (the client's billing panel or the Billing page). */
 function saveProjection(input) {
@@ -4245,7 +4335,8 @@ function paceBar(pace, running) {
   const off = pace.deviation === null ? null : Math.round(pace.deviation * 100);
   const state = off === null ? "" : Math.abs(off) <= 10 ? "on" : off > 0 ? "over" : "under";
   const words = off === null ? "" : Math.abs(off) <= 1 ? "on pace" : `${Math.abs(off)}% ${off > 0 ? "over" : "under"}${running ? " for this point in the month" : ""}`;
-  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>IO pace</span><b>${moneyText(pace.delivered)}</b> of ${moneyText(pace.expected)} expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div></div>`;
+  const basis = { month: "from the IO’s monthly amounts", mixed: "from the IO’s monthly amounts where it has them, the rest spread by day", days: "the IO spread evenly by day" }[pace.basis];
+  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>IO pace</span><b>${moneyText(pace.delivered)}</b> of <abbr title="${escapeHtml(`Expected ${basis}`)}">${moneyText(pace.expected)}</abbr> expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div></div>`;
 }
 /** Under the preview: when this month was downloaded, and what the month before it billed. */
 function billingNote(config, month) {
@@ -4395,7 +4486,8 @@ function renderBillingPage() {
   projections.hidden = !items.length;
   projections.innerHTML = items.length ? `<div class="projection-head"><b>Projected spend for ${escapeHtml(monthLabel(current))}</b><span>${due.length ? `${due.length} to update from this week’s doc` : "Update each Friday from the doc in Slack"}</span></div><ul>${items.map(({ client, config }) => {
     const latest = latestProjection(config, current);
-    return `<li class="${projectionDue(config, todayLocal()) ? "due" : ""}"><span>${escapeHtml(client)}<small>${latest ? `Updated ${escapeHtml(new Date(latest.at).toLocaleDateString([], { month: "short", day: "numeric" }))}` : "Not set yet"}</small></span><input inputmode="decimal" aria-label="${escapeHtml(`Projected spend for ${client}`)}" data-billing-projection="${escapeHtml(client)}" data-projection-month="${current}" value="${latest ? escapeHtml(String(latest.amount)) : ""}" placeholder="$0" /></li>`;
+    const fromIo = config?.rows?.length ? billingResult(client, current).pace?.expected : null;
+    return `<li class="${projectionDue(config, todayLocal()) ? "due" : ""}"><span>${escapeHtml(client)}<small>${latest ? `Updated ${escapeHtml(new Date(latest.at).toLocaleDateString([], { month: "short", day: "numeric" }))}` : fromIo > 0 ? "From the IO" : "Not set yet"}</small></span><input inputmode="decimal" aria-label="${escapeHtml(`Projected spend for ${client}`)}" data-billing-projection="${escapeHtml(client)}" data-projection-month="${current}" value="${latest ? escapeHtml(String(latest.amount)) : fromIo > 0 ? escapeHtml(String(fromIo)) : ""}" placeholder="$0" /></li>`;
   }).join("")}</ul>` : "";
   document.querySelector("#billing-list").innerHTML = items.map(({ client, result, config }) => {
     const downloaded = config?.history?.[month];
@@ -4421,6 +4513,77 @@ function updateBillingReminder() {
   badge.title = due ? `${monthLabel(month)} billing to download for ${due} client${due === 1 ? "" : "s"}` : "";
 }
 updateBillingReminder();
+
+// --- Weekly status: each Monday's row per live campaign for the team status doc ---
+function saveStatusDrafts() { try { localStorage.setItem(STATUS_DRAFTS_KEY, JSON.stringify(statusDrafts)); } catch { /* drafts last this session */ } }
+/** Live and paused campaigns, plus any that ended during the week, in your client order; each row with your edits on top. */
+function statusRows() {
+  const today = todayLocal();
+  const { thisWeek } = statusWeeks(today);
+  const records = campaigns.filter(record => !isCampaignArchived(record));
+  const order = orderClients([...new Set(records.map(record => record.client))], readClientOrder(localStorage));
+  const groups = groupCampaigns(records).filter(group => group.records.some(record => !isPlaceholder(record)) && (group.status === "live" || campaignStatus[group.key] === "paused" || (group.endDate && group.endDate >= thisWeek.from && group.startDate <= today)));
+  // Pacing and the KPI are written out already; DCM gaps are the alerts worth a line in the notes.
+  const alerts = unacknowledgedAlerts(evaluateAlerts(records), acknowledgedAlertIds).filter(alert => String(alert.type).startsWith("delivery"));
+  const edits = statusDrafts[weekKey(today)]?.rows || {};
+  return groups.sort((a, b) => order.indexOf(a.client) - order.indexOf(b.client) || a.name.localeCompare(b.name)).map(group => {
+    const row = campaignStatusRow({ group, log: briefLog, alerts: alerts.filter(alert => groupKey(alert.campaign) === group.key), today, kpiTolerance: alertRules.kpiTolerance, io: campaignTotals[group.key] || null });
+    return { ...row, ...(edits[group.key] || {}), drafted: row, edited: Object.keys(edits[group.key] || {}) };
+  });
+}
+function renderStatusPage() {
+  const today = todayLocal();
+  const { thisWeek } = statusWeeks(today);
+  const rows = statusRows();
+  const done = statusDrafts[weekKey(today)]?.doneAt;
+  document.querySelector("#status-title").textContent = `Status doc for ${shortDate(thisWeek.from)} to ${shortDate(thisWeek.to)}`;
+  document.querySelector("#status-context").textContent = done ? `Marked done ${new Date(done).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}. ${rows.length} campaign${rows.length === 1 ? "" : "s"}.` : `${rows.length} campaign${rows.length === 1 ? "" : "s"} to update. Edit what you need, then copy each row in.`;
+  document.querySelector("#status-done").textContent = done ? "Done for this week ✓" : "Mark this week done";
+  const field = (row, key, label, multiline = false) => `<label class="status-field${multiline ? " wide" : ""}${row.edited.includes(key) ? " edited" : ""}">${escapeHtml(label)}${multiline ? `<textarea rows="3" data-status-field="${key}">${escapeHtml(row[key] || "")}</textarea>` : `<input data-status-field="${key}" value="${escapeHtml(row[key] || "")}" />`}</label>`;
+  document.querySelector("#status-list").innerHTML = rows.length ? rows.map(row => `<section class="status-card" data-status-row="${escapeHtml(row.key)}">
+      <header><div><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.client)}</small></div><select class="status-track ${escapeHtml(row.track.toLowerCase().replace(/[^a-z]+/g, "-"))}" data-status-field="track" aria-label="On or off track">${["On Track", "Watch", "Off Track", "Not Tracking"].map(option => `<option${option === row.track ? " selected" : ""}>${option}</option>`).join("")}</select><button class="secondary-button" type="button" data-status-copy="${escapeHtml(row.key)}">Copy row</button></header>
+      <div class="status-fields">${field(row, "lastWeek", "Last week")}${field(row, "thisWeek", "This week")}${field(row, "change", "Week over week")}${field(row, "performance", "Performance notes & optimizations", true)}${field(row, "notes", "Notes", true)}</div>
+      ${row.edited.length ? `<button class="text-button" type="button" data-status-reset="${escapeHtml(row.key)}">Use the dashboard’s draft again</button>` : ""}
+    </section>`).join("") : '<p class="billing-empty">No live campaigns this week.</p>';
+}
+function updateStatusBadge() {
+  const badge = document.querySelector("#nav-status-due");
+  const due = statusDue(statusDrafts, todayLocal());
+  badge.hidden = !due;
+  badge.title = due ? "This week’s status doc is ready to fill in" : "";
+}
+updateStatusBadge();
+document.querySelector("#status-list").addEventListener("change", event => {
+  const input = event.target.closest("[data-status-field]");
+  const card = event.target.closest("[data-status-row]");
+  if (!input || !card) return;
+  const week = weekKey(todayLocal());
+  const entry = (statusDrafts[week] ||= { rows: {} });
+  entry.rows ||= {};
+  entry.rows[card.dataset.statusRow] = { ...(entry.rows[card.dataset.statusRow] || {}), [input.dataset.statusField]: input.value };
+  saveStatusDrafts();
+  if (input.dataset.statusField === "track") renderStatusPage();
+});
+document.querySelector("#status-list").addEventListener("click", async event => {
+  const reset = event.target.closest("[data-status-reset]");
+  if (reset) { delete statusDrafts[weekKey(todayLocal())]?.rows?.[reset.dataset.statusReset]; saveStatusDrafts(); renderStatusPage(); return; }
+  const copy = event.target.closest("[data-status-copy]");
+  if (!copy) return;
+  const row = statusRows().find(item => item.key === copy.dataset.statusCopy);
+  try { await navigator.clipboard.writeText(statusRowTsv(row)); showToast("Row copied", "Click its LAST WEEK cell in the status doc and paste."); } catch { showToast("Couldn't copy", "Your browser blocked the clipboard. Select the text and copy it instead."); }
+});
+document.querySelector("#status-copy-prompt").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(statusPrompt(statusRows(), todayLocal())); showToast("Prompt copied", "Paste it into ChatGPT for notes in your own words."); } catch { showToast("Couldn't copy", "Your browser blocked the clipboard."); }
+});
+document.querySelector("#status-done").addEventListener("click", () => {
+  const week = weekKey(todayLocal());
+  statusDrafts[week] = { ...(statusDrafts[week] || {}), doneAt: statusDrafts[week]?.doneAt ? null : new Date().toISOString() };
+  // Only the last few weeks' drafts are kept.
+  statusDrafts = Object.fromEntries(Object.entries(statusDrafts).sort(([a], [b]) => b.localeCompare(a)).slice(0, 6));
+  saveStatusDrafts();
+  renderStatusPage();
+  updateStatusBadge();
+});
 
 // --- Settings: every setting and workspace tool in one place; most open the screen where that setting already lives ---
 function renderSettingsPage() {

@@ -229,3 +229,18 @@ test("weekly projections keep the newest number, and are due from Friday until u
   assert.equal(projectionDue(config, "2026-10-30"), true);
   assert.equal(projectionDue(config, "2026-10-28"), false);
 });
+
+test("hand edits to an IO change its budget and lines until a new IO replaces them", async () => {
+  const { normalizeTotals, setCampaignTotals, setTotalsEdits } = await import("../lib/campaign-totals.js");
+  const { ioLines } = await import("../lib/io-plan.js");
+  const io = { orderNumber: "O-1", budget: 100000, startDate: "2026-01-01", endDate: "2026-12-31", lineItems: [{ id: "P1", name: "Display", startDate: "2026-01-01", endDate: "2026-12-31", budget: 100000, months: { "2026-10": 8000 } }] };
+  let totals = setCampaignTotals({}, "c::x", io);
+  totals = setTotalsEdits(totals, "c::x", { budget: 90000, lines: { display: { budget: 90000, endDate: "2026-11-30", months: { "2026-10": 5000 } } } });
+  const entry = normalizeTotals(totals)["c::x"];
+  assert.equal(entry.budget, 90000);
+  const [line] = ioLines(entry);
+  assert.deepEqual([line.budget, line.endDate, line.months["2026-10"], line.edited], [90000, "2026-11-30", 5000, true]);
+  const replaced = normalizeTotals(setCampaignTotals(totals, "c::x", { ...io, revision: "R2" }))["c::x"];
+  assert.equal(replaced.budget, 100000);
+  assert.equal(replaced.edits, undefined);
+});
