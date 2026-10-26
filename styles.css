@@ -656,3 +656,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .flow-shot:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .billing-status.progress{background:#eef0fd;color:#4b44b8}
 .billing-month-select{font:inherit;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:#fff;color:var(--ink)}
+.billing-capped{display:block;color:#a75d0d;font-size:11px;font-weight:600;margin-top:2px}

@@ -64,7 +64,7 @@ import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, local
 import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
-import { attachLineDays, billingFileName, billingMonth, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
+import { attachLineDays, billedBefore, billingFileName, billingMonth, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
 import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
@@ -4061,6 +4061,30 @@ function clientLines(client) { return campaigns.filter(record => record.client =
 function lineLabelText(record) { return record.name; }
 function saveBilling() { billing = writeBilling(localStorage, billing); }
 function billingConfig(client) { return (billing[client] ||= { agency: "", advertiser: client, currency: "USD", periodMode: "month", periods: [], rows: [], history: {} }); }
+/**
+ * A billing row's IO amount, from the insertion order: each line's IO line budget (once per IO line), or the whole
+ * campaign's IO when all its lines are in the row and none is matched to an IO line; otherwise the lines' own budgets.
+ */
+function rowIoAmount(row, lines) {
+  const chosen = lines.filter(record => (row.lines || []).includes(record.name));
+  const seen = new Set();
+  let total = 0;
+  for (const record of chosen) {
+    const key = groupKey(record);
+    const entry = campaignTotals[key];
+    if (entry && record.ioLineStatus === "matched" && record.ioLine) {
+      const ioLine = ioLines(entry).find(line => line.key === record.ioLine);
+      if (ioLine && !seen.has(`${key}|${ioLine.key}`)) { seen.add(`${key}|${ioLine.key}`); total += ioLine.budget; }
+      if (ioLine) continue;
+    }
+    if (entry && Number(entry.budget) > 0 && lines.filter(item => groupKey(item) === key).every(item => chosen.includes(item))) {
+      if (!seen.has(key)) { seen.add(key); total += Number(entry.budget); }
+      continue;
+    }
+    if (Number(record.budget) > 0) total += Number(record.budget);
+  }
+  return total > 0 ? Math.round(total * 100) / 100 : null;
+}
 function newRowId() { return `row-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`; }
 /** The source a row most likely bills from: the DSP when its lines have DSP days, else DCM, else the client's report. */
 const defaultSource = lines => lines.some(line => Object.keys(line.thirdPartyDelivery?.DSP || {}).length) ? "DSP" : lines.some(line => Object.keys(line.thirdPartyDelivery?.CM360 || {}).length) ? "CM360" : "report";
@@ -4097,6 +4121,9 @@ function renderClientBilling() {
         <label>Billed as<select data-billing-field="rateType">${Object.entries(RATE_TYPES).map(([value, label]) => option(value, label, row.rateType)).join("")}</select></label>
         <label>${row.rateType === "flat" ? "Fee" : row.rateType === "spend" ? "IO rate (shown only)" : "Rate"}<input data-billing-field="rate" inputmode="decimal" value="${escapeHtml(String(row.rate ?? ""))}" /></label>
         <label>Discount %<input data-billing-field="discount" inputmode="decimal" value="${escapeHtml(String(row.discount || ""))}" placeholder="0" /></label>
+        <label>IO amount<input data-billing-field="ioAmount" inputmode="decimal" value="${escapeHtml(String(row.ioAmount || ""))}" placeholder="${rowIoAmount(row, clientLines(clientScope)) ? `From the IO: ${escapeHtml(formatExactMoney(rowIoAmount(row, clientLines(clientScope))))}` : "Total on the IO"}" /><small>Billing never goes over this.</small></label>
+        <label>Monthly budget<input data-billing-field="monthlyBudget" inputmode="decimal" value="${escapeHtml(String(row.monthlyBudget || ""))}" placeholder="Only if the IO sets one" /><small>Caps each month.</small></label>
+        <label>Billed before the dashboard<input data-billing-field="billedBefore" inputmode="decimal" value="${escapeHtml(String(row.billedBefore || ""))}" placeholder="0" /><small>Billed in months before you used this. ${(() => { const before = billedBefore(config, row, billingMonth()); return before ? `${escapeHtml(formatExactMoney(before))} billed before ${escapeHtml(monthLabel(billingMonth()))} in all.` : ""; })()}</small></label>
         <label class="wide">Note<input data-billing-field="note" value="${escapeHtml(row.note || "")}" /></label>
       </div>
       <fieldset class="billing-lines"><legend>Dashboard lines in this row</legend>${lines.map(line => `<label><input type="checkbox" data-billing-line="${escapeHtml(line.name)}"${(row.lines || []).includes(line.name) ? " checked" : ""} /> ${escapeHtml(lineLabelText(line))}</label>`).join("") || "<small>No lines on the dashboard yet.</small>"}</fieldset>
@@ -4106,7 +4133,9 @@ function renderClientBilling() {
 
 function billingResult(client, month) {
   const config = billingConfig(client);
-  return attachLineDays(computeClientBilling(config, clientLines(client), month, todayLocal()), clientLines(client));
+  const lines = clientLines(client);
+  const ioAmounts = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoAmount(row, lines)]));
+  return attachLineDays(computeClientBilling(config, lines, month, todayLocal(), { ioAmounts }), lines);
 }
 function moneyText(value) { return formatExactMoney(value); }
 function dayList(days) { return days.length > 4 ? `${shortDate(days[0])} to ${shortDate(days.at(-1))} (${days.length} days)` : days.map(shortDate).join(", "); }
@@ -4126,7 +4155,7 @@ function renderBillingPreview() {
   const month = billingPreviewMonths().includes(preview.dataset.month) ? preview.dataset.month : billingMonth();
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
-  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(clientScope)}" data-billing-month="${month}">Download</button></div><table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}</td></tr>`).join("")}</tbody></table>${config.history?.[month] ? `<p class="billing-note">Downloaded ${escapeHtml(new Date(config.history[month].downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}.</p>` : ""}` : "";
+  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(clientScope)}" data-billing-month="${month}">Download</button></div><table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}</td></tr>`).join("")}</tbody></table>${config.history?.[month] ? `<p class="billing-note">Downloaded ${escapeHtml(new Date(config.history[month].downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}.</p>` : ""}` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
@@ -4150,7 +4179,7 @@ document.querySelector("#client-billing").addEventListener("change", event => {
   if (!row) return;
   const field = event.target.closest("[data-billing-field]");
   const lineBox = event.target.closest("[data-billing-line]");
-  if (field) row[field.dataset.billingField] = ["rate", "discount"].includes(field.dataset.billingField) ? field.value.trim() : field.value;
+  if (field) row[field.dataset.billingField] = ["rate", "discount", "ioAmount", "monthlyBudget", "billedBefore"].includes(field.dataset.billingField) ? field.value.trim().replace(/[$,\s]/g, "") : field.value;
   if (lineBox) row.lines = lineBox.checked ? [...new Set([...(row.lines || []), lineBox.dataset.billingLine])] : (row.lines || []).filter(name => name !== lineBox.dataset.billingLine);
   saveBilling();
   if (field?.dataset.billingField === "rateType") renderClientBilling(); else renderBillingPreview();
@@ -4213,7 +4242,10 @@ async function downloadBilling(client, month) {
   const link = Object.assign(document.createElement("a"), { href: url, download: billingFileName(config, client, month) });
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  config.history = { ...(config.history || {}), [month]: { from: result.window.from, to: result.window.to, downloadedAt: new Date().toISOString(), total: result.total } };
+  // Each row's billed amount is kept, so next month's cap knows how much of the IO is left.
+  const rowTotals = {};
+  for (const item of result.rows) rowTotals[item.row.id] = Math.round(((rowTotals[item.row.id] || 0) + item.billable) * 100) / 100;
+  config.history = { ...(config.history || {}), [month]: { from: result.window.from, to: result.window.to, downloadedAt: new Date().toISOString(), total: result.total, rows: rowTotals } };
   saveBilling();
   renderClientBilling();
   if (pageView === "billing") renderBillingPage();
