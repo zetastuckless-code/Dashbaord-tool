@@ -312,6 +312,7 @@
             <h2 id="automation-title">Set up your daily automations</h2>
             <p>These keep the dashboard current without copying and pasting. Open a topic to set it up: its steps go one at a time, and each shows a check when it’s done.</p>
             <div class="automation-progress" id="automation-progress"></div>
+            <div class="folder-access" id="folder-access" hidden></div>
             <button class="text-button welcome-reopen" id="welcome-reopen" type="button" hidden>Show the getting started checklist</button>
           </div>
 
@@ -610,12 +611,17 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
 
         <section class="panel client-billing" id="client-billing" aria-labelledby="client-billing-title" hidden>
           <div class="panel-header">
-            <div><h2 id="client-billing-title">Billing</h2><p id="client-billing-context">Set up how this client is billed once. Each month fills in from the DCM and DSP reports.</p></div>
-            <div class="panel-actions"><label class="secondary-button file-button">Fill from a past billing file<input id="billing-template-input" type="file" accept=".xlsx" hidden /></label><button class="text-button" id="billing-add-row" type="button">Add a row</button></div>
+            <div><h2 id="client-billing-title">Billing</h2><p id="client-billing-context">This month to date, from the reports you upload and the DSP and DCM emails. Upload last month’s billing file once to set it up.</p></div>
+            <div class="panel-actions"><label class="secondary-button file-button">Upload a past billing file<input id="billing-template-input" type="file" accept=".xlsx" hidden /></label></div>
           </div>
-          <div class="billing-client-fields" id="billing-client-fields"></div>
-          <div class="billing-rows" id="billing-rows"></div>
           <div class="billing-preview" id="billing-preview"></div>
+          <details class="billing-setup" id="billing-setup">
+            <summary><span>Line items and setup</span><small id="billing-setup-count"></small></summary>
+            <div class="billing-lines-table" id="billing-lines-table"></div>
+            <div class="billing-client-fields" id="billing-client-fields"></div>
+            <div class="billing-rows" id="billing-rows"></div>
+            <button class="text-button billing-add" id="billing-add-row" type="button">Add a row</button>
+          </details>
         </section>
 
         <section class="panel client-reporting" id="client-reporting" aria-labelledby="client-reporting-title" hidden>
