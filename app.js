@@ -3307,14 +3307,15 @@ function renderDspFlowPrompts() {
     .replace("Subject Filter: text from the client's report email subject (I'll tell you which).", subject ? `Subject Filter: ${subject}.` : "Subject Filter: text from the client's report email subject (I'll tell you which).");
   document.querySelector("#dsp-subject-check").textContent = subject || "the subject text you typed above";
   document.querySelector("#dsp-folder-check").textContent = folder;
-  // Describe it to design it builds the whole flow from this, with the expressions left for you to paste. The same
+  // Describe it to design it builds the whole flow from this, with the expressions left for you to paste. A required box
+  // left empty makes Copilot drop the step, so the upload gets a placeholder path you then replace. The same
   // details go to the editor's Copilot panel when Copilot leaves settings blank.
   const subjectText = subject || "[the client's report email subject]";
   document.querySelector("#dsp-copilot-prompt").textContent = [
     `When a new email arrives in my Outlook folder "${folder}" from notifications@delivery.zetaglobal.net with "${subjectText}" in the subject (Include Attachments: No), do this:`,
     '1. Add a Condition: the email Body contains "Download Report".',
     '2. If true, add a Compose action named "Report link". Leave its Inputs empty.',
-    '3. Then add the OneDrive for Business action "Upload file from URL". Set Source URL to the Outputs of "Report link" and Overwrite to Yes. Leave Destination File Path empty.',
+    '3. Then, under True after "Report link", add the OneDrive for Business action "Upload file from URL". Set Source URL to the Outputs of "Report link", Destination File Path to "/DCM Reports/report.csv" for now, and Overwrite to Yes.',
     "Don't type any expressions; I'll add them."
   ].join("\n");
   document.querySelector("#dsp-copilot-details").textContent = [
