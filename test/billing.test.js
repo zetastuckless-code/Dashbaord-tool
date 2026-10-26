@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { billingFileMonth, billingMonth, billingSheets, billingWindow, computeClientBilling, importedHistory, parseBillingSheet, previousMonth } from "../lib/billing.js";
+import { repairImportedHistory, billingFileMonth, billingMonth, billingSheets, billingWindow, computeClientBilling, importedHistory, parseBillingSheet, previousMonth } from "../lib/billing.js";
 
 const days = (from, to, metrics) => {
   const result = {};
@@ -168,6 +168,11 @@ test("a past billing file keeps what each row billed, for the month in its perio
   assert.equal(billingFileMonth("006X_-_Highmark_Billing_September.xlsx", [], new Date("2026-10-26T12:00:00")), "2026-09");
   assert.equal(billingFileMonth("Billing_December.xlsx", [], new Date("2026-10-26T12:00:00")), "2025-12");
   assert.equal(billingFileMonth("x.xlsx", [{ from: "2026-08-30", to: "2026-09-26" }]), "2026-09");
+  // Rent-A-Center: the September file's last period runs 9/27 to 10/24, billed through Sep 30.
+  const rac = [{ from: "2026-08-30", to: "2026-09-26" }, { from: "2026-09-27", to: "2026-10-24" }];
+  assert.equal(billingFileMonth("006PM00000ZvDxH_-_Rent-A-Center_Billing_September1.xlsx", rac, new Date("2026-10-26T12:00:00")), "2026-09");
+  assert.equal(billingFileMonth("rac.xlsx", rac), "2026-09");
+  assert.deepEqual([importedHistory("2026-09", rac, []).from, importedHistory("2026-09", rac, []).to], ["2026-08-30", "2026-09-30"]);
   const history = importedHistory("2026-09", [], [{ id: "a", billed: 10800 }]);
   assert.deepEqual([history.from, history.to, history.total, history.rows.a], ["2026-09-01", "2026-09-30", 10800, 10800]);
   const config = { periodMode: "month", history: { "2026-09": history }, rows: [{ id: "a", lineName: "Display", source: "DSP", rateType: "cpm", rate: 5, ioAmount: 12000, lines: ["Display"] }] };
@@ -243,4 +248,31 @@ test("hand edits to an IO change its budget and lines until a new IO replaces th
   const replaced = normalizeTotals(setCampaignTotals(totals, "c::x", { ...io, revision: "R2" }))["c::x"];
   assert.equal(replaced.budget, 100000);
   assert.equal(replaced.edits, undefined);
+});
+
+test("a DSP row whose lines only have DCM days this month bills from DCM", () => {
+  const records = [line("Hyperlocal", { DSP: days("2026-09-01", "2026-09-30", { impressions: 1 }), CM360: days("2026-10-01", "2026-10-25", { impressions: 200_000 }) })];
+  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Hyperlocal", source: "DSP", rateType: "cpm", rate: 3.25, lines: ["Hyperlocal"] }] };
+  const result = computeClientBilling(config, records, "2026-10", "2026-10-26");
+  assert.equal(result.rows[0].source, "CM360");
+  assert.equal(result.rows[0].quantity, 5_000_000);
+  assert.equal(result.through, "2026-10-25");
+});
+
+test("a billing file filed under the wrong month before is moved to the month it billed", () => {
+  const periods = [{ from: "2026-08-30", to: "2026-09-26" }, { from: "2026-09-27", to: "2026-10-24" }];
+  const config = { periods, history: { "2026-10": { from: "2026-09-27", to: "2026-10-24", importedAt: "2026-10-20T00:00:00Z", total: 40000, rows: { a: 40000 } } } };
+  const repaired = repairImportedHistory(config);
+  assert.deepEqual(Object.keys(repaired.history), ["2026-09"]);
+  assert.deepEqual([repaired.history["2026-09"].to, repaired.history["2026-09"].rows.a], ["2026-09-30", 40000]);
+  assert.equal(repairImportedHistory(repaired), repaired);
+});
+
+test("custom periods: October picks up after September's last billed day, days past the last period still bill, and an ended line drops out", () => {
+  const config = { periodMode: "custom", periods: [{ from: "2026-08-30", to: "2026-09-26" }, { from: "2026-09-27", to: "2026-10-24" }], history: { "2026-09": { v: 2, from: "2026-08-30", to: "2026-09-30", importedAt: "x", total: 1, rows: {} } },
+    rows: [{ id: "h", lineName: "Hyperlocal", source: "CM360", rateType: "cpm", rate: 3.25, lines: ["Hyperlocal"] }, { id: "o", lineName: "OLA", source: "CM360", rateType: "cpm", rate: 3.25, lines: ["OLA"] }] };
+  const records = [line("Hyperlocal", { CM360: days("2026-10-01", "2026-10-24", { impressions: 1000 }) }, { startDate: "2026-04-26", endDate: "2026-10-24" }), line("OLA", { CM360: days("2026-10-01", "2026-10-25", { impressions: 1000 }) }, { startDate: "2026-09-27", endDate: "2026-12-26" })];
+  const result = computeClientBilling(config, records, "2026-10", "2026-10-26");
+  assert.deepEqual(result.rows.map(item => [item.row.id, item.period.label, item.quantity]), [["h", "09/27/2026 - 10/24/2026", 24000], ["o", "09/27/2026 - 10/24/2026", 24000], ["o", "10/25/2026 - 10/31/2026", 1000]]);
+  assert.equal(result.through, "2026-10-25");
 });
