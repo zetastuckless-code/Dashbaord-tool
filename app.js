@@ -64,7 +64,7 @@ import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, local
 import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
-import { attachLineDays, billedBefore, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
+import { attachLineDays, billedBefore, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, latestProjection, monthLabel, monthName, projectionDue, setProjection, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
 import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
@@ -4103,25 +4103,36 @@ function billingConfig(client) { return (billing[client] ||= { agency: "", adver
  * A billing row's IO amount, from the insertion order: each line's IO line budget (once per IO line), or the whole
  * campaign's IO when all its lines are in the row and none is matched to an IO line; otherwise the lines' own budgets.
  */
-function rowIoAmount(row, lines) {
+function rowIoParts(row, lines) {
   const chosen = lines.filter(record => (row.lines || []).includes(record.name));
   const seen = new Set();
-  let total = 0;
+  const parts = [];
+  const monthsOf = list => list.length && list.every(line => line.months) ? list.reduce((sum, line) => { for (const [month, amount] of Object.entries(line.months)) sum[month] = (sum[month] || 0) + amount; return sum; }, {}) : null;
   for (const record of chosen) {
     const key = groupKey(record);
     const entry = campaignTotals[key];
     if (entry && record.ioLineStatus === "matched" && record.ioLine) {
       const ioLine = ioLines(entry).find(line => line.key === record.ioLine);
-      if (ioLine && !seen.has(`${key}|${ioLine.key}`)) { seen.add(`${key}|${ioLine.key}`); total += ioLine.budget; }
+      if (ioLine && !seen.has(`${key}|${ioLine.key}`)) { seen.add(`${key}|${ioLine.key}`); parts.push({ budget: ioLine.budget, months: ioLine.months || null }); }
       if (ioLine) continue;
     }
     if (entry && Number(entry.budget) > 0 && lines.filter(item => groupKey(item) === key).every(item => chosen.includes(item))) {
-      if (!seen.has(key)) { seen.add(key); total += Number(entry.budget); }
+      if (!seen.has(key)) { seen.add(key); parts.push({ budget: Number(entry.budget), months: monthsOf(ioLines(entry)) }); }
       continue;
     }
-    if (Number(record.budget) > 0) total += Number(record.budget);
+    if (Number(record.budget) > 0) parts.push({ budget: Number(record.budget), months: null });
   }
+  return parts;
+}
+function rowIoAmount(row, lines) {
+  const total = rowIoParts(row, lines).reduce((sum, part) => sum + part.budget, 0);
   return total > 0 ? Math.round(total * 100) / 100 : null;
+}
+/** A row's IO amount for one month, from the IO's flighting details; null when the IO doesn't split by month. */
+function rowIoMonth(row, lines, month) {
+  const parts = rowIoParts(row, lines);
+  if (!parts.length || parts.some(part => !part.months)) return null;
+  return Math.round(parts.reduce((sum, part) => sum + (part.months[month] || 0), 0) * 100) / 100;
 }
 function newRowId() { return `row-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`; }
 /** The source a row most likely bills from: the DSP when its lines have DSP days, else DCM, else the client's report. */
@@ -4164,7 +4175,7 @@ function renderClientBilling() {
         <label>${row.rateType === "flat" ? "Fee" : row.rateType === "spend" ? "IO rate (shown only)" : "Rate"}<input data-billing-field="rate" inputmode="decimal" value="${escapeHtml(String(row.rate ?? ""))}" /></label>
         <label>Discount %<input data-billing-field="discount" inputmode="decimal" value="${escapeHtml(String(row.discount || ""))}" placeholder="0" /></label>
         <label>IO amount<input data-billing-field="ioAmount" inputmode="decimal" value="${escapeHtml(String(row.ioAmount || ""))}" placeholder="${rowIoAmount(row, clientLines(clientScope)) ? `From the IO: ${escapeHtml(formatExactMoney(rowIoAmount(row, clientLines(clientScope))))}` : "Total on the IO"}" /><small>Billing never goes over this.</small></label>
-        <label>Monthly budget<input data-billing-field="monthlyBudget" inputmode="decimal" value="${escapeHtml(String(row.monthlyBudget || ""))}" placeholder="Only if the IO sets one" /><small>Caps each month.</small></label>
+        <label>Monthly budget<input data-billing-field="monthlyBudget" inputmode="decimal" value="${escapeHtml(String(row.monthlyBudget || ""))}" placeholder="${rowIoMonth(row, clientLines(clientScope), billingMonth()) !== null ? `From the IO: ${escapeHtml(formatExactMoney(rowIoMonth(row, clientLines(clientScope), billingMonth())))} in ${escapeHtml(monthName(billingMonth()))}` : "Only if the IO sets one"}" /><small>Caps each month. The IO’s monthly amounts fill in on their own.</small></label>
         <label>Billed before the dashboard<input data-billing-field="billedBefore" inputmode="decimal" value="${escapeHtml(String(row.billedBefore || ""))}" placeholder="0" /><small>Billed in months before you used this. ${(() => { const before = billedBefore(config, row, billingMonth()); return before ? `${escapeHtml(formatExactMoney(before))} billed before ${escapeHtml(monthLabel(billingMonth()))} in all.` : ""; })()}</small></label>
         <label class="wide">Note<input data-billing-field="note" value="${escapeHtml(row.note || "")}" /></label>
       </div>
@@ -4177,7 +4188,8 @@ function billingResult(client, month) {
   const config = billingConfig(client);
   const lines = clientLines(client);
   const ioAmounts = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoAmount(row, lines)]));
-  return attachLineDays(computeClientBilling(config, lines, month, todayLocal(), { ioAmounts }), lines);
+  const ioMonthly = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoMonth(row, lines, month)]));
+  return attachLineDays(computeClientBilling(config, lines, month, todayLocal(), { ioAmounts, ioMonthly }), lines);
 }
 function moneyText(value) { return formatExactMoney(value); }
 function dayList(days) { return days.length > 4 ? `${shortDate(days[0])} to ${shortDate(days.at(-1))} (${days.length} days)` : days.map(shortDate).join(", "); }
@@ -4200,8 +4212,31 @@ function rowPaceText(result, item) {
 }
 /** The always-visible line: the month, where it stands, its total so far, and the download. */
 function billingHead(result, month, config, client = clientScope) {
-  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${paceBar(result.pace, result.running)}${billingNote(config, month)}`;
+  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
 }
+/** This month's projected spend, updated each Friday from the doc in Slack, next to what the IO expects. */
+function projectionField(config, month, pace, client) {
+  const latest = latestProjection(config, month);
+  const due = projectionDue(config, todayLocal());
+  const versus = latest && pace?.expected > 0 ? Math.round((latest.amount - pace.expected) / pace.expected * 100) : null;
+  const detail = [latest ? `Updated ${new Date(latest.at).toLocaleDateString([], { month: "short", day: "numeric" })}` : "Not set yet", versus === null ? "" : Math.abs(versus) <= 1 ? "in line with the IO" : `${Math.abs(versus)}% ${versus > 0 ? "over" : "under"} the IO’s ${moneyText(pace.expected)}`].filter(Boolean).join(" · ");
+  return `<div class="projection-field${due ? " due" : ""}"><label>Projected spend for ${escapeHtml(monthName(month))}<input inputmode="decimal" data-billing-projection="${escapeHtml(client)}" data-projection-month="${month}" value="${latest ? escapeHtml(String(latest.amount)) : ""}" placeholder="From Friday’s doc" /></label><small>${escapeHtml(detail)}${due ? ' · <b>Update for this week</b>' : ""}</small></div>`;
+}
+/** Saves a projection typed anywhere (the client's billing panel or the Billing page). */
+function saveProjection(input) {
+  const text = input.value.trim().replace(/[$,\s]/g, "");
+  const amount = text === "" ? NaN : Number(text);
+  if (text !== "" && !Number.isFinite(amount)) { showToast("That isn't a number", "Type the projected spend, like 52000."); return; }
+  const client = input.dataset.billingProjection;
+  billing[client] = setProjection(billingConfig(client), input.dataset.projectionMonth, amount);
+  saveBilling();
+  if (clientScope === client) renderBillingPreview();
+  if (pageView === "billing") renderBillingPage();
+}
+document.addEventListener("change", event => {
+  const input = event.target.closest("[data-billing-projection]");
+  if (input) saveProjection(input);
+});
 /** Billed so far against what the IO expects this month, with a tick at where it should be by now. */
 function paceBar(pace, running) {
   if (!pace || !(pace.expected > 0)) return "";
@@ -4353,6 +4388,15 @@ function renderBillingPage() {
   document.querySelector("#billing-page-context").textContent = running
     ? `${monthLabel(month)} is month to date · ${moneyText(items.reduce((sum, item) => sum + item.result.total, 0))} so far across ${items.filter(item => item.result.rows.length).length} set-up client${items.filter(item => item.result.rows.length).length === 1 ? "" : "s"}. Final numbers in the first week of next month.`
     : `${ready.length} of ${items.length} client${items.length === 1 ? "" : "s"} ready for ${monthLabel(month)} · ${moneyText(ready.reduce((sum, item) => sum + item.result.total, 0))} ready to bill`;
+  // Fridays: the projections still to update from this week's doc.
+  const current = todayLocal().slice(0, 7);
+  const due = items.filter(item => projectionDue(item.config, todayLocal()));
+  const projections = document.querySelector("#billing-projections");
+  projections.hidden = !items.length;
+  projections.innerHTML = items.length ? `<div class="projection-head"><b>Projected spend for ${escapeHtml(monthLabel(current))}</b><span>${due.length ? `${due.length} to update from this week’s doc` : "Update each Friday from the doc in Slack"}</span></div><ul>${items.map(({ client, config }) => {
+    const latest = latestProjection(config, current);
+    return `<li class="${projectionDue(config, todayLocal()) ? "due" : ""}"><span>${escapeHtml(client)}<small>${latest ? `Updated ${escapeHtml(new Date(latest.at).toLocaleDateString([], { month: "short", day: "numeric" }))}` : "Not set yet"}</small></span><input inputmode="decimal" aria-label="${escapeHtml(`Projected spend for ${client}`)}" data-billing-projection="${escapeHtml(client)}" data-projection-month="${current}" value="${latest ? escapeHtml(String(latest.amount)) : ""}" placeholder="$0" /></li>`;
+  }).join("")}</ul>` : "";
   document.querySelector("#billing-list").innerHTML = items.map(({ client, result, config }) => {
     const downloaded = config?.history?.[month];
     return `<li><span class="billing-client"><b>${escapeHtml(client)}</b><small class="billing-status ${!result.rows.length ? "" : result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}${downloaded ? ` · downloaded ${escapeHtml(new Date(downloaded.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</small></span><strong>${result.rows.length ? moneyText(result.total) : ""}</strong><span class="billing-actions">${result.rows.length ? `<button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button>` : ""}<a class="text-button" href="?client=${encodeURIComponent(client)}" data-billing-setup="${escapeHtml(client)}">${result.rows.length ? "Edit setup" : "Set up"}</a></span></li>`;
