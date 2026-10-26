@@ -577,3 +577,19 @@ body.settings-view .main-content>:not(.topbar):not(#settings-page){display:none!
 .campaign-line.io-line.clickable{cursor:pointer}
 .campaign-line.io-line.clickable:hover{background:#f7f7fc}
 .campaign-line.io-line.clickable:hover .campaign-title strong{color:var(--primary-dark)}
+
+/* Campaign status: click it to set it by hand */
+.status-button{border:0;background:transparent;padding:4px 8px 4px 6px;margin-left:-6px;border-radius:999px;cursor:pointer;font:inherit;font-size:12px;font-weight:700}
+.status-button::after{content:"";width:5px;height:5px;margin-left:1px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.55}
+.status-button:hover,.status-button[aria-expanded=true]{background:rgba(99,87,229,.08)}
+.status-button:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.status-button.manual{box-shadow:inset 0 0 0 1px currentColor}
+.status-dot-label.completed{color:#636c7e}
+.status-dot-label.canceled{color:#b4415a}.status-dot-label.canceled:before{background:#db4f61}
+.status-menu{position:absolute;z-index:60;min-width:230px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,32,52,.16);display:grid;gap:2px;animation:status-menu-in .14s cubic-bezier(.2,.8,.2,1)}
+.status-menu button{display:grid;gap:2px;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:8px;cursor:pointer;font:inherit}
+.status-menu button:hover,.status-menu button:focus-visible{background:#f3f3fb;outline:none}
+.status-menu button[aria-checked=true]{background:#efeefe}
+.status-menu small{font-size:11px;color:#636c7e;padding-left:13px}
+@keyframes status-menu-in{from{opacity:0;transform:translateY(-4px) scale(.98)}}
+@media (prefers-reduced-motion:reduce){.status-menu{animation:none}}

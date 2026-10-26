@@ -502,8 +502,10 @@ let lastCampaignGroups = [];
 let metricPickerTarget = null;
 
 function lineStatusLabel(status) {
-  return { live: "Live", scheduled: "Scheduled", paused: "Paused", completed: "Completed", archived: "Archived" }[status] || "";
+  return { live: "Live", scheduled: "Scheduled", paused: "Paused", completed: "Completed", canceled: "Canceled", archived: "Archived" }[status] || "";
 }
+// A canceled campaign is completed for every total and alert, but its lines say so.
+const shownStatus = (status, key) => status === "completed" && campaignStatus[key] === "canceled" ? "canceled" : status;
 
 // Short labels for campaign and line rows: dates and counts sit in small pills, and the full story is a click away.
 function dateSpan(start, end) {
@@ -554,11 +556,11 @@ function renderCampaignList(rows, activeAlerts) {
     const shownLines = entry ? group.lines.filter(line => line.kind !== "record" || line.record.ioLineStatus !== "matched") .filter(line => line.kind === "record" ? !isPlaceholder(line.record) : true) : group.lines;
     const ioLineRows = planLines.map(line => {
       const lineMetrics = line.records.length ? computeMetrics(line.records, { ...options, totals: { budget: line.budget, startDate: line.startDate, endDate: line.endDate } }) : { budget: line.budget };
-      const lineStatus = ["paused", "completed"].includes(campaignStatus[group.key]) ? campaignStatus[group.key] : dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
+      const lineStatus = campaignStatus[group.key] === "canceled" ? "completed" : ["paused", "completed"].includes(campaignStatus[group.key]) ? campaignStatus[group.key] : dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
       const ioKey = `${group.key}|${line.key}`;
       shownIoLines.set(ioKey, { group, line, metrics: lineMetrics, status: lineStatus });
       const pills = [datePill(line.startDate, line.endDate), line.placements.length > 1 ? metaPill(`${line.placements.length} flights`, { title: `${line.placements.length} IO flights combined` }) : "", line.records.length ? "" : metaPill("No report yet", { cls: "muted" })].join("");
-      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line clickable${lineStatus === "completed" ? " line-done" : ""}" data-io-line="${escapeHtml(ioKey)}"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><span class="meta-pills">${pills}</span></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-io-line="${escapeHtml(ioKey)}" aria-label="Details for ${escapeHtml(line.name)}">Details</button></span></div>` };
+      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line clickable${lineStatus === "completed" ? " line-done" : ""}" data-io-line="${escapeHtml(ioKey)}"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${shownStatus(lineStatus, group.key)}">${lineStatusLabel(shownStatus(lineStatus, group.key))}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><span class="meta-pills">${pills}</span></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-io-line="${escapeHtml(ioKey)}" aria-label="Details for ${escapeHtml(line.name)}">Details</button></span></div>` };
     });
     const reportLineRows = shownLines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
@@ -575,7 +577,7 @@ function renderCampaignList(rows, activeAlerts) {
       const lineSelectKey = stableLineKey(line);
       const lineChecked = selectionFor(group.key).has(lineSelectKey);
       const done = lineStatus === "completed";
-      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${lineStatus}">${lineStatusLabel(lineStatus)}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong>${meta ? `<span class="meta-pills">${meta}</span>` : ""}</span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
+      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${shownStatus(lineStatus, group.key)}">${lineStatusLabel(shownStatus(lineStatus, group.key))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong>${meta ? `<span class="meta-pills">${meta}</span>` : ""}</span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
     });
     // Completed lines sit at the bottom of the campaign as compact rows, so live lines stay up front.
     const allRows = [...ioLineRows, ...reportLineRows];
@@ -588,12 +590,12 @@ function renderCampaignList(rows, activeAlerts) {
     return `<article class="campaign-card${open ? " open" : ""}" data-group-key="${escapeHtml(group.key)}" style="--metric-count:${keys.length}">
       <div class="campaign-card-head" data-toggle-campaign="${escapeHtml(group.key)}">
         <button class="campaign-toggle" type="button" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}">›</button>
-        <span class="status-dot-label ${group.status}">${lineStatusLabel(group.status)}</span>
+        <button class="status-dot-label status-button ${shownStatus(group.status, group.key)}${campaignStatus[group.key] ? " manual" : ""}" type="button" data-status-menu="${escapeHtml(group.key)}" aria-haspopup="menu" aria-expanded="false" title="${campaignStatus[group.key] === "canceled" ? "Canceled by the client. " : ""}${campaignStatus[group.key] ? "Set by you. Click to change." : "Set by the flight dates. Click to change."}">${lineStatusLabel(shownStatus(group.status, group.key))}</button>
         <span class="campaign-title"><strong>${escapeHtml(group.name)}</strong><span class="meta-pills">${clientScope ? "" : `<span class="meta-client">${escapeHtml(group.client)}</span>`}${datePill(group.startDate, group.endDate)}${metaPill(`${lineTotal} line${lineTotal === 1 ? "" : "s"}`)}${entry ? metaPill(entry.orders.length > 1 ? `${entry.orders.length} IOs` : "IO", { cls: "io", title: `Budget and dates from ${entry.orders.length > 1 ? `${entry.orders.length} insertion orders` : "the insertion order"}` }) : ""}${auditSummary ? metaPill(auditSummary.replace(/^ · /, ""), { cls: auditSummary.includes("missing") ? "warning" : "" }) : ""}</span></span>
         ${cells}
         <span class="campaign-card-actions">${manualOrder && group.status !== "completed" ? `<span class="campaign-move"><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="up" aria-label="Move ${escapeHtml(group.name)} up" title="Move up">↑</button><button class="campaign-icon-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="down" aria-label="Move ${escapeHtml(group.name)} down" title="Move down">↓</button></span>` : ""}${groupAlerts.length ? `<span class="campaign-alert-badge${critical ? " critical" : ""}" title="${groupAlerts.length} open alert${groupAlerts.length === 1 ? "" : "s"}">${groupAlerts.length}</span>` : ""}<button class="campaign-icon-button" type="button" data-edit-metrics="${escapeHtml(group.key)}" aria-label="Choose metrics for ${escapeHtml(group.name)}" title="Choose metrics">⚙</button></span>
       </div>
-      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}${salesforceLink(group.key, "Open in Salesforce ↗")}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(group.key)}">Edit campaign…</button><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
+      ${open ? `<div class="campaign-lines">${selectionFor(group.key).size ? `<div class="campaign-lines-bulk"><strong>${resolveSelection(group.key).length} selected</strong><button type="button" data-bulk-edit="${escapeHtml(group.key)}">Edit selected…</button><button type="button" class="danger" data-bulk-remove="${escapeHtml(group.key)}">Remove selected</button><button type="button" data-bulk-clear="${escapeHtml(group.key)}">Clear</button></div>` : ""}<div class="campaign-lines-labels"><label class="line-check"><input type="checkbox" data-select-all-lines="${escapeHtml(group.key)}" aria-label="Select all lines"${shownLines.length && shownLines.every(line => selectionFor(group.key).has(stableLineKey(line))) ? " checked" : ""} /></label><span></span><span>Line item</span>${labels}<span></span></div>${lineRows}<div class="campaign-lines-footer"><label class="campaign-status-control">Status <select data-campaign-status="${escapeHtml(group.key)}" aria-label="Status of ${escapeHtml(group.name)}"><option value="auto"${campaignStatus[group.key] ? "" : " selected"}>By flight dates</option><option value="paused"${campaignStatus[group.key] === "paused" ? " selected" : ""}>Paused</option><option value="completed"${campaignStatus[group.key] === "completed" ? " selected" : ""}>Completed</option><option value="canceled"${campaignStatus[group.key] === "canceled" ? " selected" : ""}>Client canceled</option></select></label>${manualOrder && group.status !== "completed" ? `<button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="top">Move to top</button><button class="text-button" type="button" data-move-campaign="${escapeHtml(group.key)}" data-move="bottom">Move to bottom</button>` : ""}${salesforceLink(group.key, "Open in Salesforce ↗")}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(group.key)}">Edit campaign…</button><button class="campaign-remove" type="button" data-remove-campaign="${escapeHtml(group.key)}">Remove campaign…</button></div></div>` : ""}
     </article>`;
   }).join("");
 }
@@ -865,6 +867,8 @@ document.querySelector("#campaign-list-rows").addEventListener("click", event =>
     return;
   }
   if (event.target.closest("[data-campaign-status], .campaign-status-control")) return;
+  const statusButton = event.target.closest("[data-status-menu]");
+  if (statusButton) { openStatusMenu(statusButton); return; }
   const head = event.target.closest("[data-toggle-campaign]");
   if (!head) return;
   const key = head.dataset.toggleCampaign;
@@ -872,15 +876,73 @@ document.querySelector("#campaign-list-rows").addEventListener("click", event =>
   renderCampaigns(document.querySelector("#client-filter").value);
 });
 
+function changeCampaignStatus(key, value) {
+  campaignStatus = setCampaignStatus(campaignStatus, key, value);
+  try { localStorage.setItem(CAMPAIGN_STATUS_KEY, JSON.stringify(campaignStatus)); } catch { /* the status lasts for this session */ }
+  const name = lastCampaignGroups.find(group => group.key === key)?.name || "Campaign";
+  renderCampaigns(document.querySelector("#client-filter").value);
+  const message = {
+    auto: `${name} follows its flight dates again.`,
+    paused: `${name} is paused. It leaves the live totals and alerts until you set it back.`,
+    completed: `${name} is marked completed. It moves to the bottom and leaves the live totals and alerts.`,
+    canceled: `${name} is marked canceled by the client. It moves to the bottom and leaves the live totals and alerts.`
+  }[value] || "";
+  showToast("Campaign status", message);
+}
 document.querySelector("#campaign-list-rows").addEventListener("change", event => {
   const select = event.target.closest("[data-campaign-status]");
-  if (!select) return;
-  campaignStatus = setCampaignStatus(campaignStatus, select.dataset.campaignStatus, select.value);
-  try { localStorage.setItem(CAMPAIGN_STATUS_KEY, JSON.stringify(campaignStatus)); } catch { /* the status lasts for this session */ }
-  const name = lastCampaignGroups.find(group => group.key === select.dataset.campaignStatus)?.name || "Campaign";
-  renderCampaigns(document.querySelector("#client-filter").value);
-  showToast("Campaign status", select.value === "auto" ? `${name} follows its flight dates again.` : `${name} is marked ${select.value}.${select.value === "completed" ? " It moves to the bottom and leaves the live totals." : " It leaves the live totals and alerts until you set it back."}`);
+  if (select) changeCampaignStatus(select.dataset.campaignStatus, select.value);
 });
+
+// Clicking a campaign's status opens a short menu: back to its dates, or paused, completed, or canceled by hand.
+const STATUS_CHOICES = [
+  { value: "auto", label: "By flight dates", note: "Live, scheduled or completed from the dates" },
+  { value: "paused", label: "Paused", note: "On hold for now" },
+  { value: "completed", label: "Completed", note: "Ended early, or finished" },
+  { value: "canceled", label: "Client canceled", note: "The client ended it" }
+];
+let statusMenu = null;
+function closeStatusMenu({ focus = false } = {}) {
+  if (!statusMenu) return;
+  const { menu, button } = statusMenu;
+  statusMenu = null;
+  menu.remove();
+  button.setAttribute("aria-expanded", "false");
+  if (focus && button.isConnected) button.focus();
+}
+function openStatusMenu(button) {
+  const key = button.dataset.statusMenu;
+  const wasOpen = statusMenu?.button === button;
+  closeStatusMenu();
+  if (wasOpen) return;
+  const current = campaignStatus[key] || "auto";
+  const menu = document.createElement("div");
+  menu.className = "status-menu";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", "Campaign status");
+  menu.innerHTML = STATUS_CHOICES.map(choice => `<button type="button" role="menuitemradio" aria-checked="${choice.value === current}" data-status-value="${choice.value}"><span class="status-dot-label ${choice.value === "auto" ? "live" : choice.value}">${escapeHtml(choice.label)}</span><small>${escapeHtml(choice.note)}</small></button>`).join("");
+  document.body.append(menu);
+  const box = button.getBoundingClientRect();
+  menu.style.left = `${Math.min(box.left + scrollX, scrollX + document.documentElement.clientWidth - menu.offsetWidth - 12)}px`;
+  menu.style.top = `${box.bottom + scrollY + 6}px`;
+  button.setAttribute("aria-expanded", "true");
+  statusMenu = { menu, button, key };
+  menu.querySelector('[aria-checked="true"]')?.focus();
+  menu.addEventListener("click", event => {
+    const choice = event.target.closest("[data-status-value]");
+    if (!choice) return;
+    closeStatusMenu();
+    if (choice.dataset.statusValue !== current) changeCampaignStatus(key, choice.dataset.statusValue);
+  });
+  menu.addEventListener("keydown", event => {
+    const items = [...menu.querySelectorAll("[data-status-value]")];
+    const index = items.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus(); }
+    if (event.key === "Escape" || event.key === "Tab") { event.preventDefault(); closeStatusMenu({ focus: true }); }
+  });
+}
+document.addEventListener("pointerdown", event => { if (statusMenu && !statusMenu.menu.contains(event.target) && !statusMenu.button.contains(event.target)) closeStatusMenu(); });
+window.addEventListener("resize", () => closeStatusMenu());
 
 document.querySelector("#toggle-all-campaigns").addEventListener("click", () => {
   const allOpen = lastCampaignGroups.every(group => expandedCampaigns.has(group.key));

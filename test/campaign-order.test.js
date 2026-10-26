@@ -39,3 +39,12 @@ test("a hand-set status applies to every line of the campaign and drives its sta
   assert.equal(dashboardFlightStatus(back[0], new Date("2026-06-01T00:00:00Z")), "live");
   assert.equal(applyCampaignStatus(back, status), back);
 });
+
+test("a campaign the client canceled counts as completed and keeps its own status", () => {
+  const record = { client: "Rent A Center", name: "OLA Q4 — Flight 1", startDate: "2026-09-27", endDate: "2026-12-26" };
+  const key = "rent a center::ola q4";
+  const statuses = setCampaignStatus({}, key, "canceled");
+  assert.deepEqual(statuses, { [key]: "canceled" });
+  assert.equal(dashboardFlightStatus({ ...record, manualStatus: "canceled" }, new Date("2026-10-26T12:00:00Z")), "completed");
+  assert.deepEqual(setCampaignStatus(statuses, key, "auto"), {});
+});
