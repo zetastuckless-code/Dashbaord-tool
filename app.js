@@ -43,7 +43,7 @@ import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTo
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
 import { applyIoPlan, ioLines, recordLineLabel } from "./lib/io-plan.js";
-import { applyCampaignStatus, CAMPAIGN_ORDER_KEY, CAMPAIGN_STATUS_KEY, moveCampaign, orderGroups, readCampaignOrder, readCampaignStatus, setCampaignStatus } from "./lib/campaign-order.js";
+import { applyCampaignStatus, CAMPAIGN_ORDER_KEY, CAMPAIGN_STATUS_KEY, ioLineStatusKey, recordStatusKey, moveCampaign, orderGroups, readCampaignOrder, readCampaignStatus, setCampaignStatus } from "./lib/campaign-order.js";
 import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_KIND_OPTIONS } from "./lib/data-sources.js";
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
@@ -574,11 +574,13 @@ function renderCampaignList(rows, activeAlerts) {
     const shownLines = entry ? group.lines.filter(line => line.kind !== "record" || line.record.ioLineStatus !== "matched") .filter(line => line.kind === "record" ? !isPlaceholder(line.record) : true) : group.lines;
     const ioLineRows = planLines.map(line => {
       const lineMetrics = line.records.length ? computeMetrics(line.records, { ...options, totals: { budget: line.budget, startDate: line.startDate, endDate: line.endDate } }) : { budget: line.budget };
-      const lineStatus = campaignStatus[group.key] === "canceled" ? "completed" : ["paused", "completed"].includes(campaignStatus[group.key]) ? campaignStatus[group.key] : dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
       const ioKey = `${group.key}|${line.key}`;
+      // The IO line's own status, else its campaign's, else its dates.
+      const statusKey = campaignStatus[ioLineStatusKey(group.key, line.key)] ? ioLineStatusKey(group.key, line.key) : group.key;
+      const lineStatus = campaignStatus[statusKey] === "canceled" ? "completed" : ["paused", "completed"].includes(campaignStatus[statusKey]) ? campaignStatus[statusKey] : dashboardFlightStatus({ startDate: line.startDate, endDate: line.endDate });
       shownIoLines.set(ioKey, { group, line, metrics: lineMetrics, status: lineStatus });
       const pills = [datePill(line.startDate, line.endDate), line.placements.length > 1 ? metaPill(`${line.placements.length} flights`, { title: `${line.placements.length} IO flights combined` }) : "", line.records.length ? "" : metaPill("No report yet", { cls: "muted" })].join("");
-      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line clickable${lineStatus === "completed" ? " line-done" : ""}" data-io-line="${escapeHtml(ioKey)}"><span class="line-check"></span><span class="campaign-line-status"><span class="status-dot-label ${shownStatus(lineStatus, group.key)}">${lineStatusLabel(shownStatus(lineStatus, group.key))}</span></span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><span class="meta-pills">${pills}</span></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-io-line="${escapeHtml(ioKey)}" aria-label="Details for ${escapeHtml(line.name)}">Details</button></span></div>` };
+      return { done: lineStatus === "completed", html: `<div class="campaign-line io-line clickable${lineStatus === "completed" ? " line-done" : ""}" data-io-line="${escapeHtml(ioKey)}"><span class="line-check"></span><span class="campaign-line-status">${lineStatusButton(lineStatus, ioLineStatusKey(group.key, line.key), statusKey, line.name)}</span><span class="campaign-title"><strong>${escapeHtml(line.name)}</strong><span class="meta-pills">${pills}</span></span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-io-line="${escapeHtml(ioKey)}" aria-label="Details for ${escapeHtml(line.name)}">Details</button></span></div>` };
     });
     const reportLineRows = shownLines.map(line => {
       // A planned flight with no imported delivery has a budget only; showing zero spend or pacing would mislead.
@@ -595,7 +597,7 @@ function renderCampaignList(rows, activeAlerts) {
       const lineSelectKey = stableLineKey(line);
       const lineChecked = selectionFor(group.key).has(lineSelectKey);
       const done = lineStatus === "completed";
-      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? `<span class="status-dot-label ${shownStatus(lineStatus, group.key)}">${lineStatusLabel(shownStatus(lineStatus, group.key))}</span>` : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong>${meta ? `<span class="meta-pills">${meta}</span>` : ""}</span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
+      return { done, html: `<div class="campaign-line${lineChecked ? " selected" : ""}${done ? " line-done" : ""}"><label class="line-check"><input type="checkbox" data-select-line="${escapeHtml(lineSelectKey)}" data-group="${escapeHtml(group.key)}" aria-label="Select ${escapeHtml(line.name || "line")}"${lineChecked ? " checked" : ""} /></label><span class="campaign-line-status">${line.kind === "record" ? lineStatusButton(lineStatus, recordStatusKey(line.record), campaignStatus[recordStatusKey(line.record)] ? recordStatusKey(line.record) : line.record.ioLine && campaignStatus[ioLineStatusKey(group.key, line.record.ioLine)] ? ioLineStatusKey(group.key, line.record.ioLine) : group.key, line.name || "Line") : ""}</span><span class="campaign-title"><strong>${escapeHtml(line.name || "Line item")}</strong>${meta ? `<span class="meta-pills">${meta}</span>` : ""}</span>${keys.map(key => `<span class="metric-cell"><strong class="${key === "pacing" ? paceClass(lineMetrics.pacing) : ""}">${escapeHtml(formatMetric(key, lineMetrics[key]))}</strong></span>`).join("")}<span class="campaign-line-actions"><button class="campaign-line-open" type="button" data-open-campaign="${index}">Details</button><button class="campaign-line-remove" type="button" data-remove-line="${index}" data-line-kind="${line.kind === "record" ? "record" : "item"}" data-line-id="${escapeHtml(String(line.id ?? ""))}" data-line-name="${escapeHtml(line.name || "this line")}" aria-label="Remove ${escapeHtml(line.name || "line")}" title="Remove">✕</button></span></div>${auditMode ? renderLineAudit(auditLine(line, auditOptions(line))) : ""}` };
     });
     // Completed lines sit at the bottom of the campaign as compact rows, so live lines stay up front.
     const allRows = [...ioLineRows, ...reportLineRows];
@@ -894,9 +896,24 @@ document.querySelector("#campaign-list-rows").addEventListener("click", event =>
   renderCampaigns(document.querySelector("#client-filter").value);
 });
 
-function changeCampaignStatus(key, value) {
+/**
+ * A line's status as a button that opens the same menu as a campaign's. `key` is where the line's own status is kept;
+ * `from` is the key its shown status comes from (its own, its IO line's, or its campaign's).
+ */
+function lineStatusButton(status, key, from, name) {
+  const own = Boolean(campaignStatus[key]);
+  const label = lineStatusLabel(shownStatus(status, from));
+  return `<button class="status-dot-label status-button line-status-button ${shownStatus(status, from)}${own ? " manual" : ""}" type="button" data-status-menu="${escapeHtml(key)}" data-status-name="${escapeHtml(name)}" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(`${name}: ${label}. Change status`)}" title="${own ? "Set by you for this line. Click to change." : from !== key ? "Follows its campaign. Click to set this line's own status." : "Set by the flight dates. Click to change."}">${escapeHtml(label)}</button>`;
+}
+
+function changeCampaignStatus(key, value, lineName = null) {
   campaignStatus = setCampaignStatus(campaignStatus, key, value);
   try { localStorage.setItem(CAMPAIGN_STATUS_KEY, JSON.stringify(campaignStatus)); } catch { /* the status lasts for this session */ }
+  if (lineName) {
+    renderCampaigns(document.querySelector("#client-filter").value);
+    showToast("Line status", { auto: `${lineName} follows its campaign and flight dates again.`, paused: `${lineName} is paused. It leaves the live totals and alerts.`, completed: `${lineName} is marked completed. It leaves the live totals and alerts.`, canceled: `${lineName} is marked canceled by the client.` }[value] || "");
+    return;
+  }
   const name = lastCampaignGroups.find(group => group.key === key)?.name || "Campaign";
   renderCampaigns(document.querySelector("#client-filter").value);
   const message = {
@@ -937,8 +954,8 @@ function openStatusMenu(button) {
   const menu = document.createElement("div");
   menu.className = "status-menu";
   menu.setAttribute("role", "menu");
-  menu.setAttribute("aria-label", "Campaign status");
-  menu.innerHTML = STATUS_CHOICES.map(choice => `<button type="button" role="menuitemradio" aria-checked="${choice.value === current}" data-status-value="${choice.value}"><span class="status-dot-label ${choice.value === "auto" ? "live" : choice.value}">${escapeHtml(choice.label)}</span><small>${escapeHtml(choice.note)}</small></button>`).join("");
+  menu.setAttribute("aria-label", button.dataset.statusName ? "Line status" : "Campaign status");
+  menu.innerHTML = (button.dataset.statusName ? STATUS_CHOICES.map(choice => choice.value === "auto" ? { ...choice, label: "Follow the campaign", note: "Its campaign's status, or its flight dates" } : choice) : STATUS_CHOICES).map(choice => `<button type="button" role="menuitemradio" aria-checked="${choice.value === current}" data-status-value="${choice.value}"><span class="status-dot-label ${choice.value === "auto" ? "live" : choice.value}">${escapeHtml(choice.label)}</span><small>${escapeHtml(choice.note)}</small></button>`).join("");
   document.body.append(menu);
   const box = button.getBoundingClientRect();
   menu.style.left = `${Math.min(box.left + scrollX, scrollX + document.documentElement.clientWidth - menu.offsetWidth - 12)}px`;
@@ -950,7 +967,7 @@ function openStatusMenu(button) {
     const choice = event.target.closest("[data-status-value]");
     if (!choice) return;
     closeStatusMenu();
-    if (choice.dataset.statusValue !== current) changeCampaignStatus(key, choice.dataset.statusValue);
+    if (choice.dataset.statusValue !== current) changeCampaignStatus(key, choice.dataset.statusValue, button.dataset.statusName || null);
   });
   menu.addEventListener("keydown", event => {
     const items = [...menu.querySelectorAll("[data-status-value]")];

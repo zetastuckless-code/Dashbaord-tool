@@ -48,3 +48,16 @@ test("a campaign the client canceled counts as completed and keeps its own statu
   assert.equal(dashboardFlightStatus({ ...record, manualStatus: "canceled" }, new Date("2026-10-26T12:00:00Z")), "completed");
   assert.deepEqual(setCampaignStatus(statuses, key, "auto"), {});
 });
+
+test("a line's own status wins over its IO line's, which wins over its campaign's", async () => {
+  const { applyCampaignStatus, ioLineStatusKey, recordStatusKey } = await import("../lib/campaign-order.js");
+  const display = { client: "RAC", name: "RAC OLA Q4 — Display", ioLine: "standard display package" };
+  const video = { client: "RAC", name: "RAC OLA Q4 — Video", ioLine: "olv" };
+  const other = { client: "RAC", name: "RAC OLA Q4 — Native" };
+  const key = "rac::rac ola q4";
+  const statuses = { [key]: "paused", [ioLineStatusKey(key, "olv")]: "completed", [recordStatusKey(other)]: "canceled" };
+  const [a, b, c] = applyCampaignStatus([display, video, other], statuses);
+  assert.deepEqual([a.manualStatus, b.manualStatus, c.manualStatus], ["paused", "completed", "canceled"]);
+  const [d] = applyCampaignStatus([display], { [ioLineStatusKey(key, "standard display package")]: "completed" });
+  assert.equal(d.manualStatus, "completed");
+});
