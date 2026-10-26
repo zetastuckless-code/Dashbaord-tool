@@ -42,3 +42,9 @@ test("a line in no billing row, on an IO read before rates were saved, takes the
   const [mixed] = applyDeliveredValue([ola], { billing: { "Rent A Center": { rows: [...rows, { lines: [], rateType: "cpm", rate: 5 }] } } });
   assert.equal(mixed.deliveredValue, undefined);
 });
+
+test("the 3rd-party view counts delivered value too; 1st-party keeps the DSP's cost", () => {
+  const [line] = applyDeliveredValue([{ ...record, thirdPartySpend: 5000, firstPartySpend: 4800 }], { billing });
+  assert.equal(resolveSpend(line, "third"), 8000);
+  assert.equal(resolveSpend(line, "first"), 4800);
+});
