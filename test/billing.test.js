@@ -175,3 +175,19 @@ test("a past billing file keeps what each row billed, for the month in its perio
   assert.equal(result.rows[0].billable, 1200);
   assert.equal(result.rows[0].capped, true);
 });
+
+test("report totals that miss the month's edges are split by days, and a newer report beats stale DCM days", () => {
+  const snapshots = [{ date: "2026-09-28", source: "Zeta", impressions: 2_800_000, spend: 14000 }, { date: "2026-10-12", source: "Zeta", impressions: 4_200_000, spend: 21000 }, { date: "2026-10-25", source: "Zeta", impressions: 5_500_000, spend: 27500 }];
+  const records = [line("Display", { CM360: days("2026-10-01", "2026-10-07", { impressions: 50_000, spend: 250 }) }, { performanceSnapshots: snapshots })];
+  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Display", source: "CM360", rateType: "cpm", rate: 4, lines: ["Display"] }] };
+  const running = computeClientBilling(config, records, "2026-10", "2026-10-26");
+  // Sep 30 sits 2 of 14 days between the Sep 28 and Oct 12 totals: 2,800,000 + 1,400,000 × 2/14 = 3,000,000.
+  assert.equal(running.rows[0].fromReport, true);
+  assert.equal(running.rows[0].estimated, true);
+  assert.equal(running.rows[0].quantity, 2_500_000);
+  assert.equal(running.through, "2026-10-25");
+  // September, closed: Sep 1 to Sep 30 needs both edges; the start falls before the first total, the flight began Jul 1.
+  const september = computeClientBilling({ ...config, rows: [{ ...config.rows[0], source: "report" }] }, records, "2026-09");
+  assert.equal(september.rows[0].unavailable, false);
+  assert.ok(september.rows[0].quantity > 0);
+});
