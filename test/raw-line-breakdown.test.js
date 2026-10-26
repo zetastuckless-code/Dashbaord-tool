@@ -45,3 +45,11 @@ test("a matched conversions tab fills in conversions by line and day", () => {
   assert.equal(byName.NY_AV.conversions, 2);
   assert.equal(byName.NY_AV.kpi, "CTR");
 });
+
+test("a line's running totals land on every month's last day, so billing has exact month edges", () => {
+  const date = iso => new Date(`${iso}T00:00:00Z`);
+  const rows = [["Date", "Line Item", "Impressions", "Clicks", "Spend"], [date("2026-09-28"), "NY", 100, 1, 1], [date("2026-09-29"), "NY", 100, 1, 1], [date("2026-10-02"), "NY", 100, 1, 1], [date("2026-09-28"), "Austin", 50, 0, 1]];
+  const [ny] = extractRawLines(rows, detectRawLineTable(rows), { client: "McMaster" }).filter(line => line.campaign.endsWith("NY"));
+  const history = JSON.parse(ny.history);
+  assert.deepEqual(history.map(point => [point.date, point.impressions]), [["2026-09-27", 0], ["2026-09-30", 200], ["2026-10-02", 300]]);
+});

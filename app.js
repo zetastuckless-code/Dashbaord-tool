@@ -64,7 +64,7 @@ import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, local
 import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
-import { attachLineDays, billingFileName, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
+import { attachLineDays, billingFileName, billingMonth, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
 import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
@@ -4106,26 +4106,33 @@ function renderClientBilling() {
 
 function billingResult(client, month) {
   const config = billingConfig(client);
-  return attachLineDays(computeClientBilling(config, clientLines(client), month), clientLines(client));
+  return attachLineDays(computeClientBilling(config, clientLines(client), month, todayLocal()), clientLines(client));
 }
 function moneyText(value) { return formatExactMoney(value); }
 function dayList(days) { return days.length > 4 ? `${shortDate(days[0])} to ${shortDate(days.at(-1))} (${days.length} days)` : days.map(shortDate).join(", "); }
 function billingStatusText(result) {
   if (!result.rows.length) return "Not set up";
+  if (result.running) return result.through ? `Month to date through ${shortDate(result.through)} · final numbers after the month ends` : "Month to date · no data this month yet";
   if (result.unavailable.length) return `Needs data: ${result.unavailable.join(", ")} has no numbers for these dates`;
   if (result.missingDays.length) return `Missing ${dayList(result.missingDays)}`;
   return "Ready";
 }
+// The client's billing preview shows the month billing is on (this month, or last month in the first week); you can
+// switch to another recent month.
+function billingPreviewMonths() { return Array.from({ length: 4 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
 function renderBillingPreview() {
   if (!clientScope) return;
-  const month = previousMonth();
+  const preview = document.querySelector("#billing-preview");
+  const month = billingPreviewMonths().includes(preview.dataset.month) ? preview.dataset.month : billingMonth();
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
-  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `<div class="billing-preview-head"><b>${escapeHtml(monthLabel(month))}</b><span class="billing-status ${result.ready ? "ready" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(clientScope)}" data-billing-month="${month}">Download</button></div><table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}</td></tr>`).join("")}</tbody></table>${config.history?.[month] ? `<p class="billing-note">Downloaded ${escapeHtml(new Date(config.history[month].downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}.</p>` : ""}` : "";
+  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(clientScope)}" data-billing-month="${month}">Download</button></div><table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}</td></tr>`).join("")}</tbody></table>${config.history?.[month] ? `<p class="billing-note">Downloaded ${escapeHtml(new Date(config.history[month].downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}.</p>` : ""}` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
   if (!clientScope) return;
+  const previewMonth = event.target.closest("[data-billing-preview-month]");
+  if (previewMonth) { document.querySelector("#billing-preview").dataset.month = previewMonth.value; renderBillingPreview(); return; }
   const config = billingConfig(clientScope);
   const clientField = event.target.closest("[data-billing-client]");
   if (clientField) {
@@ -4221,15 +4228,18 @@ function billedClients() { return [...new Set(campaigns.filter(record => !isCamp
 function renderBillingPage() {
   const select = document.querySelector("#billing-month");
   const months = Array.from({ length: 12 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - index + 1, 1))));
-  const chosen = select.value || months[1] || months[0];
+  const chosen = select.value || billingMonth();
   select.innerHTML = months.map(month => `<option value="${month}"${month === chosen ? " selected" : ""}>${escapeHtml(monthLabel(month))}</option>`).join("");
   const month = select.value;
   const items = billedClients().map(client => ({ client, result: billingResult(client, month), config: billing[client] }));
   const ready = items.filter(item => item.result.ready);
-  document.querySelector("#billing-page-context").textContent = `${ready.length} of ${items.length} client${items.length === 1 ? "" : "s"} ready for ${monthLabel(month)} · ${moneyText(ready.reduce((sum, item) => sum + item.result.total, 0))} ready to bill`;
+  const running = items.some(item => item.result.running);
+  document.querySelector("#billing-page-context").textContent = running
+    ? `${monthLabel(month)} is month to date · ${moneyText(items.reduce((sum, item) => sum + item.result.total, 0))} so far across ${items.filter(item => item.result.rows.length).length} set-up client${items.filter(item => item.result.rows.length).length === 1 ? "" : "s"}. Final numbers in the first week of next month.`
+    : `${ready.length} of ${items.length} client${items.length === 1 ? "" : "s"} ready for ${monthLabel(month)} · ${moneyText(ready.reduce((sum, item) => sum + item.result.total, 0))} ready to bill`;
   document.querySelector("#billing-list").innerHTML = items.map(({ client, result, config }) => {
     const downloaded = config?.history?.[month];
-    return `<li><span class="billing-client"><b>${escapeHtml(client)}</b><small class="billing-status ${!result.rows.length ? "" : result.ready ? "ready" : "warn"}">${escapeHtml(billingStatusText(result))}${downloaded ? ` · downloaded ${escapeHtml(new Date(downloaded.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</small></span><strong>${result.rows.length ? moneyText(result.total) : ""}</strong><span class="billing-actions">${result.rows.length ? `<button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button>` : ""}<a class="text-button" href="?client=${encodeURIComponent(client)}" data-billing-setup="${escapeHtml(client)}">${result.rows.length ? "Edit setup" : "Set up"}</a></span></li>`;
+    return `<li><span class="billing-client"><b>${escapeHtml(client)}</b><small class="billing-status ${!result.rows.length ? "" : result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}${downloaded ? ` · downloaded ${escapeHtml(new Date(downloaded.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</small></span><strong>${result.rows.length ? moneyText(result.total) : ""}</strong><span class="billing-actions">${result.rows.length ? `<button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button>` : ""}<a class="text-button" href="?client=${encodeURIComponent(client)}" data-billing-setup="${escapeHtml(client)}">${result.rows.length ? "Edit setup" : "Set up"}</a></span></li>`;
   }).join("") || '<li class="billing-empty">No clients yet.</li>';
 }
 document.querySelector("#billing-month").addEventListener("change", renderBillingPage);

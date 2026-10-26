@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { billingSheets, billingWindow, computeClientBilling, parseBillingSheet, previousMonth } from "../lib/billing.js";
+import { billingMonth, billingSheets, billingWindow, computeClientBilling, parseBillingSheet, previousMonth } from "../lib/billing.js";
 
 const days = (from, to, metrics) => {
   const result = {};
@@ -80,4 +80,29 @@ test("storage levels and local storage use", async () => {
   assert.equal(storageLevel(0.5), "ok");
   assert.equal(storageLevel(0.65), "filling");
   assert.equal(storageLevel(0.85), "full");
+});
+
+test("billing works on this month, except in the first week when last month is pulled", () => {
+  assert.equal(billingMonth(new Date(2026, 9, 26)), "2026-10");
+  assert.equal(billingMonth(new Date(2026, 10, 3)), "2026-10");
+  assert.equal(billingMonth(new Date(2026, 10, 8)), "2026-11");
+  assert.equal(billingMonth(new Date(2027, 0, 2)), "2026-12");
+});
+
+test("a running month bills month to date through the newest data, and isn't marked ready", () => {
+  const dsp = line("Carter — AA Audio", { DSP: days("2026-10-01", "2026-10-22", { impressions: 1000, spend: 22 }) });
+  const config = { rows: [{ source: "DSP", rateType: "cpm", rate: 22, lines: ["Carter — AA Audio"] }] };
+  const result = computeClientBilling(config, [dsp], "2026-10", "2026-10-26");
+  assert.equal(result.running, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.through, "2026-10-22");
+  assert.deepEqual(result.missingDays, []);
+  assert.equal(result.rows[0].quantity, 22_000);
+  // From the client's report: the newest total in the month, against the total on the last day of September.
+  const snapshots = [{ date: "2026-09-30", impressions: 50_000 }, { date: "2026-10-17", impressions: 70_000 }, { date: "2026-10-22", impressions: 80_000 }];
+  const report = line("McMaster — NY", {}, { performanceSnapshots: snapshots });
+  const fromReport = computeClientBilling({ rows: [{ source: "report", rateType: "cpm", rate: 5, lines: ["McMaster — NY"] }] }, [report], "2026-10", "2026-10-26");
+  assert.equal(fromReport.rows[0].quantity, 30_000);
+  assert.equal(fromReport.through, "2026-10-22");
+  assert.deepEqual(fromReport.unavailable, []);
 });
