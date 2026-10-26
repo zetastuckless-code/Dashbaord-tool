@@ -48,7 +48,7 @@ import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_K
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
-import { BRIEF_LOG_KEY, campaignStatusRow, logItems, readJson, STATUS_DRAFTS_KEY, statusDue, statusPrompt, statusRowTsv, statusWeeks, weekKey } from "./lib/status-doc.js";
+import { BRIEF_LOG_KEY, campaignStatusRow, logItems, readJson, readStatusDoc, STATUS_DRAFTS_KEY, statusDue, statusPrompt, statusRowTsv, statusWeeks, weekKey } from "./lib/status-doc.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
@@ -504,6 +504,9 @@ let brief = readBrief(localStorage);
 // Everything the briefs said and what you checked off, kept a few weeks for the Monday status doc.
 let briefLog = readJson(localStorage, BRIEF_LOG_KEY, []);
 let statusDrafts = readJson(localStorage, STATUS_DRAFTS_KEY, {});
+// What carries over week to week for each campaign: reporting cadence, report name, and last week's doc text.
+const STATUS_CARRY_KEY = "northstar-status-carry";
+let statusCarry = readJson(localStorage, STATUS_CARRY_KEY, {});
 if (!briefLog.length && todos.length) briefLog = todos.reduce((log, item) => logItems(log, [item], item.briefDate || item.addedOn || new Date().toISOString().slice(0, 10)), []);
 function saveBriefLog() { try { localStorage.setItem(BRIEF_LOG_KEY, JSON.stringify(briefLog)); } catch { /* the log rebuilds from the next brief */ } }
 const evaluateAlerts = rows => evaluateCampaignAlerts(rows, alertRules, new Date(), { totals: campaignTotals });
@@ -4552,6 +4555,7 @@ function updateBillingReminder() {
 updateBillingReminder();
 
 // --- Weekly status: each Monday's row per live campaign for the team status doc ---
+function saveStatusCarry() { try { localStorage.setItem(STATUS_CARRY_KEY, JSON.stringify(statusCarry)); } catch { /* kept this session */ } }
 function saveStatusDrafts() { try { localStorage.setItem(STATUS_DRAFTS_KEY, JSON.stringify(statusDrafts)); } catch { /* drafts last this session */ } }
 /** Live and paused campaigns, plus any that ended during the week, in your client order; each row with your edits on top. */
 function statusRows() {
@@ -4565,7 +4569,9 @@ function statusRows() {
   const edits = statusDrafts[weekKey(today)]?.rows || {};
   return groups.sort((a, b) => order.indexOf(a.client) - order.indexOf(b.client) || a.name.localeCompare(b.name)).map(group => {
     const row = campaignStatusRow({ group, log: briefLog, alerts: alerts.filter(alert => groupKey(alert.campaign) === group.key), today, kpiTolerance: alertRules.kpiTolerance, io: campaignTotals[group.key] || null });
-    return { ...row, ...(edits[group.key] || {}), drafted: row, edited: Object.keys(edits[group.key] || {}) };
+    const carry = statusCarry[group.key] || {};
+    const schedule = { weekly: "Weekly", biweekly: "Bi-weekly", monthly: "Monthly" }[reporting.clients?.[group.client]?.cadence];
+    return { ...row, cadence: carry.cadence ?? (schedule || ""), reportName: carry.reportName || "", carry, ...(edits[group.key] || {}), drafted: row, edited: Object.keys(edits[group.key] || {}) };
   });
 }
 function renderStatusPage() {
@@ -4579,7 +4585,9 @@ function renderStatusPage() {
   const field = (row, key, label, multiline = false) => `<label class="status-field${multiline ? " wide" : ""}${row.edited.includes(key) ? " edited" : ""}">${escapeHtml(label)}${multiline ? `<textarea rows="3" data-status-field="${key}">${escapeHtml(row[key] || "")}</textarea>` : `<input data-status-field="${key}" value="${escapeHtml(row[key] || "")}" />`}</label>`;
   document.querySelector("#status-list").innerHTML = rows.length ? rows.map(row => `<section class="status-card" data-status-row="${escapeHtml(row.key)}">
       <header><div><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.client)}</small></div><select class="status-track ${escapeHtml(row.track.toLowerCase().replace(/[^a-z]+/g, "-"))}" data-status-field="track" aria-label="On or off track">${["On Track", "Watch", "Off Track", "Not Tracking"].map(option => `<option${option === row.track ? " selected" : ""}>${option}</option>`).join("")}</select><button class="secondary-button" type="button" data-status-copy="${escapeHtml(row.key)}">Copy row</button></header>
-      <div class="status-fields">${field(row, "lastWeek", "Last week")}${field(row, "thisWeek", "This week")}${field(row, "change", "Week over week")}${field(row, "performance", "Performance notes & optimizations", true)}${field(row, "notes", "Notes", true)}</div>
+      ${row.lastWeek || row.thisWeek ? `<p class="status-facts">${escapeHtml([row.lastWeek && `Last week ${row.lastWeek}`, row.thisWeek && `this week ${row.thisWeek}`, row.change].filter(Boolean).join(" · "))}</p>` : ""}
+      <div class="status-fields">${field(row, "performance", "Performance notes & optimizations", true)}${field(row, "notes", "Notes", true)}<label class="status-field"><span>Date last updated</span><input value="${escapeHtml(`${Number(row.updated.slice(5, 7))}/${Number(row.updated.slice(8, 10))}/${row.updated.slice(0, 4)}`)}" readonly /></label>${field(row, "cadence", "Reporting cadence")}${field(row, "reportName", "Report name")}</div>
+      ${row.carry.lastPerformance || row.carry.lastNotes ? `<details class="status-last"><summary>What the doc said last time</summary>${row.carry.lastTrack ? `<p><b>On/Off Track:</b> ${escapeHtml(row.carry.lastTrack)}</p>` : ""}${row.carry.lastPerformance ? `<p><b>Performance notes:</b> ${escapeHtml(row.carry.lastPerformance)}</p>` : ""}${row.carry.lastNotes ? `<p><b>Notes:</b> ${escapeHtml(row.carry.lastNotes)}</p>` : ""}</details>` : ""}
       ${row.edited.length ? `<button class="text-button" type="button" data-status-reset="${escapeHtml(row.key)}">Use the dashboard’s draft again</button>` : ""}
     </section>`).join("") : '<p class="billing-empty">No live campaigns this week.</p>';
 }
@@ -4594,6 +4602,12 @@ document.querySelector("#status-list").addEventListener("change", event => {
   const input = event.target.closest("[data-status-field]");
   const card = event.target.closest("[data-status-row]");
   if (!input || !card) return;
+  // Reporting cadence and report name stay with the campaign from week to week.
+  if (["cadence", "reportName"].includes(input.dataset.statusField)) {
+    statusCarry[card.dataset.statusRow] = { ...(statusCarry[card.dataset.statusRow] || {}), [input.dataset.statusField]: input.value.trim() };
+    saveStatusCarry();
+    return;
+  }
   const week = weekKey(todayLocal());
   const entry = (statusDrafts[week] ||= { rows: {} });
   entry.rows ||= {};
@@ -4608,6 +4622,28 @@ document.querySelector("#status-list").addEventListener("click", async event => 
   if (!copy) return;
   const row = statusRows().find(item => item.key === copy.dataset.statusCopy);
   try { await navigator.clipboard.writeText(statusRowTsv(row)); showToast("Row copied", "Click its LAST WEEK cell in the status doc and paste."); } catch { showToast("Couldn't copy", "Your browser blocked the clipboard. Select the text and copy it instead."); }
+});
+// Fills each campaign's reporting cadence and report name (and last week's text) from the team status doc.
+document.querySelector("#status-doc-input").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  try {
+    const names = await readSheetNames(file);
+    const sheets = await Promise.all(names.filter(name => !/archiv/i.test(name)).map(sheet => readXlsxFile(file, { sheet }).catch(() => [])));
+    const groups = groupCampaigns(campaigns.filter(record => !isCampaignArchived(record)));
+    const found = readStatusDoc(sheets, groups);
+    for (const [key, values] of Object.entries(found)) {
+      const { score, ...kept } = values;
+      statusCarry[key] = { ...(statusCarry[key] || {}), ...Object.fromEntries(Object.entries(kept).filter(([, value]) => value)), docFile: file.name };
+    }
+    saveStatusCarry();
+    renderStatusPage();
+    const count = Object.keys(found).length;
+    showToast(count ? "Status doc read" : "No campaigns matched", count ? `${count} campaign${count === 1 ? "" : "s"} matched in ${file.name}. Reporting cadence and report name fill in from it.` : "Rows match by the name in CLIENT/ CAMPAIGN/ZETA ID. Check the names line up with the dashboard.");
+  } catch (error) {
+    showToast("Couldn't read that file", error.message);
+  }
 });
 document.querySelector("#status-copy-prompt").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(statusPrompt(statusRows(), todayLocal())); showToast("Prompt copied", "Paste it into ChatGPT for notes in your own words."); } catch { showToast("Couldn't copy", "Your browser blocked the clipboard."); }

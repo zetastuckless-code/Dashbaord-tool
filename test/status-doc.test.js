@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { campaignStatusRow, logItems, statusDue, statusPrompt, statusRowTsv, statusWeeks } from "../lib/status-doc.js";
+import { readStatusDoc, campaignStatusRow, logItems, statusDue, statusPrompt, statusRowTsv, statusWeeks } from "../lib/status-doc.js";
 
 test("on a Monday, this week is the Monday to Sunday just ended", () => {
   assert.deepEqual(statusWeeks("2026-10-26"), { thisWeek: { from: "2026-10-19", to: "2026-10-25" }, lastWeek: { from: "2026-10-12", to: "2026-10-18" } });
@@ -33,7 +33,8 @@ test("a campaign's status row: the week's KPI against last week, pacing, the cal
   assert.match(row.notes, /Sent the biweekly report/);
   assert.doesNotMatch(row.notes, /Old item/);
   const tsv = statusRowTsv(row);
-  assert.equal(tsv.split("\t").length, 7);
+  assert.equal(tsv.split("\t").length, 6);
+  assert.ok(tsv.startsWith("On Track\t"));
   assert.match(tsv, /\t10\/26\/2026\t/);
   assert.match(statusPrompt([row], "2026-10-26"), /McMaster Q4 \(McMaster\)/);
 });
@@ -42,4 +43,17 @@ test("the status doc is due Monday and Tuesday until the week is marked done", (
   assert.equal(statusDue({}, "2026-10-26"), true);
   assert.equal(statusDue({ "2026-10-25": { doneAt: "x" } }, "2026-10-26"), false);
   assert.equal(statusDue({}, "2026-10-28"), false);
+});
+
+test("the team status doc fills each campaign's reporting cadence, report name, and last week's text", () => {
+  const sheet = [[null, "LIVE"], [null, "CAMPAIGN DETAILS"], [null, "STATUS", "ACCOUNT MANAGER", "JIRA TICKET", "AGENCY", "SF ZETA ID", "ZETA DSP CAMPAIGN ID", "CLIENT/ CAMPAIGN/ZETA ID", "FLIGHT START", "On/Off Track (Are we hitting KPIs and pacing?)", "Performance Notes & Optimizations", "Date Last Updated", "NOTES", "REPORTING CADENCE", "REPORT NAME"],
+    [null, "Live", "Jake", "", "MMI/Crispin", "", "", "Crispin-Nature's Sunshine 2026 Display & YouTube", "", "Watch", "YouTube is canceled the rest of the year.", "", "", "Monday-Bi Weekly", "Display - Report #1379671350"],
+    [null, "LIVE", "Jake", "", "Slingshot", "", "", "McMaster", "", "On Track", "CTR lower, focusing on conversions.", "", "", "Every other Tuesday", ""]];
+  const groups = [{ key: "nss", client: "Nature's Sunshine", name: "Nature's Sunshine 2026" }, { key: "mc", client: "McMaster-Carr", name: "McMaster Q3 2026" }, { key: "rac", client: "Rent A Center", name: "RAC_National_OLA_Q4_2026" }];
+  const found = readStatusDoc([sheet], groups);
+  assert.deepEqual(Object.keys(found).sort(), ["mc", "nss"]);
+  assert.equal(found.nss.cadence, "Monday-Bi Weekly");
+  assert.equal(found.nss.reportName, "Display - Report #1379671350");
+  assert.equal(found.nss.lastTrack, "Watch");
+  assert.equal(found.mc.cadence, "Every other Tuesday");
 });

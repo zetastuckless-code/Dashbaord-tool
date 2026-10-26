@@ -296,8 +296,8 @@
 
         <section class="status-page" id="status-page" aria-label="Weekly status" hidden>
           <article class="panel">
-            <div class="panel-header"><div><h2 id="status-title">Status doc for this week</h2><p id="status-context">Drafts for each live campaign’s row in the team status doc. Edit what you need, then copy each row in.</p></div><div class="panel-actions"><button class="secondary-button" type="button" id="status-copy-prompt">Copy for ChatGPT</button><button class="primary-button" type="button" id="status-done">Mark this week done</button></div></div>
-            <p class="status-how">Copy a row, click its <b>LAST WEEK</b> cell in the doc, and paste. The seven cells fill across to <b>NOTES</b>. Notes come from the week’s numbers and what your morning briefs said.</p>
+            <div class="panel-header"><div><h2 id="status-title">Status doc for this week</h2><p id="status-context">Drafts for each live campaign’s row in the team status doc. Edit what you need, then copy each row in.</p></div><div class="panel-actions"><label class="secondary-button file-button">Fill from the status doc<input id="status-doc-input" type="file" accept=".xlsx" hidden /></label><button class="secondary-button" type="button" id="status-copy-prompt">Copy for ChatGPT</button><button class="primary-button" type="button" id="status-done">Mark this week done</button></div></div>
+            <p class="status-how">Copy a row, click its <b>On/Off Track</b> cell in the doc, and paste. The six cells fill across to <b>REPORT NAME</b>. Notes come from the week’s numbers and what your morning briefs said; reporting cadence and report name carry over each week.</p>
             <div class="status-list" id="status-list"></div>
           </article>
         </section>
