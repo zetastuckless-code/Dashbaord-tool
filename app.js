@@ -4557,18 +4557,34 @@ updateBillingReminder();
 // --- Weekly status: each Monday's row per live campaign for the team status doc ---
 function saveStatusCarry() { try { localStorage.setItem(STATUS_CARRY_KEY, JSON.stringify(statusCarry)); } catch { /* kept this session */ } }
 function saveStatusDrafts() { try { localStorage.setItem(STATUS_DRAFTS_KEY, JSON.stringify(statusDrafts)); } catch { /* drafts last this session */ } }
-/** Live and paused campaigns, plus any that ended during the week, in your client order; each row with your edits on top. */
+/**
+ * Each line's CPM, to price DCM impressions (DCM has no spend): its IO line's rate, else the campaign IO's, else the
+ * billing row it's in, else its report's own cost per thousand.
+ */
+function lineRates(group) {
+  const entry = campaignTotals[group.key];
+  const io = entry ? ioLines(entry) : [];
+  const billingRows = billing[group.client]?.rows || [];
+  return Object.fromEntries(group.records.map(record => {
+    const ioRate = io.find(line => line.key === record.ioLine && Number.isFinite(line.rate) && !/cpv/i.test(line.rateType || ""))?.rate ?? io.find(line => Number.isFinite(line.rate) && !/cpv/i.test(line.rateType || ""))?.rate;
+    const rowRate = Number(billingRows.find(row => row.rateType === "cpm" && (row.lines || []).includes(record.name))?.rate);
+    // Last resort: what the line's own report paid per thousand.
+    const reportRate = Number(record.spend) > 0 && Number(record.impressions) > 0 ? Number(record.spend) / Number(record.impressions) * 1000 : null;
+    return [record.name, ioRate ?? (rowRate > 0 ? rowRate : reportRate)];
+  }));
+}
+/** Live and paused campaigns, in your client order; each row with your edits on top. */
 function statusRows() {
   const today = todayLocal();
-  const { thisWeek } = statusWeeks(today);
   const records = campaigns.filter(record => !isCampaignArchived(record));
   const order = orderClients([...new Set(records.map(record => record.client))], readClientOrder(localStorage));
-  const groups = groupCampaigns(records).filter(group => group.records.some(record => !isPlaceholder(record)) && (group.status === "live" || campaignStatus[group.key] === "paused" || (group.endDate && group.endDate >= thisWeek.from && group.startDate <= today)));
+  // Completed and canceled campaigns (by their dates or marked by you) stay out of the doc.
+  const groups = groupCampaigns(records).filter(group => group.records.some(record => !isPlaceholder(record)) && group.status !== "completed" && !["completed", "canceled"].includes(campaignStatus[group.key]) && (group.status === "live" || campaignStatus[group.key] === "paused"));
   // Pacing and the KPI are written out already; DCM gaps are the alerts worth a line in the notes.
   const alerts = unacknowledgedAlerts(evaluateAlerts(records), acknowledgedAlertIds).filter(alert => String(alert.type).startsWith("delivery"));
   const edits = statusDrafts[weekKey(today)]?.rows || {};
   return groups.sort((a, b) => order.indexOf(a.client) - order.indexOf(b.client) || a.name.localeCompare(b.name)).map(group => {
-    const row = campaignStatusRow({ group, log: briefLog, alerts: alerts.filter(alert => groupKey(alert.campaign) === group.key), today, kpiTolerance: alertRules.kpiTolerance, io: campaignTotals[group.key] || null });
+    const row = campaignStatusRow({ group, log: briefLog, alerts: alerts.filter(alert => groupKey(alert.campaign) === group.key), today, kpiTolerance: alertRules.kpiTolerance, io: campaignTotals[group.key] || null, rates: lineRates(group) });
     const carry = statusCarry[group.key] || {};
     const schedule = { weekly: "Weekly", biweekly: "Bi-weekly", monthly: "Monthly" }[reporting.clients?.[group.client]?.cadence];
     return { ...row, cadence: carry.cadence ?? (schedule || ""), reportName: carry.reportName || "", carry, ...(edits[group.key] || {}), drafted: row, edited: Object.keys(edits[group.key] || {}) };

@@ -57,3 +57,15 @@ test("the team status doc fills each campaign's reporting cadence, report name, 
   assert.equal(found.nss.lastTrack, "Watch");
   assert.equal(found.mc.cadence, "Every other Tuesday");
 });
+
+test("a line on DCM days gets its week from them, priced at the IO's CPM, and CPA needs spend", async () => {
+  const { lineWeek } = await import("../lib/status-doc.js");
+  const dcm = {};
+  for (let day = 19; day <= 25; day += 1) dcm[`2026-10-${day}`] = { impressions: 100_000, clicks: 50, conversions: 2, spend: null };
+  const record = { client: "Rent A Center", name: "RAC OLA Q4 — Display", kpi: "CPA", target: "$15", startDate: "2026-09-27", endDate: "2026-12-26", spend: 6112, budget: 51002, thirdPartyDelivery: { CM360: dcm }, performanceSnapshots: [] };
+  const week = lineWeek(record, { from: "2026-10-19", to: "2026-10-25" }, "2026-10-26", 3.25);
+  assert.deepEqual([week.impressions, week.conversions, week.spend], [700_000, 14, 2275]);
+  const row = campaignStatusRow({ group: { key: "rac", client: "Rent A Center", name: "RAC OLA Q4", status: "live", records: [record] }, today: "2026-10-26", rates: { [record.name]: 3.25 } });
+  assert.equal(row.thisWeek, "CPA $163");
+  assert.equal(campaignStatusRow({ group: { key: "rac", client: "Rent A Center", name: "RAC OLA Q4", status: "live", records: [record] }, today: "2026-10-26" }).thisWeek, "");
+});
