@@ -206,3 +206,26 @@ test("the IO pace spreads the whole IO by day, so a month with two flights expec
   const monthly = computeClientBilling({ ...config, rows: [{ ...config.rows[0], monthlyBudget: 20000 }] }, records, "2026-10");
   assert.equal(monthly.pace.expected, 20000);
 });
+
+test("the IO's monthly amounts come first: they cap the month and set what it expects", async () => {
+  const records = [line("Display", { DSP: days("2026-10-01", "2026-10-31", { impressions: 400_000 }) }, { startDate: "2026-01-01", endDate: "2026-12-31" })];
+  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Display", source: "DSP", rateType: "cpm", rate: 3.96, ioAmount: 927233.88, lines: ["Display"] }] };
+  const result = computeClientBilling(config, records, "2026-10", null, { ioMonthly: { a: 40000 } });
+  assert.equal(result.pace.expected, 40000);
+  assert.equal(result.rows[0].capped, true);
+  assert.equal(result.rows[0].billable, 40000);
+  // With no monthly amount, it spreads the whole IO by day.
+  assert.equal(computeClientBilling(config, records, "2026-10").pace.expected, Math.round(927233.88 / 365 * 31 * 100) / 100);
+});
+
+test("weekly projections keep the newest number, and are due from Friday until updated", async () => {
+  const { latestProjection, projectionDue, setProjection } = await import("../lib/billing.js");
+  let config = setProjection({}, "2026-10", 50000, new Date("2026-10-16T15:00:00Z"));
+  config = setProjection(config, "2026-10", 52000, new Date("2026-10-23T15:00:00Z"));
+  config = setProjection(config, "2026-10", 51000, new Date("2026-10-23T18:00:00Z"));
+  assert.deepEqual(config.projections["2026-10"].map(item => item.amount), [50000, 51000]);
+  assert.equal(latestProjection(config, "2026-10").amount, 51000);
+  assert.equal(projectionDue(config, "2026-10-24"), false);
+  assert.equal(projectionDue(config, "2026-10-30"), true);
+  assert.equal(projectionDue(config, "2026-10-28"), false);
+});
