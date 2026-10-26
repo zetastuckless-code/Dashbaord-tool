@@ -44,3 +44,15 @@ test("searches campaign identity and operational metadata case-insensitively", (
   assert.deepEqual(filterCampaigns([{ client: "Apex", name: "Launch", campaignId: "CM-42", source: "DSP", sources: ["DSP", "CM360"] }], { query: "cm360" }, asOf).map(campaign => campaign.name), ["Launch"]);
   assert.deepEqual(filterCampaigns(campaigns, { client: "Nova", query: "future" }, asOf), []);
 });
+
+test("a campaign that ended this month still counts for this month; one that ended last month doesn't", async () => {
+  const { ranThisMonth } = await import("../lib/campaign-filters.js");
+  const asOf = new Date("2026-10-26T12:00:00Z");
+  assert.equal(ranThisMonth({ startDate: "2026-04-26", endDate: "2026-10-24" }, asOf), true);
+  assert.equal(ranThisMonth({ startDate: "2026-06-28", endDate: "2026-09-26" }, asOf), false);
+  assert.equal(ranThisMonth({ startDate: "2026-09-27", endDate: "2026-12-26" }, asOf), true);
+  assert.equal(ranThisMonth({ startDate: "2026-11-01", endDate: "2026-12-26" }, asOf), false);
+  // Ended by hand: counts through its last day of data.
+  assert.equal(ranThisMonth({ startDate: "2026-07-01", endDate: "2026-12-31", manualStatus: "completed", dataAsOf: "2026-10-05" }, asOf), true);
+  assert.equal(ranThisMonth({ startDate: "2026-07-01", endDate: "2026-12-31", manualStatus: "canceled", dataAsOf: "2026-09-20" }, asOf), false);
+});

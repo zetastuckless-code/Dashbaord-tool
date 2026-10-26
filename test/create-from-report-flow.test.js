@@ -87,8 +87,9 @@ test("an order-paced campaign counts all of its lines while any line is live", (
   const [client] = buildClientRollup(records, { asOf: now, totals });
   assert.equal(client.spend, 1_300_000);
   assert.equal(client.budget, 1_500_000);
+  // Without an order, a line that ended earlier this month still counts until the month is over.
   const [without] = buildClientRollup(records, { asOf: now });
-  assert.equal(without.spend, 800_000);
+  assert.equal(without.spend, 1_300_000);
 });
 
 test("a partly imported report does not block importing the rest, and is flagged in data health", () => {
