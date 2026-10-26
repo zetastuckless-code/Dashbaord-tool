@@ -3307,15 +3307,22 @@ function renderDspFlowPrompts() {
     .replace("Subject Filter: text from the client's report email subject (I'll tell you which).", subject ? `Subject Filter: ${subject}.` : "Subject Filter: text from the client's report email subject (I'll tell you which).");
   document.querySelector("#dsp-subject-check").textContent = subject || "the subject text you typed above";
   document.querySelector("#dsp-folder-check").textContent = folder;
-  // The editor's Copilot panel can change settings and add steps, so this prompt carries this client's details. It
-  // garbles long expressions, though, so it leaves those boxes empty for you to paste with fx.
+  // Describe it to design it builds the whole flow from this, with the expressions left for you to paste. The same
+  // details go to the editor's Copilot panel when Copilot leaves settings blank.
+  const subjectText = subject || "[the client's report email subject]";
+  document.querySelector("#dsp-copilot-prompt").textContent = [
+    `When a new email arrives in my Outlook folder "${folder}" from notifications@delivery.zetaglobal.net with "${subjectText}" in the subject (Include Attachments: No), do this:`,
+    '1. Add a Condition: the email Body contains "Download Report".',
+    '2. If true, add a Compose action named "Report link". Leave its Inputs empty.',
+    '3. Then add the OneDrive for Business action "Upload file from URL". Set Source URL to the Outputs of "Report link" and Overwrite to Yes. Leave Destination File Path empty.',
+    "Don't type any expressions; I'll add them."
+  ].join("\n");
   document.querySelector("#dsp-copilot-details").textContent = [
-    "Update this flow:",
-    `1. In the trigger "When a new email arrives (V3)", set Folder to "${folder}", From to "notifications@delivery.zetaglobal.net", Subject Filter to "${subject || "[the client's report email subject]"}", and Include Attachments to No.`,
-    '2. Right after the trigger, add a Condition that checks whether the email Body contains "Download Report". Put the "Upload file from URL" action under the True branch.',
-    '3. Under True, before "Upload file from URL", add a Compose action named "Report link". Leave its Inputs empty; I will add an expression myself.',
-    '4. If there is no "Upload file from URL" action, add the OneDrive for Business one under "Report link". Set its Source URL to the Outputs of "Report link" and Overwrite to Yes. Leave Destination File Path empty; I will add an expression myself.',
-    "Don't type any expressions."
+    "Fill in this flow's settings:",
+    `1. Trigger "When a new email arrives (V3)": Folder "${folder}", From "notifications@delivery.zetaglobal.net", Subject Filter "${subjectText}", Include Attachments No.`,
+    '2. Condition: the email Body contains "Download Report".',
+    '3. "Upload file from URL": Source URL is the Outputs of "Report link", Overwrite is Yes.',
+    "Leave the Compose Inputs and the Destination File Path as they are; don't type any expressions."
   ].join("\n");
 }
 {
