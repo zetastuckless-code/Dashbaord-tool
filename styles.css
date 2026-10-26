@@ -651,3 +651,6 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .delivery-note.subtle{color:#636c7e}
 .flow-settings{margin:6px 0 2px;padding-left:18px;display:grid;gap:4px;list-style:disc}
 .flow-build>li>b:first-child{color:var(--ink)}
+.flow-shot{display:block;width:fit-content;max-width:min(100%,560px);margin:8px 0 6px;border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(24,32,52,.06);cursor:zoom-in}
+.flow-shot img{display:block;width:100%;height:auto}
+.flow-shot:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
