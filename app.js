@@ -3307,6 +3307,16 @@ function renderDspFlowPrompts() {
     .replace("Subject Filter: text from the client's report email subject (I'll tell you which).", subject ? `Subject Filter: ${subject}.` : "Subject Filter: text from the client's report email subject (I'll tell you which).");
   document.querySelector("#dsp-subject-check").textContent = subject || "the subject text you typed above";
   document.querySelector("#dsp-folder-check").textContent = folder;
+  // The editor's Copilot panel can change settings, so this prompt carries every detail for this client's flow.
+  const linkExpression = document.querySelector("#dsp-link-expression").textContent;
+  const pathExpression = document.querySelector("#dsp-path-expression").textContent;
+  document.querySelector("#dsp-copilot-details").textContent = [
+    "Update this flow:",
+    `1. In the trigger "When a new email arrives (V3)", set Folder to "${folder}", From to "notifications@delivery.zetaglobal.net", Subject Filter to "${subject || "[the client's report email subject]"}", and Include Attachments to No.`,
+    '2. Right after the trigger, add a Condition that checks whether the email Body contains "Download Report". Put the "Upload file from URL" action under the True branch.',
+    `3. Under True, before "Upload file from URL", add a Compose action named "Report link". Set its Inputs to this expression: ${linkExpression}`,
+    `4. In "Upload file from URL", set Source URL to the Outputs of "Report link", set Destination File Path to this expression: ${pathExpression}, and set Overwrite to Yes.`
+  ].join("\n");
 }
 {
   let saved = {};
