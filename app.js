@@ -4191,9 +4191,26 @@ function billingStatusText(result) {
 // The client's billing preview shows the month billing is on (this month, or last month in the first week); you can
 // switch to another recent month.
 function billingPreviewMonths() { return Array.from({ length: 4 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
+/** Under a row's billable: how far it is from what the IO expects (shown once, on the row's last period). */
+function rowPaceText(result, item) {
+  const pace = result.pace?.rows.find(row => row.id === item.row.id);
+  if (!pace || pace.deviation === null || result.rows.filter(other => other.row.id === item.row.id).at(-1) !== item) return "";
+  const off = Math.round(pace.deviation * 100);
+  return `<small class="pace-row ${Math.abs(off) <= 10 ? "on" : off > 0 ? "over" : "under"}">${Math.abs(off) <= 1 ? "On pace" : `${Math.abs(off)}% ${off > 0 ? "over" : "under"}`} · ${moneyText(result.running ? pace.expectedToDate : pace.expected)} expected</small>`;
+}
 /** The always-visible line: the month, where it stands, its total so far, and the download. */
 function billingHead(result, month, config, client = clientScope) {
-  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${billingNote(config, month)}`;
+  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${paceBar(result.pace, result.running)}${billingNote(config, month)}`;
+}
+/** Billed so far against what the IO expects this month, with a tick at where it should be by now. */
+function paceBar(pace, running) {
+  if (!pace || !(pace.expected > 0)) return "";
+  const percent = value => `${Math.round(value * 100)}%`;
+  const scale = Math.max(pace.expected, pace.delivered);
+  const off = pace.deviation === null ? null : Math.round(pace.deviation * 100);
+  const state = off === null ? "" : Math.abs(off) <= 10 ? "on" : off > 0 ? "over" : "under";
+  const words = off === null ? "" : Math.abs(off) <= 1 ? "on pace" : `${Math.abs(off)}% ${off > 0 ? "over" : "under"}${running ? " for this point in the month" : ""}`;
+  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>IO pace</span><b>${moneyText(pace.delivered)}</b> of ${moneyText(pace.expected)} expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div></div>`;
 }
 /** Under the preview: when this month was downloaded, and what the month before it billed. */
 function billingNote(config, month) {
@@ -4210,7 +4227,7 @@ function renderBillingPreview() {
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
   document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your reports.</p>';
-  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.row.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}</td></tr>`).join("")}</tbody></table>` : "";
+  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.row.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${rowPaceText(result, item)}</td></tr>`).join("")}</tbody></table>` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
