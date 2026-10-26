@@ -3161,7 +3161,7 @@ document.querySelector("#automation-page").addEventListener("click", async event
   const page = event.target.closest(".automation-review-inline");
   if (page) { event.preventDefault(); setPageView("review"); return; }
   const copy = event.target.closest("[data-copy-target]");
-  if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", "Folder name copied."); } catch { /* the name stays visible to copy by hand */ } }
+  if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", copy.dataset.copyLabel ? `${copy.dataset.copyLabel} copied. Paste it into the expression box (fx).` : "Folder name copied."); } catch { /* the text stays visible to copy by hand */ } }
 });
 document.querySelector("#auto-copy-prompt").addEventListener("click", async () => {
   try {

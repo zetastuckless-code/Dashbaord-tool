@@ -607,3 +607,10 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .meeting-card.next .meeting-time::after{content:"Next";margin-left:6px;padding:1px 6px;border-radius:999px;background:var(--primary);color:#fff;font-size:10px;font-weight:700;vertical-align:1px}
 .meeting-card.past{opacity:.55}
 @media (prefers-reduced-motion:reduce){.meeting-card{transition:none}a.meeting-card:hover{transform:none}}
+
+/* Power Automate expressions to paste: shown in full, with a copy button */
+.substeps-title{margin:16px 0 0;font-size:13px;font-weight:700;color:var(--ink)}
+.flow-expression{display:flex;gap:10px;align-items:flex-start;margin:6px 0 4px}
+.flow-expression code{flex:1;min-width:0;display:block;font:600 11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#f4f2ff;color:#3127a8;padding:8px 10px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+.flow-expression .text-button{flex:none;margin-top:6px}
+.flow-hint{margin:12px 0 0;font-size:12.5px;line-height:1.55;color:#636c7e}
