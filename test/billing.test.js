@@ -106,3 +106,42 @@ test("a running month bills month to date through the newest data, and isn't mar
   assert.equal(fromReport.through, "2026-10-22");
   assert.deepEqual(fromReport.unavailable, []);
 });
+
+test("a CPM row with a minus sign on its hand-adjusted quantity still reads as CPM", () => {
+  const rows = [
+    ["Customer  / Agency NameName", "Advertiser / Brand Name", "Sales Force ID", "Campaign Name", "Line Item (Internal Display Name)", "Quantity", "Rate", "Revenue", "PO #", "Currency", "Note", "Gross Amount", "Net Amount", "Billable Amount ( Gross / Net )"],
+    ["TRUth", "Highmark", "006PM00000ZbYkwYAF", "TruMC-Highmark-Highmark - COMM - Legacy & SEPA", "Standard Display", 10_395_311, 4, 41_581.244, "DSTE-PO0026447-2", "USD", null, 41_581.244, 41_581.244, 41_581.244],
+    ["TRUth", "Highmark", "006PM00000ZbYkwYAF", "TruMC-Highmark-Highmark - COMM - Legacy & SEPA", "OLV", -4_393_857, 14, 61_514, "DSTE-PO0026447-2", "USD", null, 61_514, 61_514, 61_514]
+  ];
+  const parsed = parseBillingSheet(rows);
+  assert.deepEqual(parsed.rows.map(row => [row.lineName, row.rateType, row.rate]), [["Standard Display", "cpm", 4], ["OLV", "cpm", 14]]);
+});
+
+test("billing never goes over the IO: the billable stops at what's left and the quantity drops to match", () => {
+  const olv = line("Highmark — Online Video SEPA", { CM360: days("2026-09-01", "2026-09-30", { impressions: 218_019 }) });
+  const row = { id: "olv", source: "CM360", rateType: "cpm", rate: 14, lines: ["Highmark — Online Video SEPA"] };
+  // $150,000 on the IO, $88,486 billed before: $61,514 left, though September delivered 6,540,570 impressions ($91,568).
+  const config = { rows: [{ ...row, ioAmount: "150000", billedBefore: "88486" }], history: {} };
+  const result = computeClientBilling(config, [olv], "2026-09");
+  const [item] = result.rows;
+  assert.equal(item.capped, true);
+  assert.equal(item.billable, 61_514);
+  assert.equal(item.deliveredQuantity, 6_540_570);
+  assert.equal(item.quantity, 4_393_857);
+  assert.equal(Math.round(item.deliveredBillable), 91_568);
+  // The next month starts from what was downloaded: nothing is left, so nothing more is billed.
+  const october = computeClientBilling({ ...config, history: { "2026-09": { rows: { olv: 61_514 } } } }, [line("Highmark — Online Video SEPA", { CM360: days("2026-10-01", "2026-10-31", { impressions: 100_000 }) })], "2026-10");
+  assert.equal(october.rows[0].billable, 0);
+  // Under the cap, the row bills what delivered, and the IO amount can come from the IO itself.
+  const under = computeClientBilling({ rows: [row], history: {} }, [olv], "2026-09", null, { ioAmounts: { olv: 500_000 } });
+  assert.equal(under.rows[0].capped, undefined);
+  assert.equal(Math.round(under.rows[0].billable), 91_568);
+});
+
+test("a monthly budget caps each month on its own", () => {
+  const display = line("NSP — Display", { DSP: days("2026-09-01", "2026-09-30", { impressions: 847_385 }) });
+  const config = { rows: [{ id: "d", source: "DSP", rateType: "cpm", rate: 3.96, monthlyBudget: "70637.39", lines: ["NSP — Display"] }], history: {} };
+  const [item] = computeClientBilling(config, [display], "2026-09").rows;
+  assert.equal(item.billable, 70_637.39);
+  assert.equal(item.capped, true);
+});
