@@ -648,3 +648,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 @keyframes step-open{from{opacity:0;transform:translateY(-3px)}}
 @media (prefers-reduced-motion:reduce){.step-body{animation:none}.automation-topic>summary::before,.automation-step>.step-head::after{transition:none}}
 .dsp-flow-form{margin:8px 0 4px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.delivery-note.subtle{color:#636c7e}

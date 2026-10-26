@@ -61,7 +61,7 @@ import { importClients, markImportsReviewed, pendingImportReviews, readReviewedI
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { deleteRawRows, readRawRows, saveRawRows } from "./lib/raw-delivery-store.js";
 import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, localStorageUsed, readLineDeliveries, storageLevel, writeLineDeliveries } from "./lib/line-delivery-store.js";
-import { applyDcmTopUps, applyDelivery, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
 import { attachLineDays, billingFileName, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
@@ -3982,7 +3982,12 @@ function renderDeliveryAssignments() {
     const undecided = !item.target && !item.skipped;
     const options = `${undecided ? '<option value="" selected disabled>Choose a campaign (required)</option>' : ""}<option value="${SKIP_DELIVERY}"${item.skipped ? " selected" : ""}>Skip this campaign</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${item.target === group.key ? " selected" : ""}>${escapeHtml(group.client)} · ${escapeHtml(group.name)}${!chosen && item.target === group.key ? " (matched)" : ""}</option>`).join("")}`;
     const perLine = item.lines.map((name, index) => [name, [...item.assigned.values()].filter(value => value === index).length]);
-    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${count === 1 ? "" : "s"}` : '<em class="muted">nothing matched</em>'}</span></li>`).join("")}</ul>${item.unassigned.length ? `<p class="delivery-note">${item.unassigned.length} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} didn’t match a line and will be left out: ${escapeHtml(item.unassigned.slice(0, 4).join(", "))}${item.unassigned.length > 4 ? "…" : ""}</p>` : ""}` : "";
+    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${count === 1 ? "" : "s"}` : '<em class="muted">nothing matched</em>'}</span></li>`).join("")}</ul>${item.unassigned.length ? (() => {
+      const unit = pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement";
+      const free = item.unassigned.filter(isAddedValue);
+      const other = item.unassigned.filter(name => !isAddedValue(name));
+      return `${other.length ? `<p class="delivery-note">${other.length} ${unit}${other.length === 1 ? "" : "s"} didn’t match a line and will be left out: ${escapeHtml(other.slice(0, 4).join(", "))}${other.length > 4 ? "…" : ""}</p>` : ""}${free.length ? `<p class="delivery-note subtle">${free.length} added-value ${unit}${free.length === 1 ? " is" : "s are"} left out, since they’re free and no line is for added value.</p>` : ""}`;
+    })() : ""}` : "";
     return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>${deliveryLabel()} campaign${item.entry.sourceCampaignId ? ` ${escapeHtml(item.entry.sourceCampaignId)}` : ""} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? '<small class="import-required-note">Pick the dashboard campaign this ${deliveryLabel()} campaign belongs to. Later reports follow your choice.</small>' : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${lines}</div>`;
   }).join("");
   const undecided = plan.filter(item => !item.target && !item.skipped).length;
@@ -4012,7 +4017,7 @@ function commitDeliveryImport({ automatic = false } = {}) {
   thirdPartyLinks = rememberThirdPartyLinks(localStorage, thirdPartyLinks, plan, parsed.source);
   const touched = campaigns.filter(record => plan.some(item => item.target && groupKey(record) === item.target) && record.thirdPartyFiles?.[0] === fileName);
   const warnings = [
-    ...plan.filter(item => item.target && item.unassigned.length).map(item => `${item.unassigned.length} ${deliveryLabel()} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
+    ...plan.filter(item => item.target && item.unassigned.some(name => !isAddedValue(name))).map(item => ({ ...item, unassigned: item.unassigned.filter(name => !isAddedValue(name)) })).map(item => `${item.unassigned.length} ${deliveryLabel()} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
     ...plan.filter(item => item.skipped).map(item => `${deliveryLabel()} campaign “${item.entry.sourceCampaignName}” was skipped.`),
     ...(automatic ? ["Imported automatically from the watched report folder."] : [])
   ];
