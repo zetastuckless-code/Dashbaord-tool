@@ -79,7 +79,8 @@ test("reads a morning brief: date, sources, calendar, tags, links, and agency-st
     "Skipped: Slack connector unavailable",
     "## Calendar",
     "- 9:30 AM · Highmark weekly sync",
-    "- 1:00 PM · NPB F3 kickoff",
+    "- 1:00 PM · NPB F3 kickoff | link: https://outlook.office.com/calendar/item/AAMk123",
+    "- 3:00 PM · Bad link | link: javascript:alert(1)",
     "## Nature's Sunshine (Crispin/MMI)",
     "- [ ] Send the October ROAS recap | tag: urgent | due: 2026-10-24 | from: Email from krobinson@availmediagroup.com · Today 9:15 AM",
     "## Rent-A-Center / Anchor Group / Anchor Trading",
@@ -89,7 +90,7 @@ test("reads a morning brief: date, sources, calendar, tags, links, and agency-st
     "## Misc / Internal",
     "- [ ] Submit timesheet | tag: upcoming | due: 2026-10-31"
   ].join("\n"), { clients, today: "2026-10-24" });
-  assert.deepEqual(brief, { date: "2026-10-24", sources: "Outlook + Jira", skipped: "Slack connector unavailable", calendar: [{ time: "9:30 AM", title: "Highmark weekly sync" }, { time: "1:00 PM", title: "NPB F3 kickoff" }] });
+  assert.deepEqual(brief, { date: "2026-10-24", sources: "Outlook + Jira", skipped: "Slack connector unavailable", calendar: [{ time: "9:30 AM", title: "Highmark weekly sync", link: null }, { time: "1:00 PM", title: "NPB F3 kickoff", link: "https://outlook.office.com/calendar/item/AAMk123" }, { time: "3:00 PM", title: "Bad link", link: null }] });
   assert.deepEqual(items.map(item => [item.client, item.tag, item.text, item.due, Boolean(item.link)]), [
     ["Nature's Sunshine", "urgent", "Send the October ROAS recap", "2026-10-24", false],
     ["Rent A Center", "waiting", "Hear back on OLA Q4 caps", null, true],

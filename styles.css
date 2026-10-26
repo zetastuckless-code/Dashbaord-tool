@@ -593,3 +593,17 @@ body.settings-view .main-content>:not(.topbar):not(#settings-page){display:none!
 .status-menu small{font-size:11px;color:#636c7e;padding-left:13px}
 @keyframes status-menu-in{from{opacity:0;transform:translateY(-4px) scale(.98)}}
 @media (prefers-reduced-motion:reduce){.status-menu{animation:none}}
+
+/* Today's meetings in the brief: small square cards with the time, the meeting, and a link to the invite */
+.brief-calendar-strip{align-items:flex-start}
+.meeting-cards{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 4px;scrollbar-width:thin;max-width:100%}
+.meeting-card{flex:none;width:118px;min-height:96px;display:flex;flex-direction:column;gap:4px;padding:10px 10px 9px;border-radius:12px;background:#f6f6fb;border:1px solid var(--line);color:var(--ink);text-decoration:none;transition:transform .15s cubic-bezier(.2,.8,.2,1),box-shadow .15s ease,border-color .15s ease}
+a.meeting-card:hover{transform:translateY(-1px);border-color:#cfcaf6;box-shadow:0 4px 14px rgba(24,32,52,.08)}
+a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.meeting-time{font-size:13px;font-weight:700;color:var(--primary-dark);font-variant-numeric:tabular-nums}
+.meeting-title{font-size:12px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.meeting-link{margin-top:auto;font-size:11px;font-weight:600;color:var(--primary)}
+.meeting-card.next{background:#efedfe;border-color:#c9c2f7}
+.meeting-card.next .meeting-time::after{content:"Next";margin-left:6px;padding:1px 6px;border-radius:999px;background:var(--primary);color:#fff;font-size:10px;font-weight:700;vertical-align:1px}
+.meeting-card.past{opacity:.55}
+@media (prefers-reduced-motion:reduce){.meeting-card{transition:none}a.meeting-card:hover{transform:none}}
