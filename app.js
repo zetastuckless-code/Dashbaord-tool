@@ -64,7 +64,7 @@ import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, local
 import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
-import { attachLineDays, billedBefore, billingFileName, billingMonth, billingSheets, computeClientBilling, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
+import { attachLineDays, billedBefore, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, monthLabel, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
 import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
@@ -3253,7 +3253,44 @@ function refreshAutomationNav() {
   }
 }
 
+// --- Folder access: Chrome asks again for each connected folder after a restart; one button re-approves them all ---
+/** Every folder the dashboard reads, with the access it needs (the morning brief folder also gets packs written to it). */
+function connectedFolders() {
+  try {
+    return [[todoFolder, "Morning brief", "readwrite"], [reportFolder, "Report uploads", "read"], [dcmFolder, "DCM and DSP emails", "read"]].filter(([handle]) => handle).map(([handle, label, mode]) => ({ handle, label, mode }));
+  } catch {
+    return []; // still loading
+  }
+}
+async function renderFolderAccess() {
+  const box = document.querySelector("#folder-access");
+  const folders = connectedFolders();
+  box.hidden = !folders.length;
+  if (!folders.length) return;
+  const states = await Promise.all(folders.map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")));
+  const waiting = states.filter(state => state !== "granted").length;
+  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : "All folders allowed"}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? "allowed" : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
+}
+/** Asks for each folder in turn from one click, then reads what came in while they were blocked. */
+async function approveAllFolders() {
+  for (const folder of connectedFolders()) {
+    try {
+      if (await folder.handle.queryPermission({ mode: folder.mode }) !== "granted") await folder.handle.requestPermission({ mode: folder.mode });
+    } catch { /* Chrome only asks right after a click; the next click asks for whatever is left */ }
+  }
+  await checkTodoFolder();
+  await checkReportFolder();
+  renderFolderStatus();
+  renderReportAutomation();
+  const left = (await Promise.all(connectedFolders().map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")))).filter(state => state !== "granted").length;
+  showToast(left ? "Some folders still need you" : "Folders allowed", left ? `${left} folder${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} your OK. Click Re-approve again.` : "The dashboard can read every connected folder again.");
+}
+document.querySelector("#folder-access").addEventListener("click", event => {
+  if (event.target.closest("#folder-access-approve")) approveAllFolders();
+});
+
 function renderAutomationPage() {
+  renderFolderAccess();
   const clients = trackedClients();
   stepStatus("clients", clients.length ? "done" : "todo");
   document.querySelector("#step-clients-detail").textContent = clients.length ? `${clients.length} client${clients.length === 1 ? "" : "s"} on the dashboard: ${clients.join(", ")}. Add any that are missing before you copy the prompt.` : "No clients yet. Upload an IO to add your first one.";
@@ -3450,6 +3487,7 @@ async function checkReportFolder({ ask = false } = {}) {
 
 const outcomeLabel = { imported: "Imported", "needs review": "Needs review", "couldn't read": "Couldn't read", "already imported": "Already imported" };
 function renderReportAutomation() {
+  renderFolderAccess();
   const inbox = readReportInbox(localStorage);
   const chip = document.querySelector("#report-review-chip");
   chip.hidden = !inbox.length;
@@ -4103,6 +4141,10 @@ function renderClientBilling() {
   if (!clientScope) return;
   const config = billingConfig(clientScope);
   const lines = clientLines(clientScope);
+  // The setup opens on its own only for a client with no rows yet; after that it stays as you left it.
+  const setup = document.querySelector("#billing-setup");
+  if (setup.dataset.client !== clientScope) { setup.dataset.client = clientScope; setup.open = !config.rows.length; }
+  document.querySelector("#billing-setup-count").textContent = config.rows.length ? `${config.rows.length} row${config.rows.length === 1 ? "" : "s"}` : "Not set up";
   document.querySelector("#billing-client-fields").innerHTML = `
     <label>Agency<input data-billing-client="agency" value="${escapeHtml(config.agency || "")}" placeholder="Agency name from the IO" /></label>
     <label>Advertiser<input data-billing-client="advertiser" value="${escapeHtml(config.advertiser || "")}" /></label>
@@ -4149,13 +4191,26 @@ function billingStatusText(result) {
 // The client's billing preview shows the month billing is on (this month, or last month in the first week); you can
 // switch to another recent month.
 function billingPreviewMonths() { return Array.from({ length: 4 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
+/** The always-visible line: the month, where it stands, its total so far, and the download. */
+function billingHead(result, month, config, client = clientScope) {
+  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${billingNote(config, month)}`;
+}
+/** Under the preview: when this month was downloaded, and what the month before it billed. */
+function billingNote(config, month) {
+  const entry = config.history?.[month];
+  const done = entry?.downloadedAt ? `Downloaded ${new Date(entry.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" })}.` : entry?.importedAt ? "Read from your billing file." : "";
+  const lastMonth = Object.keys(config.history || {}).filter(key => key < month).sort().at(-1);
+  const last = lastMonth ? `Last billed: ${monthLabel(lastMonth)}, ${moneyText(config.history[lastMonth].total || 0)}${config.history[lastMonth].importedAt ? " (from your billing file)" : ""}.` : "";
+  return done || last ? `<p class="billing-note">${escapeHtml([done, last].filter(Boolean).join(" "))}</p>` : "";
+}
 function renderBillingPreview() {
   if (!clientScope) return;
   const preview = document.querySelector("#billing-preview");
   const month = billingPreviewMonths().includes(preview.dataset.month) ? preview.dataset.month : billingMonth();
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
-  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(clientScope)}" data-billing-month="${month}">Download</button></div><table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}</td></tr>`).join("")}</tbody></table>${config.history?.[month] ? `<p class="billing-note">Downloaded ${escapeHtml(new Date(config.history[month].downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" }))}.</p>` : ""}` : "";
+  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your reports.</p>';
+  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport ? "Uploaded report" : BILLING_SOURCES[item.row.source])} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}</td></tr>`).join("")}</tbody></table>` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
@@ -4215,15 +4270,27 @@ document.querySelector("#billing-template-input").addEventListener("change", asy
     config.advertiser = parsed.advertiser || config.advertiser;
     config.currency = parsed.currency || config.currency;
     if (parsed.periods.length) { config.periodMode = "custom"; config.periods = parsed.periods; }
-    config.rows = parsed.rows.map(row => {
+    // A row you've set up before keeps its id (so its billing history still counts), its lines, and its IO settings.
+    const sameRow = (a, b) => (a.lineName || "").trim().toLowerCase() === (b.lineName || "").trim().toLowerCase() && (a.campaignName || "").trim().toLowerCase() === (b.campaignName || "").trim().toLowerCase();
+    const before = config.rows || [];
+    const rows = parsed.rows.map(row => {
+      const existing = before.find(item => sameRow(item, row));
+      if (existing) return { ...existing, ...row, source: existing.source, lines: existing.lines };
       const matched = guessLines(row, lines);
       // A billing row's Salesforce ID also links the campaigns its lines belong to.
       if (isOpportunityId(row.sfid)) for (const key of new Set(lines.filter(line => matched.includes(line.name)).map(groupKey))) if (!salesforce.ids[key]) setOpportunity(key, row.sfid);
       return { id: newRowId(), ...row, source: defaultSource(lines.filter(line => matched.includes(line.name))), lines: matched };
     });
+    // What the file billed counts toward each row's IO, and this month picks up from where it ended.
+    const month = billingFileMonth(file.name, parsed.periods, new Date());
+    const kept = config.history?.[month]?.downloadedAt ? null : importedHistory(month, parsed.periods, rows);
+    if (kept) config.history = { ...(config.history || {}), [month]: kept };
+    config.rows = rows.map(({ billed, ...row }) => row);
     saveBilling();
     renderClientBilling();
-    showToast("Billing set up", `${parsed.rows.length} row${parsed.rows.length === 1 ? "" : "s"} read from ${file.name}. Check each row’s lines and source.`);
+    if (pageView === "billing") renderBillingPage();
+    updateBillingReminder();
+    showToast("Billing set up", `${parsed.rows.length} row${parsed.rows.length === 1 ? "" : "s"} read from ${file.name}${kept ? `, with ${moneyText(kept.total)} billed for ${monthLabel(month)}` : ""}. Check each row’s lines and source.`);
   } catch (error) {
     showToast("Couldn't read that file", error.message);
   }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { billingMonth, billingSheets, billingWindow, computeClientBilling, parseBillingSheet, previousMonth } from "../lib/billing.js";
+import { billingFileMonth, billingMonth, billingSheets, billingWindow, computeClientBilling, importedHistory, parseBillingSheet, previousMonth } from "../lib/billing.js";
 
 const days = (from, to, metrics) => {
   const result = {};
@@ -144,4 +144,34 @@ test("a monthly budget caps each month on its own", () => {
   const [item] = computeClientBilling(config, [display], "2026-09").rows;
   assert.equal(item.billable, 70_637.39);
   assert.equal(item.capped, true);
+});
+
+test("a DSP row whose lines have no DSP days bills from the uploaded report's raw-tab numbers, month to date", () => {
+  const snapshots = [{ date: "2026-09-30", impressions: 3_000_000, spend: 15000 }, { date: "2026-10-17", impressions: 4_000_000, spend: 20000 }, { date: "2026-10-22", impressions: 4_400_000, spend: 22000 }];
+  const records = [line("Display", {}, { performanceSnapshots: snapshots }), line("Video", { DSP: days("2026-10-01", "2026-10-20", { impressions: 1000 }) })];
+  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Display", source: "DSP", rateType: "cpm", rate: 5, lines: ["Display"] }, { id: "b", lineName: "Video", source: "DSP", rateType: "cpm", rate: 10, lines: ["Video"] }] };
+  const result = computeClientBilling(config, records, "2026-10", "2026-10-26");
+  assert.equal(result.rows[0].fromReport, true);
+  assert.equal(result.rows[0].quantity, 1_400_000);
+  assert.equal(result.rows[0].billable, 7000);
+  assert.equal(result.rows[1].fromReport, false);
+  assert.equal(result.rows[1].quantity, 20_000);
+  assert.equal(result.through, "2026-10-22");
+});
+
+test("a past billing file keeps what each row billed, for the month in its periods or its file name", () => {
+  const rows = [[], ["Customer / Agency Name", "Advertiser", "Sales Force ID", "Campaign Name", "Line Item", "", "Quantity", "Rate", "Revenue", "PO #", "Currency", "Note", "Gross Amount", "Net Amount", "Billable Amount"],
+    ["Agency", "Brand", "006X", "Camp", "Display", "", 2_000_000, 5, 10000, "", "USD", "", 10000, 9000, 9000],
+    ["", "", "", "", "", "", 400_000, 5, 2000, "", "USD", "", 2000, 1800, 1800]];
+  const parsed = parseBillingSheet(rows);
+  assert.equal(parsed.rows[0].billed, 10800);
+  assert.equal(billingFileMonth("006X_-_Highmark_Billing_September.xlsx", [], new Date("2026-10-26T12:00:00")), "2026-09");
+  assert.equal(billingFileMonth("Billing_December.xlsx", [], new Date("2026-10-26T12:00:00")), "2025-12");
+  assert.equal(billingFileMonth("x.xlsx", [{ from: "2026-08-30", to: "2026-09-26" }]), "2026-09");
+  const history = importedHistory("2026-09", [], [{ id: "a", billed: 10800 }]);
+  assert.deepEqual([history.from, history.to, history.total, history.rows.a], ["2026-09-01", "2026-09-30", 10800, 10800]);
+  const config = { periodMode: "month", history: { "2026-09": history }, rows: [{ id: "a", lineName: "Display", source: "DSP", rateType: "cpm", rate: 5, ioAmount: 12000, lines: ["Display"] }] };
+  const result = computeClientBilling(config, [line("Display", { DSP: days("2026-10-01", "2026-10-31", { impressions: 100_000 }) })], "2026-10");
+  assert.equal(result.rows[0].billable, 1200);
+  assert.equal(result.rows[0].capped, true);
 });
