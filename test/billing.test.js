@@ -106,3 +106,13 @@ test("a running month bills month to date through the newest data, and isn't mar
   assert.equal(fromReport.through, "2026-10-22");
   assert.deepEqual(fromReport.unavailable, []);
 });
+
+test("a CPM row with a minus sign on its hand-adjusted quantity still reads as CPM", () => {
+  const rows = [
+    ["Customer  / Agency NameName", "Advertiser / Brand Name", "Sales Force ID", "Campaign Name", "Line Item (Internal Display Name)", "Quantity", "Rate", "Revenue", "PO #", "Currency", "Note", "Gross Amount", "Net Amount", "Billable Amount ( Gross / Net )"],
+    ["TRUth", "Highmark", "006PM00000ZbYkwYAF", "TruMC-Highmark-Highmark - COMM - Legacy & SEPA", "Standard Display", 10_395_311, 4, 41_581.244, "DSTE-PO0026447-2", "USD", null, 41_581.244, 41_581.244, 41_581.244],
+    ["TRUth", "Highmark", "006PM00000ZbYkwYAF", "TruMC-Highmark-Highmark - COMM - Legacy & SEPA", "OLV", -4_393_857, 14, 61_514, "DSTE-PO0026447-2", "USD", null, 61_514, 61_514, 61_514]
+  ];
+  const parsed = parseBillingSheet(rows);
+  assert.deepEqual(parsed.rows.map(row => [row.lineName, row.rateType, row.rate]), [["Standard Display", "cpm", 4], ["OLV", "cpm", 14]]);
+});
