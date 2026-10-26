@@ -11,7 +11,7 @@ import { makeUpload } from "./lib/uploads.js";
 import { readReportFile, rowsToCsv } from "./lib/workbook-import.js";
 import { evaluateDataHealth } from "./lib/data-health.js";
 import { calculatePortfolioPacing, calculateSpendPacing, campaignFlightStatus, effectivePacing } from "./lib/spend-pacing.js";
-import { calculateAvailableKpis } from "./lib/metric-calculations.js";
+import { calculateAvailableKpis, calculateKpi } from "./lib/metric-calculations.js";
 import { dashboardFlightStatus, filterCampaigns } from "./lib/campaign-filters.js";
 import { acknowledgeAlert, readAcknowledgedAlerts, removeAcknowledgment, unacknowledgedAlerts, writeAcknowledgedAlerts } from "./lib/alert-acknowledgments.js";
 import { exportCampaignsCsv } from "./lib/dashboard-export.js";
@@ -48,7 +48,7 @@ import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_K
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
-import { applyDeliveredValue, marginOf } from "./lib/delivered-value.js";
+import { applyDeliveredValue } from "./lib/delivered-value.js";
 import { BRIEF_LOG_KEY, campaignStatusRow, logItems, readJson, readStatusDoc, STATUS_DRAFTS_KEY, statusDue, statusPrompt, statusRowTsv, statusWeeks, weekKey } from "./lib/status-doc.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
@@ -194,7 +194,9 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   kpiValue.classList.toggle("pace-on-track", watch.watched > 0 && watch.off.length === 0);
   kpiValue.textContent = watch.watched ? String(watch.off.length) : "—";
   const worst = watch.off[0];
-  document.querySelector("#kpi-watch-detail").innerHTML = !watch.watched
+  document.querySelector("#kpi-card-title").textContent = clientScope ? "Main KPI" : "KPI watcher";
+  if (clientScope) renderClientKpi(activeRows.filter(record => !isPlaceholder(record) && dashboardFlightStatus(record) === "live"));
+  else document.querySelector("#kpi-watch-detail").innerHTML = !watch.watched
     ? `<span>No live lines have a KPI goal yet</span>`
     : `<span><b class="${watch.off.length ? "warning-text" : "positive"}">${watch.off.length ? "off goal" : "all on goal"}</b> of ${watch.watched} line${watch.watched === 1 ? "" : "s"} with a goal${watch.near.length ? ` · ${watch.near.length} close` : ""}</span>${worst ? `<small class="kpi-watch-worst">Furthest: ${escapeHtml(recordLineLabel(worst.record) || worst.record.name)} · ${escapeHtml(worst.metric)} ${escapeHtml(worst.formatted)} vs ${escapeHtml(worst.goalText)}</small>` : ""}`;
   renderSpendChart(activeRows);
@@ -1196,14 +1198,13 @@ function renderPacingDetail() {
   const { period, range } = detail;
   document.querySelector("#pacing-dialog-eyebrow").textContent = clientScope ? `${clientScope} · Pacing details` : "Pacing details";
   const status = detail.pacing === null ? "No pacing data" : detail.pacing > alertRules.overPacing ? "Above plan" : detail.pacing < alertRules.underPacing ? "Below plan" : "On track";
-  const margin = marginOf(lastPacingRows);
+  const delivered = lastPacingRows.some(record => record.deliveredRate);
   const stat = (label, value, sub, cls = "") => `<div class="pacing-stat"><small>${escapeHtml(label)}</small><strong class="${cls}">${escapeHtml(value)}</strong><span>${escapeHtml(sub)}</span></div>`;
   const periodSub = period.daysWithData === 0 ? "No reports cover this period yet"
     : `${formatMoney(period.actualTotal)} over ${period.daysWithData} day${period.daysWithData === 1 ? "" : "s"}${period.baselineTotal > 0 ? ` · ${percentText(period.percent)} of a 100% pace (${perDay(period.avgBaseline)})` : ""}`;
   document.querySelector("#pacing-stats").innerHTML = [
     stat("Pacing", detail.pacing === null ? "—" : `${detail.pacing.toFixed(0)}%`, `${status} · target ${alertRules.underPacing}–${alertRules.overPacing}%`, paceClass(detail.pacing)),
-    stat(margin ? "Delivered to date" : "Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
-    ...(margin ? [stat("Margin", formatMoney(margin.margin), `${margin.percent === null ? "—" : `${margin.percent.toFixed(1)}%`} · ${formatMoney(margin.value)} delivered vs ${formatMoney(margin.media)} media spend${margin.lines < margin.of ? ` · ${margin.lines} of ${margin.of} lines have a rate` : ""}`, margin.margin < 0 ? "pace-over" : "")] : []),
+    stat(delivered ? "Delivered to date" : "Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
     stat("Expected at 100% pace", detail.expected > 0 ? formatMoney(detail.expected) : "—", detail.expected > 0 ? `${detail.spend >= detail.expected ? "ahead by" : "behind by"} ${formatMoney(Math.abs(detail.spend - detail.expected))}` : "Needs a budget and flight dates"),
     stat(range.label, perDay(period.avgActual), periodSub),
     stat("Needed from today", perDay(detail.requiredDaily), detail.requiredDaily === null ? "No live flight with budget left" : "to spend the remaining budget by each flight's end")
@@ -1220,7 +1221,7 @@ function renderPacingDetail() {
   if (detail.withoutHistory && period.daysWithData) note.push(`${detail.withoutHistory} campaign${detail.withoutHistory === 1 ? " has" : "s have"} only one dated report, so ${detail.withoutHistory === 1 ? "it is" : "they are"} left out of the daily bars. ${detail.withoutHistory === 1 ? "Its" : "Their"} spend still counts in the totals above.`);
   if (detail.skippedUnits) note.push(`${detail.skippedUnits} campaign${detail.skippedUnits === 1 ? "" : "s"} without a budget or flight dates ${detail.skippedUnits === 1 ? "is" : "are"} left out of the 100% line. Upload an insertion order to add them.`);
   document.querySelector("#pacing-chart-note").textContent = note.join(" ");
-  document.querySelector("#pacing-table").innerHTML = detail.rows.length ? `<table><thead><tr><th>Campaign</th><th>Flight</th><th>Budget</th><th>${margin ? "Delivered" : "Spend"}</th><th>Expected</th><th>Pacing</th>${margin ? "<th>Margin</th>" : ""}</tr></thead><tbody>${detail.rows.map(row => `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}${row.fromOrder ? " · budget and flight from IO" : ""}</small></td><td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td>${escapeHtml(formatMoney(row.spend))}</td><td>${row.expected > 0 ? escapeHtml(formatMoney(row.expected)) : "—"}</td><td class="${paceClass(row.pacing)}"><strong>${row.pacing === null ? "—" : `${row.pacing.toFixed(1)}%`}</strong></td>${margin ? `<td>${(() => { const own = marginOf(row.records); return own ? `<strong>${escapeHtml(formatMoney(own.margin))}</strong><small>${own.percent === null ? "—" : `${own.percent.toFixed(1)}%`} · media ${escapeHtml(formatMoney(own.media))}</small>` : "<small>Billed on spend</small>"; })()}</td>` : ""}</tr>`).join("")}</tbody></table>` : '<p class="history-empty">No live campaigns for the current filters.</p>';
+  document.querySelector("#pacing-table").innerHTML = detail.rows.length ? `<table><thead><tr><th>Campaign</th><th>Flight</th><th>Budget</th><th>${delivered ? "Delivered" : "Spend"}</th><th>Expected</th><th>Pacing</th></tr></thead><tbody>${detail.rows.map(row => `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}${row.fromOrder ? " · budget and flight from IO" : ""}</small></td><td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td>${escapeHtml(formatMoney(row.spend))}</td><td>${row.expected > 0 ? escapeHtml(formatMoney(row.expected)) : "—"}</td><td class="${paceClass(row.pacing)}"><strong>${row.pacing === null ? "—" : `${row.pacing.toFixed(1)}%`}</strong></td></tr>`).join("")}</tbody></table>` : '<p class="history-empty">No live campaigns for the current filters.</p>';
 }
 
 document.querySelector("#pacing-range").addEventListener("change", event => {
@@ -1254,6 +1255,38 @@ document.querySelector("#pacing-card").addEventListener("click", openPacingDetai
 document.querySelector("#pacing-card").addEventListener("keydown", event => {
   if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openPacingDetail(); }
 });
+
+/**
+ * On a client's tab the KPI card shows each live campaign's main KPI and where it stands: the biggest campaign's in
+ * large, the others below. A campaign's KPI comes from all its live lines' numbers together.
+ */
+function renderClientKpi(rows) {
+  const value = document.querySelector("#portfolio-kpi-value");
+  const detail = document.querySelector("#kpi-watch-detail");
+  const mostCommon = list => [...list.reduce((map, item) => map.set(item, (map.get(item) || 0) + 1), new Map())].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  const goalNumber = text => { const parsed = Number(String(text ?? "").replace(/^target\s*/i, "").replace(/[$,%x×\s]/gi, "")); return String(text ?? "").trim() && Number.isFinite(parsed) && parsed !== 0 ? parsed : null; };
+  const campaignsKpi = groupCampaigns(rows).map(group => {
+    const metric = String(mostCommon(group.records.map(record => record.kpi).filter(Boolean)) || "").toUpperCase();
+    if (!metric) return null;
+    const sum = field => group.records.reduce((total, record) => total + (Number(field === "spend" ? resolveSpend(record, "billing") : record[field]) || 0), 0);
+    const totals = Object.fromEntries(["spend", "impressions", "clicks", "conversions", "revenue", "videoStarts", "videoCompletions"].map(field => [field, sum(field)]));
+    const kpi = ["CPA", "ROAS", "CPC"].includes(metric) && !(totals.spend > 0) ? null : calculateKpi(metric, totals);
+    const goalText = mostCommon(group.records.map(record => String(record.target ?? "").replace(/^target\s*/i, "")).filter(text => goalNumber(text) !== null));
+    const goal = goalNumber(goalText);
+    const lower = ["CPA", "CPC", "CPM", "CPL", "CPV"].includes(metric);
+    const gap = kpi && goal !== null ? (lower ? kpi.value - goal : goal - kpi.value) / Math.abs(goal) * 100 : null;
+    const state = gap === null ? "" : gap > alertRules.kpiTolerance ? "off" : gap > 0 ? "near" : "on";
+    return { name: group.name, metric, kpi, goalText, state, spend: totals.spend };
+  }).filter(Boolean).sort((a, b) => b.spend - a.spend);
+  value.classList.remove("pace-over", "pace-on-track", "pace-under");
+  const main = campaignsKpi[0];
+  if (!main) { value.textContent = "—"; detail.innerHTML = "<span>No live campaign has a KPI set</span>"; return; }
+  value.textContent = main.kpi ? `${main.metric} ${main.kpi.formatted}` : `${main.metric} —`;
+  if (main.state) value.classList.add(main.state === "off" ? "pace-over" : main.state === "near" ? "pace-under" : "pace-on-track");
+  const stateText = item => item.state === "off" ? "off goal" : item.state === "near" ? "just off goal" : item.state === "on" ? "on goal" : "";
+  const others = campaignsKpi.slice(1, 4).map(item => `<small class="kpi-watch-worst">${escapeHtml(item.name)} · ${escapeHtml(item.metric)} ${escapeHtml(item.kpi?.formatted || "—")}${item.goalText ? ` vs ${escapeHtml(item.goalText)}` : ""}</small>`).join("");
+  detail.innerHTML = `<span>${main.goalText ? `Goal ${escapeHtml(main.goalText)}${main.state ? ` · <b class="${main.state === "on" ? "positive" : main.state === "near" ? "pace-under" : "warning-text"}">${stateText(main)}</b>` : ""}` : "No goal set"}${campaignsKpi.length > 1 ? ` · ${escapeHtml(main.name)}` : ""}</span>${others}`;
+}
 
 // --- Budget, spend and KPI details: each summary card opens a breakdown by campaign, like the pacing card ---
 const metricDialog = document.querySelector("#metric-dialog");
@@ -2562,8 +2595,7 @@ function renderClientIo() {
   const cardFor = item => {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
-    const margin = marginOf(records);
-    const tracking = `<div class="io-tracking"><span><small>${margin ? "Delivered to date" : "Spend to date"}</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span>${margin ? `<span><small>Margin</small><strong class="${margin.margin < 0 ? "pace-over" : ""}">${escapeHtml(margin.percent === null ? formatMoney(margin.margin) : `${margin.percent.toFixed(1)}%`)}</strong></span>` : ""}<span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
+    const tracking = `<div class="io-tracking"><span><small>${records.some(record => record.deliveredRate) ? "Delivered to date" : "Spend to date"}</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
     if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
     const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
@@ -4296,14 +4328,7 @@ function billingResult(client, month) {
   const ioMonthly = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoMonth(row, lines, month)]));
   const ioDates = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoDates(row, lines)]));
   const result = attachLineDays(computeClientBilling(config, lines, month, todayLocal(), { ioAmounts, ioMonthly, ioDates }), lines);
-  // Margin for the month: what it bills against the media spend the reports show for the same days.
-  if (result.pace) {
-    result.pace.month = month;
-    const end = result.through || result.window.to;
-    const billed = new Set((config.rows || []).flatMap(row => row.lines || []));
-    const media = lines.filter(line => billed.has(line.name)).reduce((sum, line) => sum + (periodMetrics(line, `custom:${result.window.from}:${end}`, { today: todayLocal(), spendView: "media" })?.spend ?? 0), 0);
-    result.pace.media = media > 0 ? media : null;
-  }
+  if (result.pace) result.pace.month = month;
   return result;
 }
 function moneyText(value) { return formatExactMoney(value); }
@@ -4378,9 +4403,7 @@ function paceBar(pace, running) {
   const state = off === null ? "" : Math.abs(off) <= 10 ? "on" : off > 0 ? "over" : "under";
   const words = off === null ? "" : Math.abs(off) <= 1 ? "on pace" : `${Math.abs(off)}% ${off > 0 ? "over" : "under"}${running ? " for this point in the month" : ""}`;
   const basis = { month: "from the IO’s monthly amounts", mixed: "from the IO’s monthly amounts where it has them, the rest spread by day", days: "the IO spread evenly by day" }[pace.basis];
-  const margin = pace.media ? pace.delivered - pace.media : null;
-  const marginText = margin === null ? "" : `<small class="pace-margin">Media spend ${moneyText(pace.media)} · margin ${moneyText(margin)} (${pace.delivered > 0 ? (margin / pace.delivered * 100).toFixed(1) : "—"}%)</small>`;
-  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>${escapeHtml(monthName(pace.month || ""))} pace</span><b>${moneyText(pace.delivered)}</b> of <abbr title="${escapeHtml(`Expected ${basis}`)}">${moneyText(pace.expected)}</abbr> expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div>${marginText}</div>`;
+  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>${escapeHtml(monthName(pace.month || ""))} pace</span><b>${moneyText(pace.delivered)}</b> of <abbr title="${escapeHtml(`Expected ${basis}`)}">${moneyText(pace.expected)}</abbr> expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div></div>`;
 }
 /** Under the preview: when this month was downloaded, and what the month before it billed. */
 function billingNote(config, month) {
