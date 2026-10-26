@@ -191,3 +191,18 @@ test("report totals that miss the month's edges are split by days, and a newer r
   assert.equal(september.rows[0].unavailable, false);
   assert.ok(september.rows[0].quantity > 0);
 });
+
+test("the IO pace spreads the whole IO by day, so a month with two flights expects its days' share", () => {
+  // Two flights, Sep 15 to Oct 10 and Oct 20 to Nov 18: the IO runs Sep 15 to Nov 18 (65 days), $65,000 = $1,000 a day.
+  const records = [line("Flight 1", { DSP: days("2026-10-01", "2026-10-10", { impressions: 100_000 }) }, { startDate: "2026-09-15", endDate: "2026-10-10" }), line("Flight 2", { DSP: days("2026-10-20", "2026-10-31", { impressions: 100_000 }) }, { startDate: "2026-10-20", endDate: "2026-11-18" })];
+  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Display", source: "DSP", rateType: "cpm", rate: 5, ioAmount: 65000, lines: ["Flight 1", "Flight 2"] }] };
+  const closed = computeClientBilling(config, records, "2026-10");
+  assert.equal(closed.pace.expected, 31000);
+  assert.equal(closed.pace.delivered, 11000);
+  assert.equal(Math.round(closed.pace.deviation * 100), -65);
+  const running = computeClientBilling(config, records, "2026-10", "2026-10-11");
+  assert.equal(running.pace.expectedToDate, 10000);
+  assert.equal(running.pace.delivered, 5000);
+  const monthly = computeClientBilling({ ...config, rows: [{ ...config.rows[0], monthlyBudget: 20000 }] }, records, "2026-10");
+  assert.equal(monthly.pace.expected, 20000);
+});
