@@ -27,6 +27,7 @@
           <a class="nav-item" id="nav-alerts" href="?view=alerts"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span>Alerts <span class="nav-badge" id="nav-alert-count">4</span></a>
           <a class="nav-item" id="nav-review" href="?view=review" data-page-view="review"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg></span>Report review <span class="nav-badge review" id="nav-review-count" hidden>0</span></a>
           <a class="nav-item" id="nav-billing" href="?view=billing" data-page-view="billing"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg></span>Billing <span class="nav-badge review" id="nav-billing-count" hidden>0</span></a>
+          <a class="nav-item" id="nav-status" href="?view=status" data-page-view="status"><span class="nav-icon"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></span>Weekly status <span class="nav-badge review" id="nav-status-due" hidden>!</span></a>
         </nav>
 
         <p class="nav-label" id="client-nav-label" hidden>Clients</p>
@@ -290,6 +291,14 @@
             <div class="panel-header"><div><h2>Monthly billing</h2><p id="billing-page-context">Each client’s billing for the month, filled from DCM and DSP</p></div><div class="panel-actions"><label class="billing-month">Month <select id="billing-month"></select></label></div></div>
             <ul class="billing-list" id="billing-list"></ul>
             <div class="billing-projections" id="billing-projections" hidden></div>
+          </article>
+        </section>
+
+        <section class="status-page" id="status-page" aria-label="Weekly status" hidden>
+          <article class="panel">
+            <div class="panel-header"><div><h2 id="status-title">Status doc for this week</h2><p id="status-context">Drafts for each live campaign’s row in the team status doc. Edit what you need, then copy each row in.</p></div><div class="panel-actions"><button class="secondary-button" type="button" id="status-copy-prompt">Copy for ChatGPT</button><button class="primary-button" type="button" id="status-done">Mark this week done</button></div></div>
+            <p class="status-how">Copy a row, click its <b>LAST WEEK</b> cell in the doc, and paste. The seven cells fill across to <b>NOTES</b>. Notes come from the week’s numbers and what your morning briefs said.</p>
+            <div class="status-list" id="status-list"></div>
           </article>
         </section>
 
@@ -823,6 +832,16 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
         </div></fieldset>
         <p class="settings-error" id="bulk-edit-error" hidden></p>
         <div class="dialog-actions"><button class="secondary-button close-bulk-edit" type="button">Cancel</button><button class="primary-button" type="submit">Apply changes</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="io-edit-dialog" aria-labelledby="io-edit-title">
+      <form class="dialog-card io-edit-card" id="io-edit-form" method="dialog">
+        <div class="dialog-header"><h2 id="io-edit-title">Edit the IO</h2><button class="close-button close-io-edit" type="button" aria-label="Close">×</button></div>
+        <p>For changes you know about before the updated IO arrives. Pacing and billing use these right away. Uploading the new IO replaces them.</p>
+        <div id="io-edit-body"></div>
+        <p class="settings-error" id="io-edit-error" hidden></p>
+        <div class="dialog-actions"><button class="text-button" type="button" id="io-edit-campaign">Campaign fields (KPI, owner…)</button><button class="text-button danger-text" type="button" id="io-edit-reset">Go back to the IO</button><span class="io-edit-spacer"></span><button class="secondary-button close-io-edit" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></div>
       </form>
     </dialog>
 
