@@ -48,6 +48,7 @@ import { filterUploads, groupUploads, listAllUploads, summarizeUploads, UPLOAD_K
 import { buildPacingDetail, DEFAULT_PACING_RANGE, PACING_RANGES } from "./lib/pacing-detail.js";
 import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
+import { applyDeliveredValue, marginOf } from "./lib/delivered-value.js";
 import { BRIEF_LOG_KEY, campaignStatusRow, logItems, readJson, readStatusDoc, STATUS_DRAFTS_KEY, statusDue, statusPrompt, statusRowTsv, statusWeeks, weekKey } from "./lib/status-doc.js";
 import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
@@ -172,7 +173,8 @@ const formatCount = value => new Intl.NumberFormat("en-US", { maximumFractionDig
 
 function renderCampaigns(filter = "all", statusFilter = document.querySelector("#status-filter")?.value || "all", ownerFilter = document.querySelector("#owner-filter")?.value || "all", channelFilter = document.querySelector("#channel-filter")?.value || "all", query = document.querySelector("#campaign-search")?.value || "") {
   // The insertion order decides each line's dates and IO line; keep the stored lines in step with it.
-  const planned = applyCampaignStatus(applyIoPlan(campaigns, campaignTotals), campaignStatus);
+  // CPM and CPV lines pace on delivered value (what billing counts); their reported spend stays as media spend.
+  const planned = applyDeliveredValue(applyCampaignStatus(applyIoPlan(campaigns, campaignTotals), campaignStatus), { totals: campaignTotals, billing });
   if (planned !== campaigns) { campaigns = planned; saveCampaigns(); }
   // The client account view ignores the saved client filter and always shows that client only.
   if (clientScope && !campaigns.some(campaign => campaign.client === clientScope)) { clientScope = null; history.replaceState({}, "", location.pathname); }
@@ -1194,12 +1196,14 @@ function renderPacingDetail() {
   const { period, range } = detail;
   document.querySelector("#pacing-dialog-eyebrow").textContent = clientScope ? `${clientScope} · Pacing details` : "Pacing details";
   const status = detail.pacing === null ? "No pacing data" : detail.pacing > alertRules.overPacing ? "Above plan" : detail.pacing < alertRules.underPacing ? "Below plan" : "On track";
+  const margin = marginOf(lastPacingRows);
   const stat = (label, value, sub, cls = "") => `<div class="pacing-stat"><small>${escapeHtml(label)}</small><strong class="${cls}">${escapeHtml(value)}</strong><span>${escapeHtml(sub)}</span></div>`;
   const periodSub = period.daysWithData === 0 ? "No reports cover this period yet"
     : `${formatMoney(period.actualTotal)} over ${period.daysWithData} day${period.daysWithData === 1 ? "" : "s"}${period.baselineTotal > 0 ? ` · ${percentText(period.percent)} of a 100% pace (${perDay(period.avgBaseline)})` : ""}`;
   document.querySelector("#pacing-stats").innerHTML = [
     stat("Pacing", detail.pacing === null ? "—" : `${detail.pacing.toFixed(0)}%`, `${status} · target ${alertRules.underPacing}–${alertRules.overPacing}%`, paceClass(detail.pacing)),
-    stat("Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
+    stat(margin ? "Delivered to date" : "Spend to date", formatMoney(detail.spend), detail.budget > 0 ? `${(detail.spend / detail.budget * 100).toFixed(1)}% of ${formatMoney(detail.budget)} budget` : "No budget set"),
+    ...(margin ? [stat("Margin", formatMoney(margin.margin), `${margin.percent === null ? "—" : `${margin.percent.toFixed(1)}%`} · ${formatMoney(margin.value)} delivered vs ${formatMoney(margin.media)} media spend${margin.lines < margin.of ? ` · ${margin.lines} of ${margin.of} lines have a rate` : ""}`, margin.margin < 0 ? "pace-over" : "")] : []),
     stat("Expected at 100% pace", detail.expected > 0 ? formatMoney(detail.expected) : "—", detail.expected > 0 ? `${detail.spend >= detail.expected ? "ahead by" : "behind by"} ${formatMoney(Math.abs(detail.spend - detail.expected))}` : "Needs a budget and flight dates"),
     stat(range.label, perDay(period.avgActual), periodSub),
     stat("Needed from today", perDay(detail.requiredDaily), detail.requiredDaily === null ? "No live flight with budget left" : "to spend the remaining budget by each flight's end")
@@ -1216,7 +1220,7 @@ function renderPacingDetail() {
   if (detail.withoutHistory && period.daysWithData) note.push(`${detail.withoutHistory} campaign${detail.withoutHistory === 1 ? " has" : "s have"} only one dated report, so ${detail.withoutHistory === 1 ? "it is" : "they are"} left out of the daily bars. ${detail.withoutHistory === 1 ? "Its" : "Their"} spend still counts in the totals above.`);
   if (detail.skippedUnits) note.push(`${detail.skippedUnits} campaign${detail.skippedUnits === 1 ? "" : "s"} without a budget or flight dates ${detail.skippedUnits === 1 ? "is" : "are"} left out of the 100% line. Upload an insertion order to add them.`);
   document.querySelector("#pacing-chart-note").textContent = note.join(" ");
-  document.querySelector("#pacing-table").innerHTML = detail.rows.length ? `<table><thead><tr><th>Campaign</th><th>Flight</th><th>Budget</th><th>Spend</th><th>Expected</th><th>Pacing</th></tr></thead><tbody>${detail.rows.map(row => `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}${row.fromOrder ? " · budget and flight from IO" : ""}</small></td><td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td>${escapeHtml(formatMoney(row.spend))}</td><td>${row.expected > 0 ? escapeHtml(formatMoney(row.expected)) : "—"}</td><td class="${paceClass(row.pacing)}"><strong>${row.pacing === null ? "—" : `${row.pacing.toFixed(1)}%`}</strong></td></tr>`).join("")}</tbody></table>` : '<p class="history-empty">No live campaigns for the current filters.</p>';
+  document.querySelector("#pacing-table").innerHTML = detail.rows.length ? `<table><thead><tr><th>Campaign</th><th>Flight</th><th>Budget</th><th>${margin ? "Delivered" : "Spend"}</th><th>Expected</th><th>Pacing</th>${margin ? "<th>Margin</th>" : ""}</tr></thead><tbody>${detail.rows.map(row => `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client)} · ${row.lines} line${row.lines === 1 ? "" : "s"}${row.fromOrder ? " · budget and flight from IO" : ""}</small></td><td>${escapeHtml(row.flight || "Not set")}</td><td>${row.budget ? escapeHtml(formatMoney(row.budget)) : "—"}</td><td>${escapeHtml(formatMoney(row.spend))}</td><td>${row.expected > 0 ? escapeHtml(formatMoney(row.expected)) : "—"}</td><td class="${paceClass(row.pacing)}"><strong>${row.pacing === null ? "—" : `${row.pacing.toFixed(1)}%`}</strong></td>${margin ? `<td>${(() => { const own = marginOf(row.records); return own ? `<strong>${escapeHtml(formatMoney(own.margin))}</strong><small>${own.percent === null ? "—" : `${own.percent.toFixed(1)}%`} · media ${escapeHtml(formatMoney(own.media))}</small>` : "<small>Billed on spend</small>"; })()}</td>` : ""}</tr>`).join("")}</tbody></table>` : '<p class="history-empty">No live campaigns for the current filters.</p>';
 }
 
 document.querySelector("#pacing-range").addEventListener("change", event => {
@@ -2558,7 +2562,8 @@ function renderClientIo() {
   const cardFor = item => {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
-    const tracking = `<div class="io-tracking"><span><small>Spend to date</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span><span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
+    const margin = marginOf(records);
+    const tracking = `<div class="io-tracking"><span><small>${margin ? "Delivered to date" : "Spend to date"}</small><strong>${Number.isFinite(metrics.spend) ? escapeHtml(formatMoney(metrics.spend)) : "—"}</strong></span>${margin ? `<span><small>Margin</small><strong class="${margin.margin < 0 ? "pace-over" : ""}">${escapeHtml(margin.percent === null ? formatMoney(margin.margin) : `${margin.percent.toFixed(1)}%`)}</strong></span>` : ""}<span><small>Pacing</small><strong class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))}</strong></span></div>`;
     if (!item.hasIo) return `<article class="io-card no-io" data-io-key="${escapeHtml(item.key)}"><div class="io-card-head"><span class="status-dot-label ${item.status}">${lineStatusLabel(item.status)}</span><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>${salesforceLink(item.key)}<button class="text-button io-edit" type="button" data-edit-campaign="${escapeHtml(item.key)}">Edit</button></div><p class="io-empty">No insertion order uploaded. Pacing uses the budget and dates from the reports${item.startDate && item.endDate ? ` (${escapeHtml(ioRange(item.startDate, item.endDate))})` : ""}.</p>${tracking}</article>`;
     const orders = item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}${order.appliedAt ? ` · applied ${escapeHtml(ioDate(order.appliedAt.slice(0, 10)))}` : ""}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}${order.startDate && order.endDate ? `<small>${escapeHtml(ioRange(order.startDate, order.endDate))}</small>` : ""}</span></li>`).join("");
     const placements = item.placements.length ? `<details class="io-placements"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO</summary><ul>${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong>${placement.order ? `<small>${escapeHtml(placement.order)}</small>` : ""}</span><span>${escapeHtml(ioRange(placement.startDate, placement.endDate))}</span><span>${Number.isFinite(placement.budget) ? escapeHtml(formatExactMoney(placement.budget)) : "—"}</span></li>`).join("")}</ul></details>` : "";
@@ -4208,11 +4213,11 @@ function rowIoParts(row, lines) {
     const entry = campaignTotals[key];
     if (entry && record.ioLineStatus === "matched" && record.ioLine) {
       const ioLine = ioLines(entry).find(line => line.key === record.ioLine);
-      if (ioLine && !seen.has(`${key}|${ioLine.key}`)) { seen.add(`${key}|${ioLine.key}`); parts.push({ budget: ioLine.budget, months: ioLine.months || null }); }
+      if (ioLine && !seen.has(`${key}|${ioLine.key}`)) { seen.add(`${key}|${ioLine.key}`); parts.push({ budget: ioLine.budget, months: ioLine.months || null, from: ioLine.startDate, to: ioLine.endDate }); }
       if (ioLine) continue;
     }
     if (entry && Number(entry.budget) > 0 && lines.filter(item => groupKey(item) === key).every(item => chosen.includes(item))) {
-      if (!seen.has(key)) { seen.add(key); parts.push({ budget: Number(entry.budget), months: monthsOf(ioLines(entry)) }); }
+      if (!seen.has(key)) { seen.add(key); parts.push({ budget: Number(entry.budget), months: monthsOf(ioLines(entry)), from: entry.startDate, to: entry.endDate }); }
       continue;
     }
     if (Number(record.budget) > 0) parts.push({ budget: Number(record.budget), months: null });
@@ -4222,6 +4227,11 @@ function rowIoParts(row, lines) {
 function rowIoAmount(row, lines) {
   const total = rowIoParts(row, lines).reduce((sum, part) => sum + part.budget, 0);
   return total > 0 ? Math.round(total * 100) / 100 : null;
+}
+/** The IO's dates for a row: first start to last end of the IO lines or campaigns it bills (what pacing uses too). */
+function rowIoDates(row, lines) {
+  const parts = rowIoParts(row, lines).filter(part => part.from && part.to);
+  return parts.length ? { from: parts.map(part => part.from).sort()[0], to: parts.map(part => part.to).sort().at(-1) } : null;
 }
 /** A row's IO amount for one month, from the IO's flighting details; null when the IO doesn't split by month. */
 function rowIoMonth(row, lines, month) {
@@ -4284,7 +4294,17 @@ function billingResult(client, month) {
   const lines = clientLines(client);
   const ioAmounts = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoAmount(row, lines)]));
   const ioMonthly = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoMonth(row, lines, month)]));
-  return attachLineDays(computeClientBilling(config, lines, month, todayLocal(), { ioAmounts, ioMonthly }), lines);
+  const ioDates = Object.fromEntries((config.rows || []).map(row => [row.id, rowIoDates(row, lines)]));
+  const result = attachLineDays(computeClientBilling(config, lines, month, todayLocal(), { ioAmounts, ioMonthly, ioDates }), lines);
+  // Margin for the month: what it bills against the media spend the reports show for the same days.
+  if (result.pace) {
+    result.pace.month = month;
+    const end = result.through || result.window.to;
+    const billed = new Set((config.rows || []).flatMap(row => row.lines || []));
+    const media = lines.filter(line => billed.has(line.name)).reduce((sum, line) => sum + (periodMetrics(line, `custom:${result.window.from}:${end}`, { today: todayLocal(), spendView: "media" })?.spend ?? 0), 0);
+    result.pace.media = media > 0 ? media : null;
+  }
+  return result;
 }
 function moneyText(value) { return formatExactMoney(value); }
 function dayList(days) { return days.length > 4 ? `${shortDate(days[0])} to ${shortDate(days.at(-1))} (${days.length} days)` : days.map(shortDate).join(", "); }
@@ -4358,7 +4378,9 @@ function paceBar(pace, running) {
   const state = off === null ? "" : Math.abs(off) <= 10 ? "on" : off > 0 ? "over" : "under";
   const words = off === null ? "" : Math.abs(off) <= 1 ? "on pace" : `${Math.abs(off)}% ${off > 0 ? "over" : "under"}${running ? " for this point in the month" : ""}`;
   const basis = { month: "from the IO’s monthly amounts", mixed: "from the IO’s monthly amounts where it has them, the rest spread by day", days: "the IO spread evenly by day" }[pace.basis];
-  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>IO pace</span><b>${moneyText(pace.delivered)}</b> of <abbr title="${escapeHtml(`Expected ${basis}`)}">${moneyText(pace.expected)}</abbr> expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div></div>`;
+  const margin = pace.media ? pace.delivered - pace.media : null;
+  const marginText = margin === null ? "" : `<small class="pace-margin">Media spend ${moneyText(pace.media)} · margin ${moneyText(margin)} (${pace.delivered > 0 ? (margin / pace.delivered * 100).toFixed(1) : "—"}%)</small>`;
+  return `<div class="pace-bar ${state}"><div class="pace-bar-text"><span>${escapeHtml(monthName(pace.month || ""))} pace</span><b>${moneyText(pace.delivered)}</b> of <abbr title="${escapeHtml(`Expected ${basis}`)}">${moneyText(pace.expected)}</abbr> expected this month${running ? ` · ${moneyText(pace.expectedToDate)} expected by now` : ""}${words ? ` · <em>${escapeHtml(words)}</em>` : ""}</div><div class="pace-track" role="img" aria-label="${escapeHtml(`${moneyText(pace.delivered)} of ${moneyText(pace.expected)} expected${words ? `, ${words}` : ""}`)}"><span class="pace-fill" style="width:${percent(pace.delivered / scale)}"></span>${running ? `<i class="pace-mark" title="Expected by now" style="left:${percent(pace.expectedToDate / scale)}"></i>` : ""}${pace.delivered > pace.expected ? `<i class="pace-end" title="Expected for the month" style="left:${percent(pace.expected / scale)}"></i>` : ""}</div>${marginText}</div>`;
 }
 /** Under the preview: when this month was downloaded, and what the month before it billed. */
 function billingNote(config, month) {

@@ -113,7 +113,7 @@ body.client-view .topbar h1{max-width:60vw}
 .io-card{border:1px solid var(--line);border-radius:10px;padding:14px;background:#fff;display:grid;gap:12px;align-content:start}
 .io-card.no-io{background:#fafbfd;border-style:dashed}
 .io-card-head{display:flex;align-items:center;gap:10px}.io-card-head strong{font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.io-facts,.io-tracking{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.io-facts,.io-tracking{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px}
 .io-facts small,.io-tracking small,.io-order-figures small,.io-orders small,.io-placements small{display:block;color:#636c7e;font-size:12px;margin-top:2px}
 .io-facts>span>small,.io-tracking>span>small{margin:0 0 3px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px}
 .io-facts strong{font-size:15px}.io-tracking strong{font-size:13px}
@@ -673,3 +673,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .io-edited{margin:6px 0 0;font-size:12px;color:#8a5516}
 .billing-unbilled{margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#fff8ee;border:1px solid #f1d3a8;font-size:12.5px;color:#5c4320}.billing-unbilled b{color:#8a5516}
 .status-facts{margin:-4px 0 10px;font-size:12px;color:#596273}.status-field input[readonly]{background:#f6f7fa;color:#596273}.status-last{margin-top:8px;font-size:12.5px;color:#454e60}.status-last summary{cursor:pointer;font-weight:600;color:#4b40c4;font-size:12px}.status-last p{margin:6px 0 0}
+.pace-margin{display:block;font-size:12px;color:#596273}
