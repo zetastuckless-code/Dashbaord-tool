@@ -708,3 +708,6 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .io-card-done .io-chip{font-size:11px;padding:2px 7px}.io-card-done .io-progress-label{font-size:11.5px}.io-card-done .io-bar{height:5px}.io-card-done .io-bar span{background:#9aa1b2}
 .io-card-done:hover{opacity:1}
 .client-io-body{padding:0 20px 20px;box-sizing:border-box}
+/* Clients header: the title and its chips sit on one line, clear of the cards below. */
+#clients>.client-rollup-header{align-items:center;flex-wrap:wrap;margin-bottom:12px}#clients>.client-rollup-header p{margin:0}
+#clients>.client-rollup-header .panel-actions{justify-content:flex-end}

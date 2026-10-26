@@ -2959,7 +2959,8 @@ let briefFeedExpanded = false;
 const BRIEF_FEED_LIMIT = 6;
 function renderMorningBrief() {
   const panel = document.querySelector("#morning-brief");
-  const show = !clientScope && !sourcesView && !alertsView && (pageView === "brief" || (!pageView && (brief || todos.some(isOpen))));
+  // The overview always shows the brief, so adding to-dos is always one click away there.
+  const show = !clientScope && !sourcesView && !alertsView && (pageView === "brief" || !pageView);
   panel.hidden = !show;
   if (!show) return;
   const today = todayIso();
@@ -3043,7 +3044,6 @@ function openTodoDialog() {
   todoDialog.showModal();
 }
 document.querySelector("#client-todo-import").addEventListener("click", openTodoDialog);
-document.querySelector("#overview-todo-import").addEventListener("click", openTodoDialog);
 document.querySelector("#brief-add").addEventListener("click", openTodoDialog);
 document.querySelector("#todo-text").addEventListener("input", previewTodos);
 document.querySelector("#todo-file").addEventListener("change", async event => {
