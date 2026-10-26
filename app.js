@@ -3113,10 +3113,144 @@ document.querySelector("#auto-slack").checked = Boolean(automation.slack);
 const currentPrompt = () => morningScanPrompt(trackedClients(), automation);
 
 function stepStatus(id, state, label) {
+  ensureAutomationNav();
   const badge = document.querySelector(`#step-${id}-status`);
   badge.className = `step-status ${state}`;
   badge.textContent = label || { done: "✓", todo: "", warn: "!" }[state];
   badge.closest(".automation-step").classList.toggle("is-done", state === "done");
+  queueAutomationNavRefresh();
+}
+
+// --- The Automation page as a guided flow: each topic folds open, and its steps go one at a time ---
+// State lives on the page's elements (not in variables), because statuses are set before this part of the file runs.
+function automationOpenKey() { return "northstar-automation-open"; }
+function automationTopics() { return [...document.querySelectorAll("#automation-page .automation-topic")]; }
+function savedTopicState() {
+  try { return JSON.parse(localStorage.getItem(automationOpenKey())) || null; } catch { return null; }
+}
+function ensureAutomationNav() {
+  const page = document.querySelector("#automation-page");
+  if (page.dataset.navBuilt) return;
+  page.dataset.navBuilt = "1";
+  for (const heading of [...page.querySelectorAll(":scope > .automation-heading")]) {
+    const parts = [];
+    for (let next = heading.nextElementSibling; next && !next.matches(".automation-heading"); next = next.nextElementSibling) parts.push(next);
+    const topic = document.createElement("details");
+    topic.className = "automation-topic";
+    topic.dataset.topic = heading.id || heading.textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const summary = document.createElement("summary");
+    summary.innerHTML = '<span class="topic-title"></span><span class="topic-progress"></span>';
+    heading.before(topic);
+    summary.querySelector(".topic-title").append(heading);
+    if (heading.dataset.summary) summary.querySelector(".topic-title").insertAdjacentHTML("beforeend", `<small>${escapeHtml(heading.dataset.summary)}</small>`);
+    const body = document.createElement("div");
+    body.className = "topic-body";
+    body.append(...parts);
+    topic.append(summary, body);
+    const steps = [...body.querySelectorAll(".automation-step")];
+    steps.forEach((step, index) => {
+      const head = step.querySelector(":scope > .step-head");
+      const content = document.createElement("div");
+      content.className = "step-body";
+      content.id = `step-body-${step.dataset.step}`;
+      content.append(...[...step.children].filter(child => child !== head));
+      const last = index === steps.length - 1;
+      content.insertAdjacentHTML("beforeend", `<div class="step-nav">${index ? '<button class="text-button" type="button" data-step-move="-1">‹ Back</button>' : "<span></span>"}<button class="secondary-button" type="button" data-step-move="1">${last ? "Done with this topic" : "Next step ›"}</button></div>`);
+      step.append(content);
+      Object.assign(head, { tabIndex: 0 });
+      head.setAttribute("role", "button");
+      head.setAttribute("aria-controls", content.id);
+      head.setAttribute("aria-expanded", "false");
+    });
+    topic.addEventListener("toggle", () => {
+      if (page.dataset.navRestoring) return;
+      const state = Object.fromEntries(automationTopics().map(item => [item.dataset.topic, item.open]));
+      try { localStorage.setItem(automationOpenKey(), JSON.stringify(state)); } catch { /* the page opens as before next visit */ }
+    });
+  }
+  // Topics open the way you left them; the first time, only the first one with steps left is open.
+  const saved = savedTopicState();
+  page.dataset.navRestoring = "1";
+  automationTopics().forEach(topic => { topic.open = saved ? Boolean(saved[topic.dataset.topic]) : false; });
+  delete page.dataset.navRestoring;
+  page.dataset.topicsFromSave = saved ? "1" : "";
+  page.addEventListener("click", event => {
+    const move = event.target.closest("[data-step-move]");
+    if (move) { moveAutomationStep(move.closest(".automation-step"), Number(move.dataset.stepMove)); return; }
+    const head = event.target.closest(".automation-step > .step-head");
+    if (head && !event.target.closest("a, button, input, select")) toggleAutomationStep(head.closest(".automation-step"));
+  });
+  page.addEventListener("keydown", event => {
+    const head = event.target.closest(".automation-step > .step-head");
+    if (head && event.target === head && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); toggleAutomationStep(head.closest(".automation-step")); }
+  });
+}
+function openAutomationStep(step, { focus = false } = {}) {
+  const topic = step.closest(".automation-topic");
+  for (const other of topic.querySelectorAll(".automation-step")) {
+    other.classList.toggle("open", other === step);
+    other.querySelector(":scope > .step-head").setAttribute("aria-expanded", String(other === step));
+  }
+  if (focus) {
+    const head = step.querySelector(":scope > .step-head");
+    head.focus({ preventScroll: true });
+    head.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }
+}
+function toggleAutomationStep(step) {
+  const topic = step.closest(".automation-topic");
+  topic.dataset.chosen = "1";
+  if (step.classList.contains("open")) {
+    step.classList.remove("open");
+    step.querySelector(":scope > .step-head").setAttribute("aria-expanded", "false");
+  } else openAutomationStep(step);
+}
+function moveAutomationStep(step, direction) {
+  const topic = step.closest(".automation-topic");
+  topic.dataset.chosen = "1";
+  const steps = [...topic.querySelectorAll(".automation-step")];
+  const target = steps[steps.indexOf(step) + direction];
+  if (target) { openAutomationStep(target, { focus: true }); return; }
+  // Past the last step: fold this topic and open the next one (wrapping around) that still has steps to do.
+  topic.open = false;
+  const topics = automationTopics();
+  const position = topics.indexOf(topic);
+  const next = [...topics.slice(position + 1), ...topics.slice(0, position)].find(item => !item.classList.contains("complete")) || null;
+  if (next) {
+    next.open = true;
+    const current = next.querySelector(".automation-step.open") || next.querySelector(".automation-step:not(.is-done)") || next.querySelector(".automation-step");
+    if (current) openAutomationStep(current, { focus: true });
+  }
+}
+function queueAutomationNavRefresh() {
+  const page = document.querySelector("#automation-page");
+  if (page.dataset.refreshQueued) return;
+  page.dataset.refreshQueued = "1";
+  requestAnimationFrame(() => { delete page.dataset.refreshQueued; refreshAutomationNav(); });
+}
+function refreshAutomationNav() {
+  const page = document.querySelector("#automation-page");
+  const topics = automationTopics();
+  for (const topic of topics) {
+    const steps = [...topic.querySelectorAll(".automation-step")];
+    const done = steps.filter(step => step.classList.contains("is-done")).length;
+    topic.classList.toggle("complete", done === steps.length);
+    topic.querySelector(".topic-progress").innerHTML = done === steps.length ? '<span class="topic-done">✓ All set</span>' : `${done} of ${steps.length} done`;
+    // Until you pick a step yourself, the topic opens on the first one that isn't done.
+    if (!topic.dataset.chosen) openAutomationStep(steps.find(step => !step.classList.contains("is-done")) || steps[0]);
+  }
+  // The bar at the top counts every step in every topic.
+  const allSteps = [...page.querySelectorAll(".automation-step")];
+  const allDone = allSteps.filter(step => step.classList.contains("is-done")).length;
+  const setUp = topics.filter(topic => topic.classList.contains("complete")).length;
+  document.querySelector("#automation-progress").innerHTML = allSteps.length ? `<div class="progress-track"><span style="width:${allDone / allSteps.length * 100}%"></span></div><span>${allDone} of ${allSteps.length} steps done · ${setUp} of ${topics.length} topics set up</span>` : "";
+  if (!page.dataset.topicsFromSave && !page.dataset.firstTopicOpened && topics.length) {
+    page.dataset.firstTopicOpened = "1";
+    page.dataset.navRestoring = "1";
+    const first = topics.find(topic => !topic.classList.contains("complete")) || topics[0];
+    first.open = true;
+    delete page.dataset.navRestoring;
+  }
 }
 
 function renderAutomationPage() {
@@ -3143,9 +3277,6 @@ function renderAutomationPage() {
   const recent = brief && (Date.parse(`${todayIso()}T00:00:00Z`) - Date.parse(`${brief.date}T00:00:00Z`)) / 86_400_000 <= 3;
   stepStatus("test", recent ? "done" : "todo");
   document.querySelector("#step-test-detail").textContent = brief ? `Last brief: ${longDate(brief.date)} from ${brief.sources || "the morning scan"}${brief.skipped ? ` (skipped: ${brief.skipped})` : ""}.` : "No brief has arrived yet.";
-  const done = document.querySelectorAll("#brief-steps .automation-step.is-done").length;
-  const total = document.querySelectorAll("#brief-steps .automation-step").length;
-  document.querySelector("#automation-progress").innerHTML = `<div class="progress-track"><span style="width:${done / total * 100}%"></span></div><span>${done} of ${total} steps done${done === total ? " · your morning brief is set up" : ""}</span>`;
 }
 
 document.querySelector("#automation-page").addEventListener("input", event => {
@@ -3161,7 +3292,7 @@ document.querySelector("#automation-page").addEventListener("click", async event
   const page = event.target.closest(".automation-review-inline");
   if (page) { event.preventDefault(); setPageView("review"); return; }
   const copy = event.target.closest("[data-copy-target]");
-  if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", copy.dataset.copyLabel ? `${copy.dataset.copyLabel} copied. Paste it into the expression box (fx).` : "Folder name copied."); } catch { /* the text stays visible to copy by hand */ } }
+  if (copy) { try { await navigator.clipboard.writeText(document.querySelector(`#${copy.dataset.copyTarget}`).textContent); showToast("Copied", copy.dataset.copyLabel ? `${copy.dataset.copyLabel} copied. ${copy.dataset.copyHint || ""}`.trim() : "Folder name copied."); } catch { /* the text stays visible to copy by hand */ } }
 });
 document.querySelector("#auto-copy-prompt").addEventListener("click", async () => {
   try {
