@@ -494,19 +494,21 @@
                 </li>
               </ol>
               <h5 class="substeps-title">Build the flow</h5>
+              <p class="step-hint">Orange boxes in the screenshots show what to click or fill in. Click a screenshot to see it full size.</p>
               <ol class="step-substeps flow-build">
                 <li><b>Start a flow.</b> Go to <b>make.powerautomate.com</b> and sign in with your work account. In the left menu, click <b>+ Create</b>, then <b>Automated cloud flow</b>.</li>
-                <li><b>Pick the trigger.</b> Name the flow <span class="step-quote"><span id="dsp-flow-name">DSP report to dashboard</span></span>. In <b>Choose your flow’s trigger</b>, type <span class="step-quote">new email</span>, pick <b>When a new email arrives (V3)</b> (Office 365 Outlook), and click <b>Create</b>.</li>
+                <li><b>Pick the trigger.</b> Name the flow <span class="step-quote"><span id="dsp-flow-name">DSP report to dashboard</span></span>. In <b>Choose your flow’s trigger</b>, type <span class="step-quote">new email</span>, pick <b>When a new email arrives (V3)</b> (Office 365 Outlook), and click <b>Create</b>.<a class="flow-shot" href="guides/dsp-2-trigger.webp" target="_blank" rel="noopener" title="Open full size"><img src="guides/dsp-2-trigger.webp" alt="The Build an automated cloud flow window with When a new email arrives (V3) selected" width="603" height="690" loading="lazy" /></a></li>
                 <li><b>Set up the trigger.</b> Click the <b>When a new email arrives</b> card; its settings open on the left.
                   <ul class="flow-settings">
-                    <li><b>Folder:</b> click the folder icon and pick <span class="step-quote"><span id="dsp-folder-check">Inbox</span></span>.</li>
-                    <li>Open <b>Advanced parameters</b> and tick <b>From</b>, <b>Subject Filter</b> and <b>Include Attachments</b> so their boxes show.</li>
+                    <li>Next to <b>Advanced parameters</b>, click <b>Show all</b>. Every setting for the trigger appears.<a class="flow-shot" href="guides/dsp-3-show-all.webp" target="_blank" rel="noopener" title="Open full size"><img src="guides/dsp-3-show-all.webp" alt="Advanced parameters showing 0 of 9, with the Show all button next to it" width="845" height="342" loading="lazy" /></a></li>
+                    <li><b>Folder:</b> click the folder icon at the right of the box and pick <span class="step-quote"><span id="dsp-folder-check">Inbox</span></span>. Click the arrow next to a folder to see the folders inside it.<a class="flow-shot" href="guides/dsp-3-folder.webp" target="_blank" rel="noopener" title="Open full size"><img src="guides/dsp-3-folder.webp" alt="The folder picker listing Outlook folders" width="845" height="744" loading="lazy" /></a></li>
                     <li><b>From:</b> <span class="step-quote">notifications@delivery.zetaglobal.net</span></li>
                     <li><b>Subject Filter:</b> <span class="step-quote"><span id="dsp-subject-check">the subject text you typed above</span></span></li>
                     <li><b>Include Attachments:</b> No</li>
+                    <li>Leave the other boxes empty. It should look like this:<a class="flow-shot" href="guides/dsp-3-trigger-filled.webp" target="_blank" rel="noopener" title="Open full size"><img src="guides/dsp-3-trigger-filled.webp" alt="The trigger settings filled in: From, Include Attachments No, Subject Filter and Folder" width="845" height="752" loading="lazy" /></a></li>
                   </ul>
                 </li>
-                <li><b>Add the check for the Download Report button.</b> Click the <b>+</b> under the trigger, then <b>Add an action</b>. Search <span class="step-quote">Condition</span> and pick <b>Condition</b> (Control).
+                <li><b>Add the check for the Download Report button.</b> Click the <b>+</b> under the trigger, then <b>Add an action</b>. Search <span class="step-quote">Condition</span> and pick <b>Condition</b> under <b>Control</b>.<a class="flow-shot" href="guides/dsp-4-condition.webp" target="_blank" rel="noopener" title="Open full size"><img src="guides/dsp-4-condition.webp" alt="Add an action search for condition, with Condition under Control" width="845" height="317" loading="lazy" /></a>
                   <ul class="flow-settings">
                     <li><b>Left box:</b> click it, click the lightning bolt, and pick <b>Body</b> (under When a new email arrives).</li>
                     <li><b>Middle box:</b> contains</li>
@@ -535,7 +537,7 @@
                 <li>Click <b>Report link</b>. Its <b>Outputs</b> should start with <b>https://</b> and a Zeta address.</li>
                 <li>Open <b>DCM Reports</b> in OneDrive. A file like <i>Carterbloodcare daily report 2026-10-26.csv</i> should be there, with rows of report data.</li>
               </ol>
-              <p class="step-hint">In the older designer, the same things have other names: <b>+ New step</b> instead of <b>+</b>, <b>Show advanced options</b> instead of <b>Advanced parameters</b>, <b>Add dynamic content</b> instead of the lightning bolt, and the <b>Expression</b> tab instead of <b>fx</b>.</p>
+              <p class="step-hint">In the older designer, the same things have other names: <b>+ New step</b> instead of <b>+</b>, <b>Show advanced options</b> instead of <b>Show all</b>, <b>Add dynamic content</b> instead of the lightning bolt, and the <b>Expression</b> tab instead of <b>fx</b>.</p>
               <details class="flow-more">
                 <summary>The saved file is a web page, not a CSV</summary>
                 <p class="step-hint">Your company’s Outlook wraps links for safety (Safe Links). Replace the <b>Report link</b> expression with this one, which unwraps it:</p><span class="flow-expression"><code id="dsp-safelinks-expression">decodeUriComponent(first(split(last(split(replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;'), 'url=')), '&amp;')))</code><button class="text-button" type="button" data-copy-target="dsp-safelinks-expression" data-copy-label="Expression" data-copy-hint="Paste it into the expression box (fx).">Copy</button></span>
