@@ -47,6 +47,9 @@ test("matches client names loosely and orders open, then soonest due", () => {
   assert.deepEqual(sorted.map(item => item.text), ["c", "b", "a"]);
   assert.match(morningScanPrompt(clients), /# Morning brief · YYYY-MM-DD/);
   assert.match(morningScanPrompt(clients), /- Rent A Center/);
+  // A failed save is reported, never claimed, and retried every 15 minutes up to 4 more times.
+  assert.match(morningScanPrompt(clients), /Couldn't save today's brief/);
+  assert.match(morningScanPrompt(clients), /every 15 minutes, up to 4 more times \(5 tries in all\)/);
 });
 
 test("reads new and changed to-do files from a folder once each", async () => {
