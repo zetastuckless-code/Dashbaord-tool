@@ -310,12 +310,12 @@
         <section class="automation-page" id="automation-page" aria-labelledby="automation-title" hidden>
           <div class="automation-intro panel">
             <h2 id="automation-title">Set up your daily automations</h2>
-            <p>Two automations keep the dashboard current without any copying and pasting. The morning brief turns your Outlook, Jira, and Slack into a to-do list for each client. Report uploads bring new client reports in on their own. Work through the steps in order; each one shows a check when it is done.</p>
+            <p>These keep the dashboard current without copying and pasting. Open a topic to set it up: its steps go one at a time, and each shows a check when it’s done.</p>
             <div class="automation-progress" id="automation-progress"></div>
             <button class="text-button welcome-reopen" id="welcome-reopen" type="button" hidden>Show the getting started checklist</button>
           </div>
 
-          <h3 class="automation-heading">Morning brief and to-dos</h3>
+          <h3 class="automation-heading" id="brief-automation-title" data-summary="ChatGPT reads Outlook, Jira and Slack each morning and turns them into to-dos.">Morning brief and to-dos</h3>
           <ol class="automation-steps" id="brief-steps">
             <li class="automation-step" data-step="clients">
               <div class="step-head"><span class="step-status" id="step-clients-status"></span><h4>Add your clients to the dashboard</h4></div>
@@ -377,7 +377,7 @@
             </li>
           </ol>
 
-          <h3 class="automation-heading" id="reporting-automation-title">Reporting packs for ChatGPT</h3>
+          <h3 class="automation-heading" id="reporting-automation-title" data-summary="Each client’s numbers saved on a schedule, for ChatGPT to write insights and emails.">Reporting packs for ChatGPT</h3>
           <p class="automation-lede">On each client’s schedule, the dashboard saves a pack of that client’s numbers into a “Reporting packs” folder inside your morning brief folder. A ChatGPT scheduled task reads the new packs and uses your reporting skills to write insights and draft the client email. The dashboard saves a pack the first time it’s open on or after the due day, so set the ChatGPT task for a little later that morning.</p>
           <ol class="automation-steps" id="reporting-steps">
             <li class="automation-step" data-step="pfolder">
@@ -429,7 +429,7 @@
             </li>
           </ol>
 
-          <h3 class="automation-heading" id="report-automation-title">Report uploads</h3>
+          <h3 class="automation-heading" id="report-automation-title" data-summary="New client reports from the shared folder import on their own.">Report uploads</h3>
           <ol class="automation-steps" id="report-steps">
             <li class="automation-step" data-step="rfolder">
               <div class="step-head"><span class="step-status" id="step-rfolder-status"></span><h4>Put your report folders in OneDrive</h4></div>
@@ -459,7 +459,7 @@
             </li>
           </ol>
 
-          <h3 class="automation-heading" id="dcm-automation-title">DCM and DSP email reports</h3>
+          <h3 class="automation-heading" id="dcm-automation-title" data-summary="Power Automate saves DCM and DSP report emails where the dashboard reads them.">DCM and DSP email reports</h3>
           <p class="automation-lede">DCM (CM360) emails its scheduled reports with the file attached, and the DSP emails a download link. A Power Automate flow for each saves the file into a OneDrive folder, and the dashboard picks it up from there. For 1P clients the DSP report is the spend itself, so it’s used first; DCM fills in for everyone else. DCM fills in each line’s spend, delivery, and pacing for the days after its latest full report, so you stay current between weekly reports. When the next report arrives, it takes over those days. Flashtalking sends a download link, not a file, so it isn’t covered here.</p>
           <ol class="automation-steps" id="dcm-steps">
             <li class="automation-step" data-step="dfolder">
@@ -470,7 +470,7 @@
               </ol>
             </li>
             <li class="automation-step" data-step="dflow">
-              <div class="step-head"><span class="step-status" id="step-dflow-status"></span><h4>Build the flow in Power Automate</h4></div>
+              <div class="step-head"><span class="step-status" id="step-dflow-status"></span><h4>Build the DCM flow in Power Automate</h4></div>
               <ol class="step-substeps">
                 <li>Go to <b>make.powerautomate.com</b> and sign in with your work account.</li>
                 <li>Click <b>Create › Automated cloud flow</b>. Name it <span class="step-quote">DCM reports to dashboard</span>, pick the trigger <b>When a new email arrives (V3)</b> (Office 365 Outlook), and click <b>Create</b>.</li>
@@ -479,19 +479,61 @@
                 <li>Click <b>+ New step</b>, search for <b>Create file</b>, and pick the <b>OneDrive for Business</b> one.</li>
                 <li>Set <b>Folder Path</b> to <b>/DCM Reports</b>. Set <b>File Name</b> to the <b>Attachments Name</b> value and <b>File Content</b> to <b>Attachments Content</b> (from the dynamic content list). Power Automate wraps the step in <b>Apply to each</b> on its own; that’s expected.</li>
                 <li>Click <b>Save</b>. When the next DCM email arrives, its file appears in <b>DCM Reports</b> within a few minutes. To test now, forward yesterday’s DCM email to yourself with the same subject. If your rule sorts by sender, the forward stays in your Inbox, so drag it into the report folder for the test.</li>
-                <li>DSP reports work differently: the email has a <b>Download Report</b> button, not an attachment. Build a second flow for them, below.</li>
               </ol>
               <p class="step-hint">In <b>File Name</b> and <b>File Content</b>, don’t type anything: click into the box, open the dynamic content list (the lightning bolt, or type <b>/</b>), and pick <b>Attachments Name</b> and <b>Attachments Content</b>. Each email’s own file name is used, so every day’s file is kept. If a report names every file the same (like <i>export_1.csv</i>), set File Name with the expression <code>concat(formatDateTime(utcNow(),'yyyy-MM-dd_HHmm'),'_',items('Apply_to_each')?['name'])</code> so files don’t overwrite each other.</p>
-              <h5 class="substeps-title">DSP reports (download link)</h5>
+            </li>
+            <li class="automation-step" data-step="dspflow">
+              <div class="step-head"><span class="step-status" id="step-dspflow-status"></span><h4>Build the DSP flow (download link)</h4></div>
+              <p>DSP report emails have a <b>Download Report</b> button instead of an attached file. Power Automate’s own Copilot can build this flow from a description, then you check a few settings.</p>
               <ol class="step-substeps">
-                <li>Click <b>Create › Automated cloud flow</b>. Name it <span class="step-quote">DSP reports to dashboard</span> and pick <b>When a new email arrives (V3)</b> (Office 365 Outlook).</li>
-                <li>In the trigger, set <b>Folder</b> to where the DSP emails land (Inbox or your reporting folder). Open <b>Advanced options</b>, set <b>From</b> to <span class="step-quote">notifications@delivery.zetaglobal.net</span>, and leave <b>Include Attachments</b> and <b>Only with Attachments</b> on <b>No</b>.</li>
-                <li>Add a <b>Condition</b>: <b>Body</b> contains <span class="step-quote">Download Report</span>. Put the next two steps under <b>True</b>, so other Zeta notices are skipped.</li>
-                <li>Add <b>Compose</b> and rename it <span class="step-quote">Report link</span>. In <b>Inputs</b>, open the expression editor (<b>fx</b>) and paste:<span class="flow-expression"><code id="dsp-link-expression">replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;')</code><button class="text-button" type="button" data-copy-target="dsp-link-expression" data-copy-label="Expression">Copy</button></span>It picks the link behind the <b>Download Report</b> button.</li>
-                <li>Add <b>Upload file from URL</b> (OneDrive for Business). Set <b>Source URL</b> to the <b>Outputs</b> of <b>Report link</b>, set <b>Overwrite</b> to <b>Yes</b>, and set <b>Destination File Path</b> to this expression:<span class="flow-expression"><code id="dsp-path-expression">concat('/DCM Reports/', triggerOutputs()?['body/subject'], ' ', formatDateTime(triggerOutputs()?['body/receivedDateTime'], 'yyyy-MM-dd'), '.csv')</code><button class="text-button" type="button" data-copy-target="dsp-path-expression" data-copy-label="Expression">Copy</button></span>Each day’s file gets its own name, like <i>Carterbloodcare daily report 2026-10-25.csv</i>.</li>
-                <li>Click <b>Save</b>. When the next DSP email arrives, its CSV shows up in <b>DCM Reports</b> within a few minutes. To test sooner, drag a recent DSP email out of its folder and back in; Outlook usually counts that as a new email. If nothing runs, wait for the next report.</li>
+                <li>Go to <b>make.powerautomate.com</b>. On the home page, find the box that asks you to describe what you want to automate (it may say <b>Create your automation by describing it</b>).</li>
+                <li>Paste this description and send it. If your DSP emails go to a folder other than Inbox, change <b>"Inbox"</b> to that folder’s name first.<span class="flow-expression flow-prompt"><code id="dsp-copilot-prompt">When a new email arrives in my Outlook folder "Inbox" from notifications@delivery.zetaglobal.net, check whether the email body contains "Download Report". If it does, get the link behind the Download Report button in the email body, then use the OneDrive for Business action "Upload file from URL" to save that file into my /DCM Reports folder. Name the file with the email subject and the date it was received, ending in .csv, and overwrite a file with the same name.</code><button class="text-button" type="button" data-copy-target="dsp-copilot-prompt" data-copy-label="Description" data-copy-hint="Paste it into Copilot on the Power Automate home page.">Copy</button></span></li>
+                <li>Copilot shows a draft. Click <b>Next</b>, check that Outlook and OneDrive show green checks (sign in if they ask), then click <b>Create flow</b>.</li>
               </ol>
-              <div class="step-hint flow-hint"><b>If the saved file is a web page instead of a CSV,</b> your company’s Outlook wraps links for safety (Safe Links). Change the <b>Report link</b> expression to the one below, which unwraps it:<span class="flow-expression"><code id="dsp-safelinks-expression">decodeUriComponent(first(split(last(split(replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;'), 'url=')), '&amp;')))</code><button class="text-button" type="button" data-copy-target="dsp-safelinks-expression" data-copy-label="Expression">Copy</button></span></div>
+              <h5 class="substeps-title">Check what Copilot built</h5>
+              <p class="step-hint">Click each card in the flow to open its settings on the side. Fix anything that doesn’t match.</p>
+              <ol class="step-substeps flow-checklist">
+                <li><b>When a new email arrives (V3):</b> <b>Folder</b> is where the DSP emails land. Under <b>Advanced parameters</b> (or <b>Show advanced options</b>), <b>From</b> is <span class="step-quote">notifications@delivery.zetaglobal.net</span> and <b>Include Attachments</b> is <b>No</b>.</li>
+                <li><b>Condition:</b> <b>Body</b> contains <span class="step-quote">Download Report</span>, and the next steps sit under <b>True</b>.</li>
+                <li><b>The link step:</b> Copilot often gets this one wrong. Make sure there’s a <b>Compose</b> card named <span class="step-quote">Report link</span> under <b>True</b> (add one with <b>+</b> if not). Click its <b>Inputs</b> box, click <b>fx</b>, paste this, and click <b>Add</b>:<span class="flow-expression"><code id="dsp-link-expression">replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;')</code><button class="text-button" type="button" data-copy-target="dsp-link-expression" data-copy-label="Expression" data-copy-hint="Paste it into the expression box (fx).">Copy</button></span></li>
+                <li><b>Upload file from URL:</b> <b>Source URL</b> is the <b>Outputs</b> of <b>Report link</b> (click the box, then the lightning bolt, and pick it under Report link). <b>Overwrite</b> is <b>Yes</b>. For <b>Destination File Path</b>, clear the box, click <b>fx</b>, and paste:<span class="flow-expression"><code id="dsp-path-expression">concat('/DCM Reports/', triggerOutputs()?['body/subject'], ' ', formatDateTime(triggerOutputs()?['body/receivedDateTime'], 'yyyy-MM-dd'), '.csv')</code><button class="text-button" type="button" data-copy-target="dsp-path-expression" data-copy-label="Expression" data-copy-hint="Paste it into the expression box (fx).">Copy</button></span></li>
+                <li>Click <b>Save</b> at the top right. When the next DSP email arrives, a CSV like <i>Carterbloodcare daily report 2026-10-25.csv</i> shows up in <b>DCM Reports</b> within a few minutes. To test sooner, drag a recent DSP email out of its folder and back in.</li>
+              </ol>
+              <details class="flow-more">
+                <summary>Build it by hand instead</summary>
+                <ol class="step-substeps">
+                  <li>On <b>make.powerautomate.com</b>, click <b>+ Create</b> in the left menu, then <b>Automated cloud flow</b>.</li>
+                  <li>Name it <span class="step-quote">DSP reports to dashboard</span>. In <b>Choose your flow’s trigger</b>, type <span class="step-quote">new email</span>, pick <b>When a new email arrives (V3)</b> (Office 365 Outlook), and click <b>Create</b>.</li>
+                  <li>Click the trigger card. In the panel on the left, set <b>Folder</b> with the folder icon. Open <b>Advanced parameters</b> (in the older designer, <b>Show advanced options</b>), add <b>From</b>, and type <span class="step-quote">notifications@delivery.zetaglobal.net</span>.</li>
+                  <li>Click the <b>+</b> under the trigger, then <b>Add an action</b>. Search <span class="step-quote">Condition</span> and pick it (under Control). Click the left box, click the lightning bolt, and pick <b>Body</b>. Set the middle box to <b>contains</b> and type <span class="step-quote">Download Report</span> in the right box.</li>
+                  <li>Under <b>True</b>, click <b>+</b>, <b>Add an action</b>, search <span class="step-quote">Compose</span>. Click the card’s title and rename it <span class="step-quote">Report link</span>. Click <b>Inputs</b>, click <b>fx</b>, paste the link expression above, and click <b>Add</b>.</li>
+                  <li>Under <b>Report link</b>, click <b>+</b>, <b>Add an action</b>, search <span class="step-quote">Upload file from URL</span>, and pick the <b>OneDrive for Business</b> one. Fill it in as in the checklist above.</li>
+                  <li>Click <b>Save</b>. To see a run, open <b>My flows</b>, click the flow, and pick a run under <b>28-day run history</b>. Click <b>Report link</b> to see the link it found under <b>Outputs</b>.</li>
+                </ol>
+                <p class="step-hint">In the older designer the same things have different names: <b>+ New step</b> instead of <b>+</b>, <b>Add dynamic content</b> instead of the lightning bolt, and the <b>Expression</b> tab instead of <b>fx</b>.</p>
+              </details>
+              <details class="flow-more">
+                <summary>The saved file is a web page, not a CSV</summary>
+                <p class="step-hint">Your company’s Outlook wraps links for safety (Safe Links). Replace the <b>Report link</b> expression with this one, which unwraps it:</p><span class="flow-expression"><code id="dsp-safelinks-expression">decodeUriComponent(first(split(last(split(replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;'), 'url=')), '&amp;')))</code><button class="text-button" type="button" data-copy-target="dsp-safelinks-expression" data-copy-label="Expression" data-copy-hint="Paste it into the expression box (fx).">Copy</button></span>
+              </details>
+              <details class="flow-more">
+                <summary>Need more help?</summary>
+                <p class="step-hint">Copy this into ChatGPT. It walks you through the flow one step at a time, and you can send it screenshots of your screen when you’re stuck.</p>
+                <span class="flow-expression flow-prompt"><code id="dsp-help-prompt">I'm setting up a Power Automate cloud flow and I'd like you to walk me through it one step at a time. Give me one step, then wait for me to say "done" or send a screenshot before the next one. When I send a screenshot, tell me exactly where to click on it. My screen may use the new designer or the classic one; ask if you can't tell.
+
+The flow should end up like this:
+1. Trigger: Office 365 Outlook "When a new email arrives (V3)". Folder: the Outlook folder my DSP report emails land in (I'll tell you which). From: notifications@delivery.zetaglobal.net. Include Attachments: No. Only with Attachments: No.
+2. Condition: Body contains "Download Report". Everything below goes under True.
+3. A Compose action renamed "Report link", with this expression in Inputs:
+replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;')
+4. OneDrive for Business "Upload file from URL". Source URL: the Outputs of "Report link". Destination File Path, as an expression:
+concat('/DCM Reports/', triggerOutputs()?['body/subject'], ' ', formatDateTime(triggerOutputs()?['body/receivedDateTime'], 'yyyy-MM-dd'), '.csv')
+Overwrite: Yes.
+5. Save, then help me test it and read the run history.
+
+If the saved file turns out to be a web page instead of a CSV, my company's Outlook wraps links (Safe Links). Then the Report link expression should be:
+decodeUriComponent(first(split(last(split(replace(first(split(last(split(substring(triggerOutputs()?['body/body'], 0, indexOf(triggerOutputs()?['body/body'], 'Download Report')), 'href="')), '"')), '&amp;amp;', '&amp;'), 'url=')), '&amp;')))</code><button class="text-button" type="button" data-copy-target="dsp-help-prompt" data-copy-label="Prompt" data-copy-hint="Paste it into ChatGPT.">Copy</button></span>
+              </details>
             </li>
             <li class="automation-step" data-step="dconnect">
               <div class="step-head"><span class="step-status" id="step-dconnect-status"></span><h4>Connect the folder</h4></div>
