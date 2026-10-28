@@ -59,3 +59,15 @@ test("falls back to a lone campaign's reported KPI when no components were impor
   const [solo] = buildClientRollup([lone], { asOf });
   assert.equal(solo.kpi.formatted, "1.0%");
 });
+
+test("a client with only added-value campaigns needs no budget and paces on impressions", async () => {
+  const { groupKey } = await import("../lib/campaign-groups.js");
+  const { setCampaignTotals } = await import("../lib/campaign-totals.js");
+  const line = { client: "Client", name: "Display", campaignName: "Added Value", startDate: "2026-11-01", endDate: "2026-11-30", impressions: 1200000, spend: 0, budget: 0 };
+  const io = { budget: 0, startDate: "2026-11-01", endDate: "2026-11-30", lineItems: [{ id: "io-display", name: "Display", startDate: "2026-11-01", endDate: "2026-11-30", budget: 0, rate: 0, rateType: "CPM", units: 3000000 }] };
+  const totals = setCampaignTotals({}, groupKey(line), io, "av.pdf");
+  const [client] = buildClientRollup([line], { totals, asOf: new Date("2026-11-15T12:00:00Z") });
+  assert.equal(client.addedValueOnly, true);
+  assert.equal(Math.round(client.campaigns[0].pacing), 80);
+  assert.equal(Math.round(client.pacing), 80);
+});

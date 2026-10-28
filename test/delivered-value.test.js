@@ -48,3 +48,16 @@ test("the 3rd-party view counts delivered value too; 1st-party keeps the DSP's c
   assert.equal(resolveSpend(line, "third"), 8000);
   assert.equal(resolveSpend(line, "first"), 4800);
 });
+
+test("an added-value campaign is worth $0 to billing even when the client has a shared rate", async () => {
+  const { groupKey } = await import("../lib/campaign-groups.js");
+  const { setCampaignTotals } = await import("../lib/campaign-totals.js");
+  const line = { client: "Client", name: "Added Value Display", campaignName: "Added Value", impressions: 400000, spend: 900 };
+  const io = { budget: 0, startDate: "2026-11-01", endDate: "2026-11-30", lineItems: [{ id: "io-display", name: "Display", startDate: "2026-11-01", endDate: "2026-11-30", budget: 0, rate: 0, rateType: "CPM", units: 2000000 }] };
+  const totals = setCampaignTotals({}, groupKey(line), io, "av.pdf");
+  const billing = { Client: { rows: [{ lines: ["Paid Line"], rateType: "cpm", rate: 8 }] } };
+  const [result] = applyDeliveredValue([line], { totals, billing });
+  assert.equal(result.deliveredValue, 0);
+  assert.equal(resolveSpend(result, "billing"), 0);
+  assert.equal(resolveSpend(result, "media"), 900);
+});
