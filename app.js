@@ -2375,11 +2375,14 @@ async function nextIo() {
   if (ioReviewDialog.open) ioReviewDialog.close();
 }
 
+// Planned impressions on a no-cost IO's lines.
+function ioUnits(items) { return (items || []).reduce((sum, item) => sum + (Number(item.units) > 0 ? Number(item.units) : 0), 0); }
+
 function renderIoReview() {
   const { io, fileName, presetKey } = pendingIo;
   document.querySelector("#io-review-eyebrow").textContent = ioQueue.length ? `Insertion order · ${ioQueue.length} more after this` : "Insertion order";
   document.querySelector("#io-review-subtitle").textContent = [io.advertiser, io.campaign, fileName].filter(Boolean).join(" · ");
-  const facts = [["Agency", io.agency], ["Order", orderLabel(io) || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? formatExactMoney(io.budget) : "—"]];
+  const facts = [["Agency", io.agency], ["Order", orderLabel(io) || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? formatExactMoney(io.budget) : io.budget === 0 && ioUnits(io.lineItems) ? `No cost · ${formatCount(ioUnits(io.lineItems))} impressions` : "—"]];
   document.querySelector("#io-review-facts").innerHTML = facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
   const warnings = document.querySelector("#io-review-warnings");
   warnings.hidden = io.warnings.length === 0;
@@ -2397,8 +2400,8 @@ function renderIoReview() {
         : "Matched to this campaign by name. Change it if that is wrong.";
   // The lines the campaign will be paced on: placements with the same name are one line.
   const lines = ioLines(setCampaignTotals({}, "preview", io, fileName).preview);
-  document.querySelector("#io-review-selection").textContent = `${lines.length} line${lines.length === 1 ? "" : "s"} · ${formatExactMoney(lines.reduce((sum, line) => sum + line.budget, 0))}`;
-  document.querySelector("#io-review-lines").innerHTML = lines.map(line => `<div class="io-review-line"><span class="io-line-main"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}${line.placements.length > 1 ? ` · ${line.placements.length} flights combined` : ""}</small></span><span class="io-line-budget">${escapeHtml(formatExactMoney(line.budget))}</span></div>`).join("");
+  document.querySelector("#io-review-selection").textContent = `${lines.length} line${lines.length === 1 ? "" : "s"} · ${io.budget === 0 && ioUnits(io.lineItems) ? `${formatCount(ioUnits(io.lineItems))} impressions` : formatExactMoney(lines.reduce((sum, line) => sum + line.budget, 0))}`;
+  document.querySelector("#io-review-lines").innerHTML = lines.map(line => `<div class="io-review-line"><span class="io-line-main"><strong>${escapeHtml(line.name)}</strong><small>${escapeHtml(line.startDate)} → ${escapeHtml(line.endDate)}${line.placements.length > 1 ? ` · ${line.placements.length} flights combined` : ""}</small></span><span class="io-line-budget">${escapeHtml(io.budget === 0 && ioUnits(line.placements) ? `${formatCount(ioUnits(line.placements))} impr.` : formatExactMoney(line.budget))}</span></div>`).join("");
   document.querySelector("#io-review-error").hidden = true;
   syncIoTarget();
 }
@@ -2427,7 +2430,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
     const client = document.querySelector("#io-new-client").value.trim();
     const name = document.querySelector("#io-new-name").value.trim();
     if (!client || !name) { fail("Enter the client and the campaign name."); return; }
-    const result = createCampaign({ client, name, startDate: io.startDate, endDate: io.endDate, budget: io.budget, budgetSource: "io", billingSource: "reported", kpi: io.lineItems.find(item => item.kpi)?.kpi || "CTR", target: "Not provided", ioFileName: fileName });
+    const result = createCampaign({ client, name, startDate: io.startDate, endDate: io.endDate, budget: io.budget, noCost: io.budget === 0, budgetSource: "io", billingSource: "reported", kpi: io.lineItems.find(item => item.kpi)?.kpi || "CTR", target: "Not provided", ioFileName: fileName });
     if (!result.valid) { fail(result.errors.join(" ")); return; }
     if (ioTargetGroups().some(group => group.key === groupKey(result.campaign))) { fail(`${client} already has a campaign named “${name}”. Choose it from the list to revise it.`); return; }
     created = result.campaign;
@@ -2446,7 +2449,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   const entry = campaignTotals[key];
   refreshAfterDataChange();
   if (activeCampaignIndex !== null && campaigns[activeCampaignIndex] && groupKey(campaigns[activeCampaignIndex]) === key) renderIoTotalsNote(campaigns[activeCampaignIndex]);
-  showToast(created ? "Campaign created" : "Insertion order applied", `${targetName} is paced on ${entry.orders.length > 1 ? `${entry.orders.length} orders totalling ` : ""}${formatExactMoney(entry.budget)} from ${entry.startDate} to ${entry.endDate}.${created ? " Import its reports to add delivery." : ""}`);
+  showToast(created ? "Campaign created" : "Insertion order applied", `${targetName} is paced on ${entry.noCost ? `${formatCount(entry.impressionGoal)} impressions (no-cost IO)` : `${entry.orders.length > 1 ? `${entry.orders.length} orders totalling ` : ""}${formatExactMoney(entry.budget)}`} from ${entry.startDate} to ${entry.endDate}.${created ? " Import its reports to add delivery." : ""}`);
   pendingIo = null;
   nextIo();
 });

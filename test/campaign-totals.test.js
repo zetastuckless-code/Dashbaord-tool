@@ -89,3 +89,16 @@ test("an edited flight overrides the orders' dates, survives removing an order, 
   assert.equal(setTotalsFlight(edited, "a::c", "", "")["a::c"].endDate, "2026-04-01");
   assert.equal(setCampaignTotals(edited, "a::c", { orderNumber: "O-3", revision: "R1", budget: 10, startDate: "2026-05-01", endDate: "2026-06-01", lineItems: [] }, "c.pdf", now)["a::c"].endDate, "2026-06-01");  // a newly applied order brings its own dates
 });
+
+test("keeps a no-cost order and paces the campaign on impressions", async () => {
+  const { computeMetrics } = await import("../lib/metric-catalog.js");
+  const io = { orderNumber: null, budget: 0, startDate: "2026-11-01", endDate: "2026-11-30", lineItems: [{ id: "io-display", name: "Display", startDate: "2026-11-01", endDate: "2026-11-30", budget: 0, rate: 0, rateType: "CPM", units: 3000000 }] };
+  const totals = setCampaignTotals({}, "client|campaign", io, "no-cost.pdf");
+  const entry = totals["client|campaign"];
+  assert.deepEqual([entry.budget, entry.noCost, entry.impressionGoal], [0, true, 3000000]);
+  assert.equal(setCampaignTotals({}, "x", { ...io, lineItems: [{ ...io.lineItems[0], units: null }] })["x"], undefined);
+  // Half the flight gone with 1.2M of 1.5M expected impressions delivered: 80% paced.
+  const line = { client: "Client", name: "Campaign", startDate: "2026-11-01", endDate: "2026-11-30", spend: 0, budget: 0, impressions: 1200000 };
+  const metrics = computeMetrics([line], { asOf: new Date("2026-11-15T12:00:00Z"), totals: entry });
+  assert.equal(Math.round(metrics.pacing), 80);
+});
