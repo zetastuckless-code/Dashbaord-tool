@@ -718,3 +718,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .report-inbox li>span:first-child,.review-notes li,.report-activity li>span,.review-import-head b{overflow-wrap:anywhere;word-break:break-word}
 .report-inbox li{flex-wrap:wrap}.report-inbox .report-inbox-actions{flex-shrink:0;margin-left:auto}
 .review-notes a{font-weight:600}.review-repeat{color:#6b7385;font-size:12px}
+.review-import-actions .review-download{display:inline-flex;align-items:center;height:32px;text-decoration:none}
