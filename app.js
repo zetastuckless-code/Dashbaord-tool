@@ -2519,9 +2519,13 @@ function renderSnapshotHistory(campaign) {
   document.querySelector("#snapshot-history-list").innerHTML = snapshots.length ? snapshots.slice(0, 10).map(snapshot => `<div><span><strong>${escapeHtml(snapshot.date)}</strong><small>${escapeHtml(snapshot.source)}</small></span><span><strong>${Number.isFinite(snapshot.spend) ? formatExactMoney(snapshot.spend) : "—"}</strong><small>${Number.isFinite(snapshot.impressions) ? `${formatCount(snapshot.impressions)} impressions` : "Spend snapshot"}</small></span><button class="campaign-line-remove" type="button" data-remove-snapshot="${escapeHtml(snapshot.date)}|${escapeHtml(snapshot.source)}" aria-label="Remove ${escapeHtml(snapshot.date)} ${escapeHtml(snapshot.source)} report" title="Remove this report">✕</button></div>`).join("") : '<p class="history-empty">No dated report snapshots are available yet.</p>';
 }
 
+/** Web addresses in already-escaped text become a link that opens in a new tab. */
+function linkify(html) {
+  return html.replace(/https?:\/\/[^\s<"]+[^\s<".,;:)]/g, url => `<a href="${url}" target="_blank" rel="noopener">Open the download link ↗</a>`);
+}
 function showValidationResult(messages, type, exportIssues = messages) {
   validationResult.className = `validation-result ${type}`;
-  validationResult.innerHTML = `<strong>${type === "error" ? "We found an issue" : "Validation complete"}</strong><ul>${messages.map(message => `<li>${escapeHtml(message)}</li>`).join("")}</ul>`;
+  validationResult.innerHTML = `<strong>${type === "error" ? "We found an issue" : "Validation complete"}</strong><ul>${messages.map(message => `<li>${linkify(escapeHtml(message))}</li>`).join("")}</ul>`;
   validationResult.hidden = false;
   currentValidationIssues = [...exportIssues];
   const exportButton = document.querySelector("#export-validation-issues");
@@ -4103,9 +4107,9 @@ function updateReviewBadge() {
 }
 function renderReviewPage(inbox = readReportInbox(localStorage)) {
   document.querySelector("#review-inbox-context").textContent = inbox.length ? `${inbox.length} report${inbox.length === 1 ? "" : "s"} from your folder need${inbox.length === 1 ? "s" : ""} you to pick the campaign` : "Reports from your folder that couldn’t be matched on their own";
-  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${escapeHtml(item.reason)}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
+  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${linkify(escapeHtml(item.reason))}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
   const activity = readReportActivity().slice(0, 8);
-  document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
+  document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${linkify(escapeHtml(item.reason))}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
   const pending = pendingImports();
   const clients = [...new Set(campaigns.map(record => record.client))];
   const statusLabel = { "Imported with warnings": "Imported with warnings", "Partially imported": "Partly imported", Rejected: "Didn’t import" };

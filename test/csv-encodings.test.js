@@ -23,3 +23,9 @@ test("a DSP export reads the same as UTF-8, UTF-16 with or without a byte-order 
   assert.equal(csvDelimiter("a;b;c\n1;2;3"), ";");
   assert.equal(csvDelimiter('"x, y",b\n'), ",");
 });
+
+test("a redirect page saved in place of the report says so and carries the real link", async () => {
+  const { readReportFile } = await import("../lib/workbook-import.js");
+  const html = '<html><head><title>Object moved</title></head><body>\n<h2>Object moved to <a href="https://protect.checkpoint.com/v2/r01/___https://e.support.zetaglobal.net/hqnhp?abc&amp;x=1___.YzJ1">here</a>.</h2>\n</body></html>\n';
+  await assert.rejects(readReportFile({ name: "Carterbloodcare daily report 2026-10-28.csv" }, new TextEncoder().encode(html)), error => /saved a redirect/.test(error.message) && error.message.includes("https://protect.checkpoint.com/v2/r01/___https://e.support.zetaglobal.net/hqnhp?abc&x=1___.YzJ1"));
+});
