@@ -60,7 +60,7 @@ test("does not alert at the exact threshold", () => {
 });
 
 test("evaluates lower-is-better cost KPIs with tolerance", () => {
-  assert.deepEqual(evaluateKpiTarget({ kpi: "CPA", value: "$48.20", target: "Target $40" }, 10), { flagged: true, actual: 48.2, target: 40, lowerIsBetter: true, difference: 20.500000000000007, metric: "CPA" });
+  assert.deepEqual(evaluateKpiTarget({ kpi: "CPA", value: "$48.20", target: "Target $40" }, 10), { flagged: true, actual: 48.2, formatted: "$48.20", target: 40, lowerIsBetter: true, difference: 20.500000000000007, metric: "CPA" });
   assert.equal(evaluateKpiTarget({ kpi: "CPA", value: "$43", target: "$40" }, 10).flagged, false);
 });
 
@@ -145,4 +145,15 @@ test("only live lines raise alerts, and a finished first flight doesn't hide a p
   // A line with no dates whose data stopped weeks ago reads as completed, so it stays quiet too.
   const undated = { client: "Acme", name: "Old — Display", spend: 100, budget: 1000, source: "Zeta Global", dataAsOf: "2026-08-01", deliveryEnd: "2026-08-01", kpi: "CPA", value: "$90", target: "Target $40", impressions: 50_000 };
   assert.deepEqual(evaluateCampaignAlerts([undated], DEFAULT_ALERT_RULES, asOf), []);
+});
+
+test("the KPI alert works the KPI out from the line's numbers, not the report's stored KPI text", async () => {
+  const { evaluateKpiTarget } = await import("../lib/alert-engine.js");
+  // An audio line whose report KPI column held CTR (0.01%) while its goal is VCR 80%: completions/starts is 97%.
+  const line = { kpi: "VCR", target: "80%", value: "0.01%", videoStarts: 100_000, videoCompletions: 97_000, impressions: 100_000, clicks: 10, spend: 2000 };
+  const result = evaluateKpiTarget(line, 10);
+  assert.equal(result.flagged, false);
+  assert.equal(result.formatted, "97%");
+  // Without the numbers, the stored value still counts.
+  assert.equal(evaluateKpiTarget({ kpi: "VCR", target: "80%", value: "50%" }, 10).flagged, true);
 });
