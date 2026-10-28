@@ -1710,6 +1710,24 @@ document.querySelector("#reset-workspace").addEventListener("click", () => {
 });
 document.querySelectorAll("#upload-button, #upload-nav, #client-documents-import").forEach(button => button.addEventListener("click", () => openImportDialog()));
 const fileInput = document.querySelector("#file-input");
+// Reports can be dragged onto the upload box as well as picked.
+{
+  const dropzone = document.querySelector("label.dropzone[for='file-input']");
+  const hasFiles = event => [...(event.dataTransfer?.types || [])].includes("Files");
+  dropzone.addEventListener("dragenter", event => { if (hasFiles(event)) { event.preventDefault(); dropzone.classList.add("drag-over"); } });
+  dropzone.addEventListener("dragover", event => { if (hasFiles(event)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; dropzone.classList.add("drag-over"); } });
+  dropzone.addEventListener("dragleave", event => { if (!dropzone.contains(event.relatedTarget)) dropzone.classList.remove("drag-over"); });
+  dropzone.addEventListener("drop", event => {
+    event.preventDefault();
+    dropzone.classList.remove("drag-over");
+    const file = [...(event.dataTransfer?.files || [])][0];
+    if (!file) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    document.querySelector("#file-input").files = transfer.files;
+    document.querySelector("#file-input").dispatchEvent(new Event("change"));
+  });
+}
 const filePreview = document.querySelector("#file-preview");
 const validateButton = document.querySelector("#validate-button");
 const confirmImportButton = document.querySelector("#confirm-import-button");
@@ -3414,7 +3432,7 @@ function refreshAutomationNav() {
 /** Every folder the dashboard reads, with the access it needs (the morning brief folder also gets packs written to it). */
 function connectedFolders() {
   try {
-    return [[todoFolder, "Morning brief", "readwrite"], [reportFolder, "Report uploads", "read"], [dcmFolder, "DCM and DSP emails", "read"]].filter(([handle]) => handle).map(([handle, label, mode]) => ({ handle, label, mode }));
+    return [[todoFolder, "Morning brief", "readwrite"], [reportFolder, "Report uploads", "read"], [dcmFolder, "DCM and DSP emails", "read"], [downloadsFolder, "Downloads", "read"]].filter(([handle]) => handle).map(([handle, label, mode]) => ({ handle, label, mode }));
   } catch {
     return []; // still loading
   }
@@ -3546,8 +3564,13 @@ let reportFolder = null;
 const DCM_FOLDER_KEY = "dcm-folder";
 const DCM_PREFIX = "DCM:";
 let dcmFolder = null;
-const watchedFolders = () => [[reportFolder, ""], [dcmFolder, DCM_PREFIX]].filter(([folder]) => folder);
-const folderForKey = key => key.startsWith(DCM_PREFIX) ? [dcmFolder, key.slice(DCM_PREFIX.length)] : [reportFolder, key];
+// Downloads: where the browser saves a report from a DSP link the flow couldn't follow. Only new files at its top level count.
+const DOWNLOADS_FOLDER_KEY = "downloads-folder";
+const DOWNLOADS_SINCE_KEY = "northstar-downloads-since";
+const DL_PREFIX = "DL:";
+let downloadsFolder = null;
+const watchedFolders = () => [[reportFolder, ""], [dcmFolder, DCM_PREFIX], [downloadsFolder, DL_PREFIX]].filter(([folder]) => folder);
+const folderForKey = key => key.startsWith(DCM_PREFIX) ? [dcmFolder, key.slice(DCM_PREFIX.length)] : key.startsWith(DL_PREFIX) ? [downloadsFolder, key.slice(DL_PREFIX.length)] : [reportFolder, key];
 let reportState = { lastChecked: null, needsClick: false, running: false, scanned: 0, truncated: false };
 let reportSettings = readReportSettings(localStorage);
 const readReportActivity = () => { try { const value = JSON.parse(localStorage.getItem(REPORT_ACTIVITY_KEY)); return Array.isArray(value) ? value : []; } catch { return []; } };
@@ -3596,11 +3619,13 @@ async function checkReportFolder({ ask = false } = {}) {
     reportState.truncated = false;
     for (const [folder, prefix] of watchedFolders()) {
       // Each folder sees its own part of the ledger; the DCM folder takes every file, whatever its folder is called.
-      const view = Object.fromEntries(Object.entries(ledger).filter(([key]) => prefix ? key.startsWith(prefix) : !key.startsWith(DCM_PREFIX)).map(([key, value]) => [key.slice(prefix.length), value]));
-      const scan = await findNewReports(folder, view, prefix ? { ...reportSettings, onlyReportFolders: false } : reportSettings);
+      const view = Object.fromEntries(Object.entries(ledger).filter(([key]) => prefix ? key.startsWith(prefix) : !key.startsWith(DCM_PREFIX) && !key.startsWith(DL_PREFIX)).map(([key, value]) => [key.slice(prefix.length), value]));
+      const since = Number(localStorage.getItem(DOWNLOADS_SINCE_KEY)) || Date.now();
+      const options = prefix === DL_PREFIX ? { ...reportSettings, onlyReportFolders: false, lookbackDays: 3, maxDepth: 0, since } : prefix ? { ...reportSettings, onlyReportFolders: false } : reportSettings;
+      const scan = await findNewReports(folder, view, options);
       reportState.scanned += scan.scanned;
       reportState.truncated ||= scan.truncated;
-      files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix ? ["DCM folder", ...entry.path] : entry.path })));
+      files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
     }
     for (const entry of files.sort((a, b) => a.lastModified - b.lastModified)) {
       let outcome;
@@ -3621,6 +3646,8 @@ async function checkReportFolder({ ask = false } = {}) {
         pendingValidatedImport = null;
       }
       ledger = noteReport(ledger, entry.key, entry.lastModified, outcome, reportSettings);
+      // Downloads holds all sorts of files: one that isn't a report is skipped quietly.
+      if (entry.key.startsWith(DL_PREFIX) && outcome === "couldn't read") continue;
       inbox = inbox.filter(item => item.key !== entry.key);
       if (outcome === "needs review" || outcome === "couldn't read") inbox.push({ key: entry.key, name: entry.name, folder: entry.path.join(" › "), reason, outcome, foundAt: new Date().toISOString() });
       activity.unshift({ at: new Date().toISOString(), name: entry.name, outcome, reason });
@@ -3659,6 +3686,11 @@ function renderReportAutomation() {
   stepStatus("dfolder", dcmFolder || dcmSeen ? "done" : "todo");
   stepStatus("dflow", dcmSeen ? "done" : "todo");
   stepStatus("dconnect", dcmFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
+  stepStatus("ddownloads", downloadsFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
+  document.querySelector("#downloads-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : downloadsFolder ? `Watching “${downloadsFolder.name}” for new reports.` : "Not connected. Download buttons still work; drag the file into Import report afterward.";
+  document.querySelector("#downloads-connect-button").textContent = downloadsFolder ? "Change folder…" : "Connect Downloads…";
+  document.querySelector("#downloads-connect-button").disabled = !folderSupported;
+  document.querySelector("#downloads-disconnect").hidden = !downloadsFolder;
   document.querySelector("#dcm-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : !dcmFolder ? "Not connected yet." : `Watching “${dcmFolder.name}”.${dcmSeen ? " Email reports have come through." : " Waiting for the first report email."}`;
   document.querySelector("#dcm-connect-button").textContent = dcmFolder ? "Change folder…" : "Connect the folder…";
   document.querySelector("#dcm-connect-button").disabled = !folderSupported;
@@ -3689,6 +3721,22 @@ document.querySelector("#report-disconnect").addEventListener("click", async () 
   await saveFolderHandle(indexedDB, REPORT_FOLDER_KEY, null).catch(() => {});
   renderReportAutomation();
 });
+document.querySelector("#downloads-connect-button").addEventListener("click", async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ id: "northstar-downloads", mode: "read", startIn: "downloads" });
+    downloadsFolder = handle;
+    // Only files downloaded from now on: what's already there was never meant for the dashboard.
+    try { localStorage.setItem(DOWNLOADS_SINCE_KEY, String(Date.now())); } catch { /* every scan then starts from now */ }
+    await saveFolderHandle(indexedDB, DOWNLOADS_FOLDER_KEY, handle);
+    await checkReportFolder({ ask: true });
+  } catch { /* the picker was closed, or Chrome blocked that folder */ }
+  renderReportAutomation();
+});
+document.querySelector("#downloads-disconnect").addEventListener("click", async () => {
+  downloadsFolder = null;
+  await saveFolderHandle(indexedDB, DOWNLOADS_FOLDER_KEY, null).catch(() => {});
+  renderReportAutomation();
+});
 document.querySelector("#dcm-connect-button").addEventListener("click", async () => {
   try {
     const handle = await window.showDirectoryPicker({ id: "northstar-dcm", mode: "read" });
@@ -3713,7 +3761,23 @@ document.querySelector("#automation-page").addEventListener("change", event => {
   localStorage.setItem(REPORT_SETTINGS_KEY, JSON.stringify(reportSettings));
   renderReportAutomation();
 });
+/** After a Download report click, looks in Downloads a few times while the file arrives. */
+function watchForDownload() {
+  if (!downloadsFolder) return;
+  for (const seconds of [6, 15, 30, 60, 120]) setTimeout(() => { if (!reportState.running) checkReportFolder(); }, seconds * 1000);
+}
 document.querySelector("#report-inbox").addEventListener("click", async event => {
+  const download = event.target.closest("[data-report-download]");
+  if (download) {
+    // The link opens in a new tab and the browser downloads the file; with Downloads connected it imports by itself.
+    if (downloadsFolder) {
+      localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== download.dataset.reportDownload)));
+      watchForDownload();
+      setTimeout(renderReportAutomation, 0);
+      showToast("Downloading the report", "It imports from Downloads as soon as it lands.");
+    } else showToast("Downloading the report", "When it finishes, drag the file into Import report. Connect Downloads on the Automation page to skip this step.");
+    return;
+  }
   const dismiss = event.target.closest("[data-report-dismiss]");
   if (dismiss) { localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(readReportInbox(localStorage).filter(item => item.key !== dismiss.dataset.reportDismiss))); renderReportAutomation(); return; }
   const review = event.target.closest("[data-report-review]");
@@ -3735,9 +3799,10 @@ document.querySelector("#report-inbox").addEventListener("click", async event =>
   }
 });
 if (folderSupported) {
-  Promise.all([loadFolderHandle(indexedDB, REPORT_FOLDER_KEY), loadFolderHandle(indexedDB, DCM_FOLDER_KEY)]).then(([handle, dcmHandle]) => {
+  Promise.all([loadFolderHandle(indexedDB, REPORT_FOLDER_KEY), loadFolderHandle(indexedDB, DCM_FOLDER_KEY), loadFolderHandle(indexedDB, DOWNLOADS_FOLDER_KEY)]).then(([handle, dcmHandle, downloadsHandle]) => {
     reportFolder = handle;
     dcmFolder = dcmHandle;
+    downloadsFolder = downloadsHandle;
     renderReportAutomation();
     return checkReportFolder();
   }).catch(() => renderReportAutomation());
@@ -4107,7 +4172,12 @@ function updateReviewBadge() {
 }
 function renderReviewPage(inbox = readReportInbox(localStorage)) {
   document.querySelector("#review-inbox-context").textContent = inbox.length ? `${inbox.length} report${inbox.length === 1 ? "" : "s"} from your folder need${inbox.length === 1 ? "s" : ""} you to pick the campaign` : "Reports from your folder that couldn’t be matched on their own";
-  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${linkify(escapeHtml(item.reason))}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
+  document.querySelector("#report-inbox").innerHTML = inbox.length ? inbox.map(item => {
+    // The flow saved a link page instead of the report: one button downloads the real file.
+    const download = /saved a redirect/.test(item.reason || "") ? /https?:\/\/[^\s]+[^\s.,;:)]/.exec(item.reason)?.[0] : null;
+    if (download) return `<li class="report-download"><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}The flow saved the email’s download link, not the report.${downloadsFolder ? " Download it and it imports from Downloads on its own." : " Download it, then drag the file into Import report."}</small></span><span class="report-inbox-actions"><a class="primary-button" href="${escapeHtml(download)}" target="_blank" rel="noopener" data-report-download="${escapeHtml(item.key)}">Download report</a><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`;
+    return `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${linkify(escapeHtml(item.reason))}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`;
+  }).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
   const activity = readReportActivity().slice(0, 8);
   document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${linkify(escapeHtml(item.reason))}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
   const pending = pendingImports();

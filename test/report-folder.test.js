@@ -37,3 +37,9 @@ test("takes a file in once, again only when it changes, and forgets records afte
   assert.equal(ledger["old/file.xlsx"], undefined);
   assert.ok(await openReportAt(tree, found.key));
 });
+
+test("Downloads: only new files at the top, from after it was connected", async () => {
+  const downloads = dir("Downloads", [file("Carter_blood_care_daily_report_9.csv", 0.1), file("Old export.csv", 2), dir("Taxes", [file("2025.xlsx", 0.1)])]);
+  const { files } = await findNewReports(downloads, {}, { now, onlyReportFolders: false, lookbackDays: 3, maxDepth: 0, since: now - DAY });
+  assert.deepEqual(files.map(entry => entry.key), ["Carter_blood_care_daily_report_9.csv"]);
+});

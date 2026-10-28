@@ -588,6 +588,13 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
               <p class="step-detail" id="dcm-connect-detail"></p>
               <div class="step-actions"><button class="primary-button" id="dcm-connect-button" type="button">Connect DCM folder…</button><button class="text-button" id="dcm-disconnect" type="button" hidden>Disconnect</button></div>
             </li>
+            <li class="automation-step" data-step="ddownloads">
+              <div class="step-head"><span class="step-status" id="step-ddownloads-status"></span><h4>One-click downloads (when the flow saves a link page)</h4></div>
+              <p>Some DSP emails send a <b>Download Report</b> link that Power Automate can’t follow without a Premium license, so the flow saves a short “Object moved” page instead of the report. When that happens, <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> shows a <b>Download report</b> button next to it. Connect your <b>Downloads</b> folder here, and the report imports on its own the moment it finishes downloading: one click.</p>
+              <p class="step-hint">The dashboard only looks at new .csv and .xlsx files in the top of Downloads, from after you connect it, and skips anything that isn’t a report. If Chrome won’t let you pick Downloads itself, make a folder inside it (for example <b>Reports</b>), pick that, and set Chrome to ask where to save, or move the file there.</p>
+              <p class="step-detail" id="downloads-connect-detail"></p>
+              <div class="step-actions"><button class="secondary-button" id="downloads-connect-button" type="button">Connect Downloads…</button><button class="text-button" id="downloads-disconnect" type="button" hidden>Disconnect</button></div>
+            </li>
           </ol>
         </section>
 
@@ -717,7 +724,7 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
       <form method="dialog" class="dialog-card">
         <div class="dialog-header"><div><p class="eyebrow">Data import</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Choose where the report goes, then the report itself. It is validated before any data is added to the dashboard, and your existing data stays unchanged until you confirm.</p>
-        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
+        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Drag a file here or click to choose · Excel (.xlsx) or CSV · up to 25 MB</small></label>
         <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
         <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
         <div class="validation-result" id="validation-result" hidden role="status"></div>
