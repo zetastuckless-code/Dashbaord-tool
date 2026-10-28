@@ -3687,7 +3687,7 @@ function renderReportAutomation() {
   stepStatus("dflow", dcmSeen ? "done" : "todo");
   stepStatus("dconnect", dcmFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
   stepStatus("ddownloads", downloadsFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
-  document.querySelector("#downloads-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : downloadsFolder ? `Watching “${downloadsFolder.name}” for new reports.` : "Not connected. Download buttons still work; drag the file into Import report afterward.";
+  document.querySelector("#downloads-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : downloadsFolder ? `Watching “${downloadsFolder.name}” for new reports. Set Chrome to download into this folder.` : "Not connected. Download buttons still work; drag the file into Import report afterward.";
   document.querySelector("#downloads-connect-button").textContent = downloadsFolder ? "Change folder…" : "Connect Downloads…";
   document.querySelector("#downloads-connect-button").disabled = !folderSupported;
   document.querySelector("#downloads-disconnect").hidden = !downloadsFolder;

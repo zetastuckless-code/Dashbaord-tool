@@ -591,7 +591,13 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
             <li class="automation-step" data-step="ddownloads">
               <div class="step-head"><span class="step-status" id="step-ddownloads-status"></span><h4>One-click downloads (when the flow saves a link page)</h4></div>
               <p>Some DSP emails send a <b>Download Report</b> link that Power Automate can’t follow without a Premium license, so the flow saves a short “Object moved” page instead of the report. When that happens, <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> shows a <b>Download report</b> button next to it. Connect your <b>Downloads</b> folder here, and the report imports on its own the moment it finishes downloading: one click.</p>
-              <p class="step-hint">The dashboard only looks at new .csv and .xlsx files in the top of Downloads, from after you connect it, and skips anything that isn’t a report. If Chrome won’t let you pick Downloads itself, make a folder inside it (for example <b>Reports</b>), pick that, and set Chrome to ask where to save, or move the file there.</p>
+              <p class="step-hint">Chrome won’t let a website open <b>Downloads</b> itself (“contains system files”), so use a folder inside it:</p>
+              <ol class="step-substeps">
+                <li>In Finder (or File Explorer), open <b>Downloads</b> and make a folder named <span class="step-quote">Dashboard reports</span>.</li>
+                <li>Click <b>Connect Downloads…</b> below and pick <b>Dashboard reports</b>.</li>
+                <li>In Chrome, open <b>Settings › Downloads › Location › Change</b> and pick the same <b>Dashboard reports</b> folder. Everything Chrome downloads lands there; the dashboard imports only the reports and leaves the rest alone. (Or turn on <b>Ask where to save each file</b> and pick the folder when a report downloads.)</li>
+              </ol>
+              <p class="step-hint">The dashboard only looks at new .csv and .xlsx files in that folder, from after you connect it, and skips anything that isn’t a report.</p>
               <p class="step-detail" id="downloads-connect-detail"></p>
               <div class="step-actions"><button class="secondary-button" id="downloads-connect-button" type="button">Connect Downloads…</button><button class="text-button" id="downloads-disconnect" type="button" hidden>Disconnect</button></div>
             </li>
