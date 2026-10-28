@@ -58,7 +58,7 @@ test("formats each metric kind and blanks missing values", () => {
   assert.equal(formatMetric("impressions", 59540), "59,540");
   assert.equal(formatMetric("ctr", 0.123), "0.12%");
   assert.equal(formatMetric("pacing", 96.8), "97%");
-  assert.equal(formatMetric("roas", 4.2), "4.20×");
+  assert.equal(formatMetric("roas", 4.2), "$4.20");
   assert.equal(formatMetric("spend", null), "—");
 });
 
@@ -67,4 +67,13 @@ test("normalizes a metric selection to known, unique, bounded keys", () => {
   assert.deepEqual(normalizeMetricSelection([]), [...DEFAULT_METRICS]);
   assert.deepEqual(normalizeMetricSelection("x"), [...DEFAULT_METRICS]);
   assert.equal(normalizeMetricSelection(METRIC_CATALOG.map(metric => metric.key)).length, MAX_ROW_METRICS);
+});
+
+test("ROAS and CPA leave out the spend of lines that report no revenue or conversions", () => {
+  const display = { name: "Display", spend: 1000, impressions: 100000, clicks: 100, conversions: 10, revenue: 3860 };
+  const youtube = { name: "YouTube", spend: 600, impressions: 50000, clicks: 20, conversions: null, revenue: null };
+  const metrics = computeMetrics([display, youtube], { asOf: new Date("2026-10-28T12:00:00Z") });
+  assert.equal(metrics.spend, 1600);
+  assert.equal(formatMetric("roas", metrics.roas), "$3.86");
+  assert.equal(metrics.cpa, 100);
 });

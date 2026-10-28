@@ -4334,7 +4334,7 @@ function renderDcmComparison(campaign) {
       ["Conversions", countText(comparison.report.conversions), countText(comparison.adServer.conversions), ""],
       ["Revenue", money(comparison.report.revenue), money(comparison.adServer.revenue), ""]
     ];
-    const kpis = source === "CM360" ? `<p class="dcm-kpis"><span>DCM CPA <b>${comparison.cpa === null ? "—" : `$${Math.round(comparison.cpa).toLocaleString("en-US")}`}</b></span><span>DCM ROAS <b>${comparison.roas === null ? "—" : `${comparison.roas.toFixed(comparison.roas < 1 ? 2 : 1)}x`}</b></span><small>DCM conversions and revenue against this report’s spend for the same days.</small></p>` : "";
+    const kpis = source === "CM360" ? `<p class="dcm-kpis"><span>DCM CPA <b>${comparison.cpa === null ? "—" : `$${Math.round(comparison.cpa).toLocaleString("en-US")}`}</b></span><span>DCM ROAS <b>${comparison.roas === null ? "—" : `$${comparison.roas.toFixed(2)}`}</b></span><small>DCM conversions and revenue against this report’s spend for the same days.</small></p>` : "";
     return `${heading}<p class="dcm-window">${shortDate(comparison.from)} to ${shortDate(comparison.to)} · ${comparison.days} day${comparison.days === 1 ? "" : "s"} both cover</p><div class="dcm-row dcm-head"><span></span><span>This report</span><span>${label}</span><span>Gap</span></div>${rows.map(row => `<div class="dcm-row">${row.map((cell, index) => `<span>${index ? cell : escapeHtml(cell)}</span>`).join("")}</div>`).join("")}${kpis}`;
   }).join("");
 }
