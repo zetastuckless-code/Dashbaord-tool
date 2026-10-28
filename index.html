@@ -557,7 +557,7 @@
                 <p class="step-hint"><b>If the file says “Object moved”:</b> the report link sends the download on to another address (your company’s link scanner and Zeta’s tracking link each add a hop), and <b>Upload file from URL</b> saves that notice instead of following it. The dashboard shows the real link when this happens, so you can click it and drop the CSV in. To fix the flow:</p>
                 <ol class="step-substeps">
                   <li>Click the <b>Upload file from URL</b> card, then the <b>…</b> menu, and pick <b>Delete</b>.</li>
-                  <li>Under <b>Report link</b>, click <b>+</b>, then <b>Add an action</b>. Search <span class="step-quote">HTTP</span> and pick <b>HTTP</b>. Set <b>Method</b> to <b>GET</b> and <b>URI</b> to <b>Outputs</b> under Report link (lightning bolt). The HTTP step follows the redirects to the file.</li>
+                  <li>Under <b>Report link</b>, click <b>+</b>, then <b>Add an action</b>. Search <span class="step-quote">HTTP</span> and pick the one named just <b>HTTP</b>, with the globe icon, under <b>Built-in</b> (often marked <b>Premium</b>). Not <b>Send an HTTP request</b> with the Outlook icon: that one only calls Microsoft’s own services and can’t download the report. Set <b>Method</b> to <b>GET</b> and <b>URI</b> to <b>Outputs</b> under Report link (lightning bolt), and leave the rest empty. The HTTP step follows the redirects to the file.</li>
                   <li>Under <b>HTTP</b>, click <b>+</b>, then <b>Add an action</b>. Search <span class="step-quote">Create file</span> and pick the <b>OneDrive for Business</b> one. <b>Folder Path:</b> pick <b>DCM Reports</b>. <b>File Name:</b> click <b>fx</b> and paste <span class="flow-expression"><code id="dsp-file-name-expression">concat(triggerOutputs()?['body/subject'], ' ', formatDateTime(triggerOutputs()?['body/receivedDateTime'], 'yyyy-MM-dd'), '.csv')</code><button class="text-button" type="button" data-copy-target="dsp-file-name-expression" data-copy-label="Expression" data-copy-hint="Paste it into the expression box (fx).">Copy</button></span> <b>File Content:</b> pick <b>Body</b> under HTTP.</li>
                   <li>Save and test with the same email. If HTTP shows a <b>Premium</b> label your account can’t use, skip this: the dashboard’s link still gets you the file in two clicks.</li>
                 </ol>
@@ -587,6 +587,13 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
               <p>In <b>Chrome</b> or <b>Edge</b>, pick the <b>DCM Reports</b> folder. The dashboard checks it along with your report folder. A campaign named like one on the dashboard imports on its own; DSP and DCM line items or placements go to the line whose name they carry. If the name differs, its first file waits on <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> so you can pick the campaign once; after that, each day’s file imports on its own.</p>
               <p class="step-detail" id="dcm-connect-detail"></p>
               <div class="step-actions"><button class="primary-button" id="dcm-connect-button" type="button">Connect DCM folder…</button><button class="text-button" id="dcm-disconnect" type="button" hidden>Disconnect</button></div>
+            </li>
+            <li class="automation-step" data-step="ddownloads">
+              <div class="step-head"><span class="step-status" id="step-ddownloads-status"></span><h4>One-click downloads (when the flow saves a link page)</h4></div>
+              <p>Some DSP emails send a <b>Download Report</b> link that Power Automate can’t follow without a Premium license, so the flow saves a short “Object moved” page instead of the report. When that happens, <a href="?view=review" data-page-view="review" class="automation-review-inline">Report review</a> shows a <b>Download report</b> button next to it. Connect your <b>Downloads</b> folder here, and the report imports on its own the moment it finishes downloading: one click.</p>
+              <p class="step-hint">The dashboard only looks at new .csv and .xlsx files in the top of Downloads, from after you connect it, and skips anything that isn’t a report. If Chrome won’t let you pick Downloads itself, make a folder inside it (for example <b>Reports</b>), pick that, and set Chrome to ask where to save, or move the file there.</p>
+              <p class="step-detail" id="downloads-connect-detail"></p>
+              <div class="step-actions"><button class="secondary-button" id="downloads-connect-button" type="button">Connect Downloads…</button><button class="text-button" id="downloads-disconnect" type="button" hidden>Disconnect</button></div>
             </li>
           </ol>
         </section>
@@ -717,7 +724,7 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
       <form method="dialog" class="dialog-card">
         <div class="dialog-header"><div><p class="eyebrow">Data import</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Choose where the report goes, then the report itself. It is validated before any data is added to the dashboard, and your existing data stays unchanged until you confirm.</p>
-        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Excel (.xlsx) or CSV · maximum 25 MB</small></label>
+        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Drag a file here or click to choose · Excel (.xlsx) or CSV · up to 25 MB</small></label>
         <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
         <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
         <div class="validation-result" id="validation-result" hidden role="status"></div>
