@@ -201,3 +201,16 @@ test("names lines of flight packages by flight and tactic, and renumbers a repea
   ]);
   assert.equal(new Set(io.lineItems.map(item => item.id)).size, io.lineItems.length);
 });
+
+test("reads a no-cost Zeta IO with dashes for rate and budget and a misspelled month", () => {
+  const io = parseInsertionOrder([[
+    "ADVERTISING INSERTION ORDER", "Agency: Agency A", "Advertiser: Advertiser A", "Campaign: Advertiser A No-Cost IMPs",
+    "Insertion Order Effective Dates: Novmeber 16, 2026 - December 27, 2026", "Budget: $0.00",
+    "Novmeber 16, 2026 - December 27, 2026 Package Programmatic Tactics Reaching Your Target Audience - - - - - - - - -",
+    "Novmeber 16, 2026 - December 27, 2026 Cross-Screen Standard Display Zeta Propensity Audience:Charities and Causes, County Targeting (See Geo Tab) Desktop I Mobile I TabletStandard Display 728x90, 300x250 CPM Impressions - 2,000,000 - CTR",
+    "Totals $0.00 2,000,000 $0.00"
+  ]]);
+  assert.equal(io.valid, true);
+  assert.deepEqual([io.startDate, io.endDate, io.budget], ["2026-11-16", "2026-12-27", 0]);
+  assert.deepEqual(io.lineItems.map(item => [item.name, item.rateType, item.rate, item.units, item.budget, item.kpi]), [["Standard Display", "CPM", 0, 2000000, 0, "CTR"]]);
+});
