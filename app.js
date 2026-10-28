@@ -39,7 +39,7 @@ import { purgeDemoCampaigns } from "./lib/demo-purge.js";
 import { applyDailyDelivery, exportDailyDeliveryCsv } from "./lib/daily-delivery-import.js";
 import { buildClientRollup } from "./lib/client-rollup.js";
 import { readIoPdf } from "./lib/io-reader.js";
-import { activeRowsWithPooled, budgetUnits, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsEdits, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
+import { activeRowsWithPooled, budgetUnits, impressionPacing, readCampaignTotals, removeCampaignTotals, removeOrderFromTotals, setCampaignTotals, setTotalsEdits, setTotalsFlight, unitsBudget, unitsPacing, writeCampaignTotals } from "./lib/campaign-totals.js";
 import { campaignPlacements, matchLinesToPlacements } from "./lib/line-flights.js";
 import { buildClientIoSummary } from "./lib/client-io.js";
 import { applyIoPlan, ioLines, recordLineLabel } from "./lib/io-plan.js";
@@ -268,7 +268,7 @@ function renderClientRollup(rows, activeAlerts, selectedClient) {
     return `<button type="button" class="client-card" data-client="${escapeHtml(client.client)}" aria-pressed="${client.client === selectedClient}">
     <span class="client-card-top"><span class="client-card-head"><span class="client-name">${escapeHtml(client.client)}</span><span class="status-pill ${client.pacingBand === "on-track" ? "good" : client.pacingBand === "unknown" ? "" : "warning"}">${bandLabel[client.pacingBand]}${client.pacing === null ? "" : ` · ${client.pacing.toFixed(0)}%`}</span></span>
     <span class="client-meta">${escapeHtml(meta)}</span></span>
-    <span class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)}` : "budget needed") : escapeHtml(periodText(period))}</span></span>
+    <span class="client-spend"><strong>${period !== "current" && client.spendCoverage === 0 ? "—" : formatMoney(client.spend)}</strong><span>${period === "current" ? (client.budget > 0 ? `of ${formatMoney(client.budget)}` : client.addedValueOnly ? "added value" : "budget needed") : escapeHtml(periodText(period))}</span></span>
     <span class="progress-track"${client.utilization === null ? " hidden" : ""}><span style="width:${Math.min(client.utilization ?? 0, 100)}%"></span></span>
     <span class="client-kpi-row">${kpis.length ? kpiText(kpis) : "No KPI data yet"}</span>
     <span class="client-card-foot">${topLine}<span class="client-signals">${signals}</span></span>
@@ -2375,14 +2375,14 @@ async function nextIo() {
   if (ioReviewDialog.open) ioReviewDialog.close();
 }
 
-// Planned impressions on a no-cost IO's lines.
+// Planned impressions on an added-value IO's lines.
 function ioUnits(items) { return (items || []).reduce((sum, item) => sum + (Number(item.units) > 0 ? Number(item.units) : 0), 0); }
 
 function renderIoReview() {
   const { io, fileName, presetKey } = pendingIo;
   document.querySelector("#io-review-eyebrow").textContent = ioQueue.length ? `Insertion order · ${ioQueue.length} more after this` : "Insertion order";
   document.querySelector("#io-review-subtitle").textContent = [io.advertiser, io.campaign, fileName].filter(Boolean).join(" · ");
-  const facts = [["Agency", io.agency], ["Order", orderLabel(io) || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? formatExactMoney(io.budget) : io.budget === 0 && ioUnits(io.lineItems) ? `No cost · ${formatCount(ioUnits(io.lineItems))} impressions` : "—"]];
+  const facts = [["Agency", io.agency], ["Order", orderLabel(io) || "—"], ["Flight", io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : "—"], ["Budget", io.budget ? formatExactMoney(io.budget) : io.budget === 0 && ioUnits(io.lineItems) ? `Added value · ${formatCount(ioUnits(io.lineItems))} impressions` : "—"]];
   document.querySelector("#io-review-facts").innerHTML = facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("");
   const warnings = document.querySelector("#io-review-warnings");
   warnings.hidden = io.warnings.length === 0;
@@ -2449,7 +2449,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   const entry = campaignTotals[key];
   refreshAfterDataChange();
   if (activeCampaignIndex !== null && campaigns[activeCampaignIndex] && groupKey(campaigns[activeCampaignIndex]) === key) renderIoTotalsNote(campaigns[activeCampaignIndex]);
-  showToast(created ? "Campaign created" : "Insertion order applied", `${targetName} is paced on ${entry.noCost ? `${formatCount(entry.impressionGoal)} impressions (no-cost IO)` : `${entry.orders.length > 1 ? `${entry.orders.length} orders totalling ` : ""}${formatExactMoney(entry.budget)}`} from ${entry.startDate} to ${entry.endDate}.${created ? " Import its reports to add delivery." : ""}`);
+  showToast(created ? "Campaign created" : "Insertion order applied", `${targetName} is paced on ${entry.noCost ? `${formatCount(entry.impressionGoal)} impressions (added value, $0)` : `${entry.orders.length > 1 ? `${entry.orders.length} orders totalling ` : ""}${formatExactMoney(entry.budget)}`} from ${entry.startDate} to ${entry.endDate}.${created ? " Import its reports to add delivery." : ""}`);
   pendingIo = null;
   nextIo();
 });
@@ -2643,13 +2643,18 @@ function renderClientIo() {
     const records = campaigns.filter(record => record.client === clientScope && groupKey(record) === item.key && !isCampaignArchived(record));
     const metrics = computeMetrics(records, { spendView: selectedSource, totals: campaignTotals[item.key] || null });
     const done = item.status === "completed";
+    const free = impressionPacing(records, campaignTotals[item.key], new Date());
     const budget = item.budget || metrics.budget || null;
     const spend = Number.isFinite(metrics.spend) ? metrics.spend : null;
     const delivered = records.some(record => record.deliveredRate) ? "Delivered" : "Spent";
     const plan = budget && item.startDate && item.endDate ? calculateSpendPacing({ budget, spend: spend || 0, startDate: item.startDate, endDate: item.endDate }) : null;
     const share = value => `${Math.max(0, Math.min(100, value / budget * 100)).toFixed(1)}%`;
-    const bar = budget && spend !== null ? `<div class="io-progress"><div class="io-progress-label"><span><b>${escapeHtml(formatMoney(spend))}</b> ${delivered.toLowerCase()} of ${escapeHtml(formatMoney(budget))}</span>${done ? "" : `<b class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))} pacing</b>`}</div><div class="io-bar ${done ? "" : paceClass(metrics.pacing)}" role="img" aria-label="${escapeHtml(`${formatMoney(spend)} ${delivered.toLowerCase()} of ${formatMoney(budget)}`)}"><span style="width:${share(spend)}"></span>${!done && plan ? `<i title="Where 100% pacing would be today" style="left:${share(plan.expectedSpend)}"></i>` : ""}</div></div>` : "";
-    const chips = [`<span class="io-chip io-chip-date">${CALENDAR_ICON}${escapeHtml(shortRange(item.startDate, item.endDate))}</span>`, records.length ? `<span class="io-chip">${records.length} line${records.length === 1 ? "" : "s"}</span>` : "", item.hasIo ? item.orders.map(order => `<span class="io-chip io-chip-order" title="${escapeHtml(`${order.fileName || ""}${order.appliedAt ? ` · applied ${ioDate(order.appliedAt.slice(0, 10))}` : ""}`)}">${escapeHtml(order.order || "IO")}</span>`).join("") : '<span class="io-chip io-chip-muted">No IO</span>', campaignTotals[item.key]?.edits ? '<span class="io-chip io-chip-edited">Edited by hand</span>' : ""].join("");
+    // Added value is tracked on impressions: delivered against the IO's goal, with the same 100% pacing marker.
+    const freePlan = free && item.startDate && item.endDate ? calculateSpendPacing({ budget: free.goal, spend: free.impressions, startDate: item.startDate, endDate: item.endDate }) : null;
+    const freeShare = value => `${Math.max(0, Math.min(100, value / free.goal * 100)).toFixed(1)}%`;
+    const bar = free ? `<div class="io-progress"><div class="io-progress-label"><span><b>${escapeHtml(formatCount(free.impressions))}</b> impressions of ${escapeHtml(formatCount(free.goal))}</span>${done ? "" : `<b class="${paceClass(free.pacing)}">${escapeHtml(formatMetric("pacing", free.pacing))} pacing</b>`}</div><div class="io-bar ${done ? "" : paceClass(free.pacing)}" role="img" aria-label="${escapeHtml(`${formatCount(free.impressions)} impressions of ${formatCount(free.goal)}`)}"><span style="width:${freeShare(free.impressions)}"></span>${!done && freePlan ? `<i title="Where 100% pacing would be today" style="left:${freeShare(freePlan.expectedSpend)}"></i>` : ""}</div></div>`
+      : budget && spend !== null ? `<div class="io-progress"><div class="io-progress-label"><span><b>${escapeHtml(formatMoney(spend))}</b> ${delivered.toLowerCase()} of ${escapeHtml(formatMoney(budget))}</span>${done ? "" : `<b class="${paceClass(metrics.pacing)}">${escapeHtml(formatMetric("pacing", metrics.pacing))} pacing</b>`}</div><div class="io-bar ${done ? "" : paceClass(metrics.pacing)}" role="img" aria-label="${escapeHtml(`${formatMoney(spend)} ${delivered.toLowerCase()} of ${formatMoney(budget)}`)}"><span style="width:${share(spend)}"></span>${!done && plan ? `<i title="Where 100% pacing would be today" style="left:${share(plan.expectedSpend)}"></i>` : ""}</div></div>` : "";
+    const chips = [`<span class="io-chip io-chip-date">${CALENDAR_ICON}${escapeHtml(shortRange(item.startDate, item.endDate))}</span>`, records.length ? `<span class="io-chip">${records.length} line${records.length === 1 ? "" : "s"}</span>` : "", free ? '<span class="io-chip">Added value · $0</span>' : "", item.hasIo ? item.orders.map(order => `<span class="io-chip io-chip-order" title="${escapeHtml(`${order.fileName || ""}${order.appliedAt ? ` · applied ${ioDate(order.appliedAt.slice(0, 10))}` : ""}`)}">${escapeHtml(order.order || "IO")}</span>`).join("") : '<span class="io-chip io-chip-muted">No IO</span>', campaignTotals[item.key]?.edits ? '<span class="io-chip io-chip-edited">Edited by hand</span>' : ""].join("");
     const actions = `<div class="io-card-actions">${salesforceLink(item.key)}${item.hasIo ? `<button class="text-button" type="button" data-edit-io="${escapeHtml(item.key)}">Edit IO</button>` : ""}<button class="text-button" type="button" data-edit-campaign="${escapeHtml(item.key)}">Campaign</button></div>`;
     const details = item.hasIo && !done ? `<details class="io-more"><summary>${item.placements.length} line${item.placements.length === 1 ? "" : "s"} on this IO${item.orders.length > 1 ? ` · ${item.orders.length} orders` : ""}</summary>${item.orders.length > 1 ? `<ul class="io-orders">${item.orders.map(order => `<li><span><strong>${escapeHtml(order.order || "Order")}</strong><small>${escapeHtml(order.fileName || "")}</small></span><span class="io-order-figures">${Number.isFinite(order.budget) ? `<strong>${escapeHtml(formatExactMoney(order.budget))}</strong>` : ""}</span></li>`).join("")}</ul>` : ""}<ul class="io-lines">${item.placements.map(placement => `<li><span><strong>${escapeHtml(placement.name || placement.id)}</strong><small>${escapeHtml(shortRange(placement.startDate, placement.endDate))}${placement.flights > 1 ? ` · ${placement.flights} flights` : ""}</small></span><b>${Number.isFinite(placement.budget) ? escapeHtml(formatMoney(placement.budget)) : "—"}</b></li>`).join("")}</ul></details>` : "";
     const note = !item.hasIo && !done ? `<p class="io-empty">No insertion order yet. Pacing uses the budget and dates from the reports.</p>` : "";
@@ -4495,7 +4500,8 @@ function billingHead(result, month, config, client = clientScope) {
 function unbilledCampaigns(client, month, config) {
   const range = { from: `${month}-01`, to: new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10) };
   const billed = new Set((config.rows || []).flatMap(row => row.lines || []));
-  const lines = clientLines(client).filter(line => !billed.has(line.name) && (!line.startDate || line.startDate <= range.to) && (!line.endDate || line.endDate >= range.from) && campaignStatus[groupKey(line)] !== "canceled");
+  // Added-value campaigns cost nothing, so they never need a billing row.
+  const lines = clientLines(client).filter(line => !billed.has(line.name) && !campaignTotals[groupKey(line)]?.noCost && (!line.startDate || line.startDate <= range.to) && (!line.endDate || line.endDate >= range.from) && campaignStatus[groupKey(line)] !== "canceled");
   const groups = new Map();
   for (const line of lines) groups.set(groupKey(line), [...(groups.get(groupKey(line)) || []), line]);
   return [...groups].map(([key, list]) => ({ key, name: campaignGroupName(list[0]), lines: list }));
