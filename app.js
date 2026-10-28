@@ -3687,7 +3687,7 @@ function renderReportAutomation() {
   stepStatus("dflow", dcmSeen ? "done" : "todo");
   stepStatus("dconnect", dcmFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
   stepStatus("ddownloads", downloadsFolder ? (reportState.needsClick ? "warn" : "done") : "todo");
-  document.querySelector("#downloads-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : downloadsFolder ? `Watching “${downloadsFolder.name}” for new reports.` : "Not connected. Download buttons still work; drag the file into Import report afterward.";
+  document.querySelector("#downloads-connect-detail").textContent = !folderSupported ? "This browser can't watch a folder. Open the dashboard in Chrome or Edge." : downloadsFolder ? `Watching “${downloadsFolder.name}” for new reports. Set Chrome to download into this folder.` : "Not connected. Download buttons still work; drag the file into Import report afterward.";
   document.querySelector("#downloads-connect-button").textContent = downloadsFolder ? "Change folder…" : "Connect Downloads…";
   document.querySelector("#downloads-connect-button").disabled = !folderSupported;
   document.querySelector("#downloads-disconnect").hidden = !downloadsFolder;
@@ -3776,6 +3776,15 @@ document.querySelector("#report-inbox").addEventListener("click", async event =>
       setTimeout(renderReportAutomation, 0);
       showToast("Downloading the report", "It imports from Downloads as soon as it lands.");
     } else showToast("Downloading the report", "When it finishes, drag the file into Import report. Connect Downloads on the Automation page to skip this step.");
+    return;
+  }
+  // Reads a file again (after a fix to the dashboard or the flow): it leaves the ledger, so the next check picks it up.
+  const recheck = event.target.closest("[data-report-recheck]");
+  if (recheck) {
+    const ledger = readReportLedger(localStorage);
+    delete ledger[recheck.dataset.reportRecheck];
+    localStorage.setItem(REPORT_LEDGER_KEY, JSON.stringify(ledger));
+    await checkReportFolder({ ask: true });
     return;
   }
   const dismiss = event.target.closest("[data-report-dismiss]");
@@ -4176,7 +4185,7 @@ function renderReviewPage(inbox = readReportInbox(localStorage)) {
     // The flow saved a link page instead of the report: one button downloads the real file.
     const download = /saved a redirect/.test(item.reason || "") ? /https?:\/\/[^\s]+[^\s.,;:)]/.exec(item.reason)?.[0] : null;
     if (download) return `<li class="report-download"><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}The flow saved the email’s download link, not the report.${downloadsFolder ? " Download it and it imports from Downloads on its own." : " Download it, then drag the file into Import report."}</small></span><span class="report-inbox-actions"><a class="primary-button" href="${escapeHtml(download)}" target="_blank" rel="noopener" data-report-download="${escapeHtml(item.key)}">Download report</a><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`;
-    return `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${linkify(escapeHtml(item.reason))}</small></span><span class="report-inbox-actions"><button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`;
+    return `<li><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.folder || "")}${item.folder ? " · " : ""}${linkify(escapeHtml(item.reason))}</small></span><span class="report-inbox-actions">${item.outcome === "couldn't read" ? `<button class="text-button" type="button" data-report-recheck="${escapeHtml(item.key)}">Check again</button>` : ""}<button class="secondary-button" type="button" data-report-review="${escapeHtml(item.key)}">Review</button><button class="text-button" type="button" data-report-dismiss="${escapeHtml(item.key)}">Dismiss</button></span></li>`;
   }).join("") : `<li class="report-inbox-empty">${reportFolder ? "Nothing waiting. Reports that need a decision show up here." : "Connect a report folder first."}</li>`;
   const activity = readReportActivity().slice(0, 8);
   document.querySelector("#report-activity").innerHTML = activity.length ? activity.map(item => `<li><span class="report-outcome ${escapeHtml(item.outcome.replace(/[^a-z]+/g, "-"))}">${escapeHtml(outcomeLabel[item.outcome] || item.outcome)}</span><span>${escapeHtml(item.name)}${item.reason ? `<small>${linkify(escapeHtml(item.reason))}</small>` : ""}</span><time>${escapeHtml(new Date(item.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("") : '<li class="report-inbox-empty">No reports checked yet.</li>';
@@ -4185,15 +4194,23 @@ function renderReviewPage(inbox = readReportInbox(localStorage)) {
   const statusLabel = { "Imported with warnings": "Imported with warnings", "Partially imported": "Partly imported", Rejected: "Didn’t import" };
   document.querySelector("#review-mark-all").hidden = pending.length < 2;
   document.querySelector("#review-imports-context").textContent = pending.length ? `${pending.length} import${pending.length === 1 ? "" : "s"} to check. Mark each one reviewed once it looks right.` : "Imports that came in with warnings, came in partly, or didn’t come in";
-  document.querySelector("#review-imports").innerHTML = pending.length ? pending.map(record => {
+  // The same file failing the same way several times shows once, newest first, and is marked reviewed all at once.
+  const grouped = new Map();
+  for (const record of pending) {
+    const key = `${record.status}|${record.fileName}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(record);
+  }
+  document.querySelector("#review-imports").innerHTML = pending.length ? [...grouped.values()].map(records => {
+    const record = records.sort((a, b) => String(b.importedAt).localeCompare(String(a.importedAt)))[0];
     const touched = importClients(record, clients);
     const notes = [...(record.warnings || []), ...(record.errors || [])];
-    return `<li class="review-import ${record.status === "Rejected" ? "rejected" : ""}"><div class="review-import-head"><span class="report-outcome ${record.status === "Rejected" ? "failed" : "review"}">${escapeHtml(statusLabel[record.status] || record.status)}</span><b>${escapeHtml(record.fileName)}</b><time>${escapeHtml(new Date(record.importedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></div>${notes.length ? `<ul class="review-notes">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}<div class="review-import-actions">${touched.map(client => `<a class="text-button" href="?client=${encodeURIComponent(client)}" data-review-client="${escapeHtml(client)}">Open ${escapeHtml(client)}</a>`).join("")}<button class="secondary-button" type="button" data-review-done="${escapeHtml(record.id)}">Mark reviewed</button></div></li>`;
+    return `<li class="review-import ${record.status === "Rejected" ? "rejected" : ""}"><div class="review-import-head"><span class="report-outcome ${record.status === "Rejected" ? "failed" : "review"}">${escapeHtml(statusLabel[record.status] || record.status)}</span><b>${escapeHtml(record.fileName)}</b>${records.length > 1 ? `<small class="review-repeat">${records.length} tries</small>` : ""}<time>${escapeHtml(new Date(record.importedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></div>${notes.length ? `<ul class="review-notes">${notes.map(note => `<li>${linkify(escapeHtml(note))}</li>`).join("")}</ul>` : ""}<div class="review-import-actions">${touched.map(client => `<a class="text-button" href="?client=${encodeURIComponent(client)}" data-review-client="${escapeHtml(client)}">Open ${escapeHtml(client)}</a>`).join("")}<button class="secondary-button" type="button" data-review-done="${escapeHtml(records.map(item => item.id).join(" "))}">Mark reviewed</button></div></li>`;
   }).join("") : '<li class="report-inbox-empty">Nothing to check. Imports with warnings show up here.</li>';
 }
 document.querySelector("#review-page").addEventListener("click", event => {
   const done = event.target.closest("[data-review-done]");
-  if (done) { reviewedImports = markImportsReviewed(localStorage, reviewedImports, [done.dataset.reviewDone]); renderReportAutomation(); renderDataHealth(); return; }
+  if (done) { reviewedImports = markImportsReviewed(localStorage, reviewedImports, done.dataset.reviewDone.split(" ")); renderReportAutomation(); renderDataHealth(); return; }
   if (event.target.closest("#review-mark-all")) { reviewedImports = markImportsReviewed(localStorage, reviewedImports, pendingImports().map(record => record.id)); renderReportAutomation(); renderDataHealth(); return; }
   const client = event.target.closest("[data-review-client]");
   if (client) { event.preventDefault(); setClientScope(client.dataset.reviewClient); }

@@ -713,3 +713,8 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 #clients>.client-rollup-header .panel-actions{justify-content:flex-end}
 .dropzone.drag-over{border-color:var(--primary);background:#efedff;box-shadow:0 0 0 4px rgba(99,87,229,.12)}.dropzone.drag-over .upload-symbol{transform:translateY(-2px)}
 .report-inbox .report-download .primary-button{display:inline-flex;align-items:center;height:34px;text-decoration:none}
+/* Report review stays inside the window: long names, notes and links wrap instead of widening the page. */
+.review-page,.review-page .panel,.report-inbox li>span,.review-import,.review-import-head,.review-notes li{min-width:0;max-width:100%}
+.report-inbox li>span:first-child,.review-notes li,.report-activity li>span,.review-import-head b{overflow-wrap:anywhere;word-break:break-word}
+.report-inbox li{flex-wrap:wrap}.report-inbox .report-inbox-actions{flex-shrink:0;margin-left:auto}
+.review-notes a{font-weight:600}.review-repeat{color:#6b7385;font-size:12px}
