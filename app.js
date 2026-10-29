@@ -26,6 +26,7 @@ import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
+import { addTrailEntry, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
@@ -1674,7 +1675,7 @@ document.querySelector("#workspace-backup-button").addEventListener("click", () 
 });
 document.querySelectorAll(".close-workspace-backup").forEach(button => button.addEventListener("click", () => workspaceBackupDialog.close()));
 document.querySelector("#download-workspace-backup").addEventListener("click", () => {
-  const backup = createWorkspaceBackup({ campaigns, importHistory, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder, todos, billing, salesforce, reporting });
+  const backup = createWorkspaceBackup({ campaigns, importHistory, uploadTrail, alertRules, visibleColumns, acknowledgedAlerts: acknowledgedAlertIds, dashboardView, savedViews, metricPrefs, campaignTotals, campaignStatus, campaignOrder, todos, billing, salesforce, reporting });
   const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
   const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-workspace-${new Date().toISOString().slice(0, 10)}.json` });
   link.click();
@@ -2449,6 +2450,7 @@ document.querySelector("#io-review-form").addEventListener("submit", event => {
   const entry = campaignTotals[key];
   refreshAfterDataChange();
   if (activeCampaignIndex !== null && campaigns[activeCampaignIndex] && groupKey(campaigns[activeCampaignIndex]) === key) renderIoTotalsNote(campaigns[activeCampaignIndex]);
+  logUpload({ fileName, kind: "io", clients: [created?.client || groupCampaigns(campaigns).find(group => group.key === key)?.client], campaigns: [targetName], detail: [orderLabel(io), entry.noCost ? `added value · ${formatCount(entry.impressionGoal)} impressions` : formatExactMoney(io.budget ?? 0), io.startDate && io.endDate ? `${io.startDate} → ${io.endDate}` : ""].filter(Boolean).join(" · ") });
   showToast(created ? "Campaign created" : "Insertion order applied", `${targetName} is paced on ${entry.noCost ? `${formatCount(entry.impressionGoal)} impressions (added value, $0)` : `${entry.orders.length > 1 ? `${entry.orders.length} orders totalling ` : ""}${formatExactMoney(entry.budget)}`} from ${entry.startDate} to ${entry.endDate}.${created ? " Import its reports to add delivery." : ""}`);
   pendingIo = null;
   nextIo();
@@ -2590,6 +2592,11 @@ function campaignImportKey(campaign) {
 function recordImport(fileName, fingerprint, status, rowCount = 0, errors = [], campaignKeys = [], warnings = []) {
   importHistory = addImportRecord(importHistory, createImportRecord({ fileName, fingerprint, status, rowCount, errors, campaignKeys, warnings }));
   writeImportHistory(localStorage, importHistory);
+  const dcm = campaignKeys.some(key => key.endsWith("::cm360"));
+  const keys = new Set(campaignKeys.map(key => key.replace(/::cm360$/, "")));
+  const touched = campaigns.filter(record => keys.has(campaignImportKey(record)));
+  const failed = ["Rejected", "Duplicate"].includes(status);
+  logUpload({ fileName, kind: dcm ? "dcm" : "report", status, clients: touched.map(record => record.client), campaigns: touched.map(campaignGroupName), detail: failed ? errors[0] || "" : `${rowCount} line${rowCount === 1 ? "" : "s"}${warnings.some(warning => /automatically/i.test(warning)) ? " · from the watched folder" : ""}` });
   renderImportHistory();
   renderDataHealth();
 }
@@ -2790,8 +2797,48 @@ document.querySelector("#client-document-list").addEventListener("click", event 
   if (doc) removeUploadedDocument(clientScope, doc);
 });
 
+// --- Upload trail: every file pulled in, kept day by day even after newer files replace its data ---
+let uploadTrail = readUploadTrail(localStorage);
+function logUpload(entry) {
+  uploadTrail = addTrailEntry(uploadTrail, entry);
+  try { writeUploadTrail(localStorage, uploadTrail); } catch { /* storage full: the trail is a record, never a blocker */ }
+}
+const trailDayLabel = day => {
+  const today = todayLocal();
+  const yesterday = new Date(Date.now() - 864e5);
+  const label = new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric", year: day.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
+  return day === today ? `Today · ${label}` : day === `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, "0")}-${String(yesterday.getDate()).padStart(2, "0")}` ? `Yesterday · ${label}` : label;
+};
+
+function renderUploadTrail() {
+  if (!uploadTrail.length) {
+    uploadTrail = seedUploadTrail(uploadTrail, { docs: listAllUploads({ campaigns, totals: campaignTotals, importHistory }), importHistory });
+    if (uploadTrail.length) try { writeUploadTrail(localStorage, uploadTrail); } catch { /* shown either way */ }
+  }
+  const clients = [...new Set(uploadTrail.flatMap(entry => entry.clients))].sort((a, b) => a.localeCompare(b));
+  if (sourcesFilter.client !== "all" && !clients.includes(sourcesFilter.client)) sourcesFilter.client = "all";
+  const clientSelect = document.querySelector("#sources-client");
+  clientSelect.innerHTML = `<option value="all">All clients</option>${clients.map(client => `<option value="${escapeHtml(client)}">${escapeHtml(client)}</option>`).join("")}`;
+  clientSelect.value = sourcesFilter.client;
+  const kindSelect = document.querySelector("#sources-kind");
+  kindSelect.innerHTML = TRAIL_KIND_OPTIONS.map(item => `<option value="${item.id}">${escapeHtml(item.label)}</option>`).join("");
+  if (!TRAIL_KIND_OPTIONS.some(item => item.id === sourcesFilter.kind)) sourcesFilter.kind = "all";
+  kindSelect.value = sourcesFilter.kind;
+  document.querySelector("#sources-group").value = "day";
+  const filtered = filterTrail(uploadTrail, sourcesFilter);
+  const days = groupTrailByDay(filtered);
+  document.querySelector("#data-sources-context").textContent = uploadTrail.length
+    ? `${uploadTrail.length} upload${uploadTrail.length === 1 ? "" : "s"} on record${filtered.length === uploadTrail.length ? "" : ` · showing ${filtered.length}`} · every file pulled in, day by day`
+    : "Nothing has been uploaded yet";
+  const time = at => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const row = entry => `<div class="source-row trail-row${trailFailed(entry) ? " failed" : ""}"><span class="document-kind kind-trail-${escapeHtml(entry.kind)}">${escapeHtml(TRAIL_KINDS[entry.kind] || entry.kind)}</span><span class="document-main"><strong>${escapeHtml(entry.fileName)}</strong><small>${escapeHtml([trailFailed(entry) ? entry.status : "", entry.clients.join(", "), entry.campaigns.length && entry.campaigns.join(", ") !== entry.clients.join(", ") ? entry.campaigns.slice(0, 3).join(", ") + (entry.campaigns.length > 3 ? ` +${entry.campaigns.length - 3}` : "") : "", entry.detail, entry.backfilled ? "from before the trail started" : ""].filter(Boolean).join(" · "))}</small></span><span class="source-when">${escapeHtml(time(entry.at))}</span></div>`;
+  document.querySelector("#data-sources-list").innerHTML = days.length
+    ? days.map(day => `<section class="source-group" aria-label="${escapeHtml(trailDayLabel(day.day))}"><div class="source-group-head"><h3>${escapeHtml(trailDayLabel(day.day))}</h3><small>${day.imported} pulled in${day.failed ? ` · ${day.failed} not imported` : ""}</small></div>${day.entries.map(row).join("")}</section>`).join("")
+    : `<p class="history-empty">${uploadTrail.length ? "No uploads match these filters." : "Every report, DCM file, IO, billing file, status doc, and morning brief you pull in is listed here by day."}</p>`;
+}
+
 // --- Data sources: every uploaded report, by client or campaign, with when it was uploaded ---
-const sourcesFilter = { client: "all", kind: "all", query: "", by: "client" };
+const sourcesFilter = { client: "all", kind: "all", query: "", by: "day" };
 let lastSourceDocs = [];
 const uploadedText = doc => doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Upload time not recorded";
 
@@ -2803,6 +2850,7 @@ function sourceDetail(doc) {
 }
 
 function renderDataSources() {
+  if (sourcesFilter.by === "day") { renderUploadTrail(); return; }
   lastSourceDocs = listAllUploads({ campaigns, totals: campaignTotals, importHistory });
   const clients = [...new Set(lastSourceDocs.map(doc => doc.client))];
   if (sourcesFilter.client !== "all" && !clients.includes(sourcesFilter.client)) sourcesFilter.client = "all";
@@ -2810,7 +2858,8 @@ function renderDataSources() {
   clientSelect.innerHTML = `<option value="all">All clients</option>${clients.map(client => `<option value="${escapeHtml(client)}">${escapeHtml(client)}</option>`).join("")}`;
   clientSelect.value = sourcesFilter.client;
   const kindSelect = document.querySelector("#sources-kind");
-  if (!kindSelect.options.length) kindSelect.innerHTML = UPLOAD_KIND_OPTIONS.map(item => `<option value="${item.id}">${escapeHtml(item.label)}</option>`).join("");
+  kindSelect.innerHTML = UPLOAD_KIND_OPTIONS.map(item => `<option value="${item.id}">${escapeHtml(item.label)}</option>`).join("");
+  if (!UPLOAD_KIND_OPTIONS.some(item => item.id === sourcesFilter.kind)) sourcesFilter.kind = "all";
   kindSelect.value = sourcesFilter.kind;
   document.querySelector("#sources-group").value = sourcesFilter.by;
   const filtered = filterUploads(lastSourceDocs, sourcesFilter);
@@ -2831,7 +2880,7 @@ function applySourcesView() {
   document.querySelector("#data-sources-page").hidden = !sourcesView;
   if (!sourcesView) return;
   document.querySelector("#greeting").textContent = "Data sources";
-  document.querySelector("#page-subtitle").textContent = "Every report behind the dashboard, grouped by client or campaign, with when it was uploaded.";
+  document.querySelector("#page-subtitle").textContent = "Every file pulled into the dashboard, day by day, or what's behind each client and campaign now.";
   document.querySelector("#client-back").hidden = true;
   document.title = "Zeta | Data sources";
   renderDataSources();
@@ -3131,6 +3180,7 @@ async function checkTodoFolder({ ask = false } = {}) {
     localStorage.setItem(TODO_FILES_KEY, JSON.stringify(result.processed));
     const totals = result.files.reduce((sum, file) => { const taken = takeInTodos(file.parsed); return { added: sum.added + taken.added, changed: sum.changed + taken.added + taken.updated + taken.removed }; }, { added: 0, changed: 0 });
     folderState = { lastChecked: new Date(), lastAdded: totals.added, needsClick: false };
+    for (const file of result.files) logUpload({ fileName: file.name, kind: "brief", detail: `${file.parsed.items?.length ?? 0} item${file.parsed.items?.length === 1 ? "" : "s"}` });
     if (result.filesRead) {
       saveTodos();
       renderCampaigns(document.querySelector("#client-filter").value);
@@ -4678,6 +4728,7 @@ document.querySelector("#billing-template-input").addEventListener("change", asy
     renderClientBilling();
     if (pageView === "billing") renderBillingPage();
     updateBillingReminder();
+    logUpload({ fileName: file.name, kind: "billing", clients: [clientScope], detail: `${parsed.rows.length} billing row${parsed.rows.length === 1 ? "" : "s"}${kept ? ` · ${moneyText(kept.total)} billed for ${monthLabel(month)}` : ""}` });
     showToast("Billing set up", `${parsed.rows.length} row${parsed.rows.length === 1 ? "" : "s"} read from ${file.name}${kept ? `, with ${moneyText(kept.total)} billed for ${monthLabel(month)}` : ""}. Check each row’s lines and source.`);
   } catch (error) {
     showToast("Couldn't read that file", error.message);
@@ -4862,6 +4913,7 @@ document.querySelector("#status-doc-input").addEventListener("change", async eve
     saveStatusCarry();
     renderStatusPage();
     const count = Object.keys(found).length;
+    logUpload({ fileName: file.name, kind: "status", status: count ? "Imported" : "Failed", clients: groups.filter(group => found[group.key]).map(group => group.client), detail: count ? `${count} campaign${count === 1 ? "" : "s"} matched` : "No campaigns matched" });
     showToast(count ? "Status doc read" : "No campaigns matched", count ? `${count} campaign${count === 1 ? "" : "s"} matched in ${file.name}. Reporting cadence and report name fill in from it.` : "Rows match by the name in CLIENT/ CAMPAIGN/ZETA ID. Check the names line up with the dashboard.");
   } catch (error) {
     showToast("Couldn't read that file", error.message);
