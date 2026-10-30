@@ -26,6 +26,7 @@ import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
+import { isZipName, unzipReports } from "./lib/zip.js";
 import { addTrailEntry, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
@@ -1747,8 +1748,8 @@ fileInput.addEventListener("change", () => {
   selectedFile = file;
   document.querySelector("#file-name").textContent = file.name;
   filePreview.hidden = false;
-  if (!/\.(csv|xlsx)$/i.test(file.name)) {
-    showValidationResult(["Choose a .csv or .xlsx report."], "error");
+  if (!/\.(csv|xlsx|zip)$/i.test(file.name)) {
+    showValidationResult(["Choose a .csv or .xlsx report, or a .zip with one inside."], "error");
     validateButton.disabled = true;
     return;
   }
@@ -1771,11 +1772,32 @@ validationResult.addEventListener("click", event => {
   allowDuplicateOnce = true;
   validateButton.click();
 });
+/** The reports inside a .zip as files, named as they are in the zip and dated like the zip. */
+async function zipReports(file) {
+  return (await unzipReports(await file.arrayBuffer())).map(entry => new File([entry.bytes], entry.name, { lastModified: file.lastModified }));
+}
+
 /**
  * Reads and checks one report file and matches its campaigns, the same way for the import dialog and the watched report
  * folder. Returns `{ status: "ready", pending }`, or `{ status: "duplicate" | "rejected", messages }` (already recorded).
  */
 async function prepareImport(file, { allowDuplicate = false } = {}) {
+  // A zipped report (some DCM emails send one) is opened and the report inside is imported.
+  if (isZipName(file.name)) {
+    let inner;
+    try {
+      inner = await zipReports(file);
+    } catch (error) {
+      recordImport(file.name, await fingerprintBytes(await file.arrayBuffer()), "Rejected", 0, [error.message]);
+      return { status: "rejected", messages: [error.message] };
+    }
+    if (inner.length !== 1) {
+      const message = inner.length ? `This .zip holds ${inner.length} reports. Unzip it and import each one.` : "This .zip has no .csv or .xlsx report in it.";
+      recordImport(file.name, await fingerprintBytes(await file.arrayBuffer()), "Rejected", 0, [message]);
+      return { status: "rejected", messages: [message] };
+    }
+    file = inner[0];
+  }
   const fileBytes = await file.arrayBuffer();
   const fingerprint = await fingerprintBytes(fileBytes);
   if (hasSuccessfulFingerprint(importHistory, fingerprint) && !allowDuplicate) {
@@ -3712,19 +3734,38 @@ async function checkReportFolder({ ask = false } = {}) {
       let outcome;
       let reason = "";
       try {
-        const prepared = await prepareImport(entry.file);
-        if (prepared.status === "duplicate") outcome = "already imported";
-        else if (prepared.status === "rejected") { outcome = "couldn't read"; reason = prepared.messages[0]; }
-        else {
-          pendingValidatedImport = prepared.pending;
-          if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
-          const check = importIsClear();
-          if (check.clear) {
-            const lines = commitPendingImport({ automatic: true });
-            outcome = "imported";
-            reason = `${lines} line${lines === 1 ? "" : "s"}`;
-            imported.push(entry.name);
-          } else { outcome = "needs review"; reason = check.reason; }
+        // A zip with several reports is taken one report at a time; its outcome is the one that most needs you.
+        const parts = isZipName(entry.name) && entry.file.size <= 50 * 1024 * 1024 ? await zipReports(entry.file) : [entry.file];
+        if (parts.length > 1) {
+          const results = [];
+          for (const part of parts) {
+            const prepared = await prepareImport(part);
+            if (prepared.status === "duplicate") { results.push(["already imported", ""]); continue; }
+            if (prepared.status === "rejected") { results.push(["couldn't read", `${part.name}: ${prepared.messages[0]}`]); continue; }
+            pendingValidatedImport = prepared.pending;
+            if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
+            const check = importIsClear();
+            if (check.clear) { const lines = commitPendingImport({ automatic: true }); results.push(["imported", `${part.name}: ${lines} line${lines === 1 ? "" : "s"}`]); imported.push(part.name); }
+            else results.push(["needs review", `${part.name}: ${check.reason}`]);
+            pendingValidatedImport = null;
+          }
+          outcome = ["couldn't read", "needs review", "imported", "already imported"].find(value => results.some(([result]) => result === value));
+          reason = results.map(([, text]) => text).filter(Boolean).join(" · ");
+        } else {
+          const prepared = await prepareImport(entry.file);
+          if (prepared.status === "duplicate") outcome = "already imported";
+          else if (prepared.status === "rejected") { outcome = "couldn't read"; reason = prepared.messages[0]; }
+          else {
+            pendingValidatedImport = prepared.pending;
+            if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
+            const check = importIsClear();
+            if (check.clear) {
+              const lines = commitPendingImport({ automatic: true });
+              outcome = "imported";
+              reason = `${lines} line${lines === 1 ? "" : "s"}`;
+              imported.push(entry.name);
+            } else { outcome = "needs review"; reason = check.reason; }
+          }
         }
       } catch (error) {
         // A file that breaks the reader is set aside for review instead of stopping every report after it.

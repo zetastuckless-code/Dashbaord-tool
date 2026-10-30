@@ -491,7 +491,7 @@
                 <li>Set <b>Folder Path</b> to <b>/DCM Reports</b>. Set <b>File Name</b> to the <b>Attachments Name</b> value and <b>File Content</b> to <b>Attachments Content</b> (from the dynamic content list). Power Automate wraps the step in <b>Apply to each</b> on its own; that’s expected.</li>
                 <li>Click <b>Save</b>. When the next DCM email arrives, its file appears in <b>DCM Reports</b> within a few minutes. To test now, forward yesterday’s DCM email to yourself with the same subject. If your rule sorts by sender, the forward stays in your Inbox, so drag it into the report folder for the test.</li>
               </ol>
-              <p class="step-hint">In <b>File Name</b> and <b>File Content</b>, don’t type anything: click into the box, open the dynamic content list (the lightning bolt, or type <b>/</b>), and pick <b>Attachments Name</b> and <b>Attachments Content</b>. Each email’s own file name is used, so every day’s file is kept. If a report names every file the same (like <i>export_1.csv</i>), set File Name with the expression <code>concat(formatDateTime(utcNow(),'yyyy-MM-dd_HHmm'),'_',items('Apply_to_each')?['name'])</code> so files don’t overwrite each other.</p>
+              <p class="step-hint">In <b>File Name</b> and <b>File Content</b>, don’t type anything: click into the box, open the dynamic content list (the lightning bolt, or type <b>/</b>), and pick <b>Attachments Name</b> and <b>Attachments Content</b>. Each email’s own file name is used, so every day’s file is kept. If a report names every file the same (like <i>export_1.csv</i>), set File Name with the expression <code>concat(formatDateTime(utcNow(),'yyyy-MM-dd_HHmm'),'_',items('Apply_to_each')?['name'])</code> so files don’t overwrite each other. Zipped attachments are fine: the dashboard opens the .zip and imports the report inside.</p>
             </li>
             <li class="automation-step" data-step="dspflow">
               <div class="step-head"><span class="step-status" id="step-dspflow-status"></span><h4>Build the DSP flow (download link)</h4></div>
@@ -597,7 +597,7 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
                 <li>Click <b>Connect Downloads…</b> below and pick <b>Dashboard reports</b>.</li>
                 <li>In Chrome, open <b>Settings › Downloads › Location › Change</b> and pick the same <b>Dashboard reports</b> folder. Everything Chrome downloads lands there; the dashboard imports only the reports and leaves the rest alone. (Or turn on <b>Ask where to save each file</b> and pick the folder when a report downloads.)</li>
               </ol>
-              <p class="step-hint">The dashboard only looks at new .csv and .xlsx files in that folder, from after you connect it, and skips anything that isn’t a report.</p>
+              <p class="step-hint">The dashboard only looks at new .csv, .xlsx, and .zip files in that folder, from after you connect it, and skips anything that isn’t a report.</p>
               <p class="step-detail" id="downloads-connect-detail"></p>
               <div class="step-actions"><button class="secondary-button" id="downloads-connect-button" type="button">Connect Downloads…</button><button class="text-button" id="downloads-disconnect" type="button" hidden>Disconnect</button></div>
             </li>
@@ -730,8 +730,8 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
       <form method="dialog" class="dialog-card">
         <div class="dialog-header"><div><p class="eyebrow">Data import</p><h2 id="upload-title">Import a report</h2></div><button class="close-button" value="cancel" aria-label="Close">×</button></div>
         <p>Choose where the report goes, then the report itself. It is validated before any data is added to the dashboard, and your existing data stays unchanged until you confirm.</p>
-        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Drag a file here or click to choose · Excel (.xlsx) or CSV · up to 25 MB</small></label>
-        <input id="file-input" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+        <label class="dropzone" for="file-input" tabindex="0"><span class="upload-symbol">⇧</span><strong id="import-dropzone-title">Choose a campaign report</strong><small>Drag a file here or click to choose · Excel (.xlsx), CSV, or a .zip with one inside · up to 25 MB</small></label>
+        <input id="file-input" type="file" accept=".xlsx,.csv,.zip,text/csv,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
         <div class="file-preview" id="file-preview" hidden><span>▤</span><div><strong id="file-name"></strong><small>Ready for validation</small></div><button type="button" id="remove-file">Remove</button></div>
         <div class="validation-result" id="validation-result" hidden role="status"></div>
         <button class="text-button validation-export-button" id="export-validation-issues" type="button" hidden>Download validation issues</button>
