@@ -720,3 +720,20 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .report-inbox li{flex-wrap:wrap}.report-inbox .report-inbox-actions{flex-shrink:0;margin-left:auto}
 .review-notes a{font-weight:600}.review-repeat{color:#6b7385;font-size:12px}
 .review-import-actions .review-download{display:inline-flex;align-items:center;height:32px;text-decoration:none}
+
+/* Matching cards: the campaign picker stays inside the card however long the campaign names are. */
+.import-assignment-row>span{flex:1 1 auto;min-width:0}.import-assignment-row>span strong{overflow-wrap:anywhere}
+.import-assignment-row select{flex:0 1 46%;min-width:0;max-width:46%;text-overflow:ellipsis}
+.import-assignment-block .import-assignment-row{flex-direction:column;align-items:stretch;gap:8px}.import-assignment-block .import-assignment-row select{max-width:100%;flex-basis:auto;width:100%}
+@media(max-width:640px){.import-assignment-row{flex-direction:column;align-items:stretch}.import-assignment-row select{max-width:100%;flex-basis:auto}}
+/* Warning pills: a count you can open for the details. */
+.warn-pills{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.warn-pill{max-width:100%}.warn-pill>summary{display:inline-flex;align-items:center;gap:6px;list-style:none;cursor:pointer;padding:3px 10px;border-radius:999px;background:#fdf1e1;color:#8a5516;font-size:12px;font-weight:600;user-select:none}
+.warn-pill>summary::-webkit-details-marker{display:none}.warn-pill>summary::before{content:"!";display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;background:#e3973c;color:#fff;font-size:10px;font-weight:800}
+.warn-pill>summary::after{content:"▾";font-size:10px;transition:transform .15s ease}.warn-pill[open]>summary::after{transform:rotate(180deg)}
+.warn-pill.subtle>summary{background:#eef0f4;color:#4b5263}.warn-pill.subtle>summary::before{background:#8b93a3}
+.warn-pill.failed>summary{background:#fbe9e5;color:#a3361f}.warn-pill.failed>summary::before{background:#c8553d}
+.warn-pill>summary:focus-visible{outline:2px solid var(--accent,#5b4be3);outline-offset:2px}
+.warn-pill-body{margin-top:6px;padding:8px 12px;border:1px solid #f0e0c8;border-radius:10px;background:#fffdf9;font-size:12px;line-height:1.45;color:#30384b;max-height:220px;overflow:auto}
+.warn-pill-body p{margin:0 0 6px;color:#636c7e}.warn-pill-body ul{margin:0;padding-left:16px}.warn-pill-body li{overflow-wrap:anywhere;margin:2px 0}
+@media(prefers-reduced-motion:reduce){.warn-pill>summary::after{transition:none}}
