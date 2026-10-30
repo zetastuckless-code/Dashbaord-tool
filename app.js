@@ -3490,10 +3490,17 @@ function refreshAutomationNav() {
 /** Every folder the dashboard reads, with the access it needs (the morning brief folder also gets packs written to it). */
 function connectedFolders() {
   try {
-    return [[todoFolder, "Morning brief", "readwrite"], [reportFolder, "Report uploads", "read"], [dcmFolder, "DCM and DSP emails", "read"], [downloadsFolder, "Downloads", "read"]].filter(([handle]) => handle).map(([handle, label, mode]) => ({ handle, label, mode }));
+    return [[todoFolder, "Morning brief", "readwrite", null], [reportFolder, "Report uploads", "read", ""], [dcmFolder, "DCM and DSP emails", "read", DCM_PREFIX], [downloadsFolder, "Downloads", "read", DL_PREFIX]].filter(([handle]) => handle).map(([handle, label, mode, prefix]) => ({ prefix, handle, label, mode }));
   } catch {
     return []; // still loading
   }
+}
+/** "allowed · checked 9:05 AM, 2 new" or the error the last check hit. */
+function folderCheckText(prefix) {
+  const last = prefix === null ? null : reportState.folders[prefix];
+  if (!last) return "allowed";
+  const when = new Date(last.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return last.error ? `couldn't read it at ${when}: ${last.error}` : `allowed · checked ${when}${last.found ? `, ${last.found} new` : ""}`;
 }
 async function renderFolderAccess() {
   const box = document.querySelector("#folder-access");
@@ -3502,7 +3509,7 @@ async function renderFolderAccess() {
   if (!folders.length) return;
   const states = await Promise.all(folders.map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")));
   const waiting = states.filter(state => state !== "granted").length;
-  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : "All folders allowed"}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? "allowed" : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
+  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : "All folders allowed"}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && reportState.folders[folder.prefix]?.error) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
 }
 /** Asks for each folder in turn from one click, then reads what came in while they were blocked. */
 async function approveAllFolders() {
@@ -3629,7 +3636,8 @@ const DL_PREFIX = "DL:";
 let downloadsFolder = null;
 const watchedFolders = () => [[reportFolder, ""], [dcmFolder, DCM_PREFIX], [downloadsFolder, DL_PREFIX]].filter(([folder]) => folder);
 const folderForKey = key => key.startsWith(DCM_PREFIX) ? [dcmFolder, key.slice(DCM_PREFIX.length)] : key.startsWith(DL_PREFIX) ? [downloadsFolder, key.slice(DL_PREFIX.length)] : [reportFolder, key];
-let reportState = { lastChecked: null, needsClick: false, running: false, scanned: 0, truncated: false };
+// `folders` holds each watched folder's last check by its key prefix: when, how many new files, and any error.
+let reportState = { lastChecked: null, needsClick: false, running: false, scanned: 0, truncated: false, waiting: [], folders: {} };
 let reportSettings = readReportSettings(localStorage);
 const readReportActivity = () => { try { const value = JSON.parse(localStorage.getItem(REPORT_ACTIVITY_KEY)); return Array.isArray(value) ? value : []; } catch { return []; } };
 
@@ -3657,67 +3665,90 @@ function importIsClear() {
 async function checkReportFolder({ ask = false } = {}) {
   await deliveryReady;
   if (!watchedFolders().length || reportState.running || dialog.open) return;
-  let granted = true;
-  for (const [folder] of watchedFolders()) {
-    let permission = await folder.queryPermission({ mode: "read" });
-    if (permission !== "granted" && ask) permission = await folder.requestPermission({ mode: "read" });
-    if (permission !== "granted") granted = false;
+  // Each folder is asked and read on its own: one that needs a click or can't be read never holds up the others.
+  const ready = [];
+  reportState.waiting = [];
+  for (const [folder, prefix] of watchedFolders()) {
+    let permission = await folder.queryPermission({ mode: "read" }).catch(() => "prompt");
+    if (permission !== "granted" && ask) permission = await folder.requestPermission({ mode: "read" }).catch(() => "prompt");
+    if (permission === "granted") ready.push([folder, prefix]);
+    else reportState.waiting.push(prefix);
   }
-  reportState.needsClick = !granted;
-  if (reportState.needsClick) { renderReportAutomation(); return; }
+  reportState.needsClick = reportState.waiting.length > 0;
+  if (!ready.length) { renderReportAutomation(); return; }
   reportState.running = true;
   renderReportAutomation();
   const imported = [];
+  let ledger = readReportLedger(localStorage);
+  let inbox = readReportInbox(localStorage);
+  const activity = readReportActivity();
+  // Saved after every file, so a problem part-way through never makes the next check start over.
+  const save = () => {
+    localStorage.setItem(REPORT_LEDGER_KEY, JSON.stringify(ledger));
+    localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(inbox));
+    localStorage.setItem(REPORT_ACTIVITY_KEY, JSON.stringify(activity.slice(0, 40)));
+  };
   try {
-    let ledger = readReportLedger(localStorage);
-    let inbox = readReportInbox(localStorage);
-    const activity = readReportActivity();
     const files = [];
     reportState.scanned = 0;
     reportState.truncated = false;
-    for (const [folder, prefix] of watchedFolders()) {
-      // Each folder sees its own part of the ledger; the DCM folder takes every file, whatever its folder is called.
-      const view = Object.fromEntries(Object.entries(ledger).filter(([key]) => prefix ? key.startsWith(prefix) : !key.startsWith(DCM_PREFIX) && !key.startsWith(DL_PREFIX)).map(([key, value]) => [key.slice(prefix.length), value]));
-      const since = Number(localStorage.getItem(DOWNLOADS_SINCE_KEY)) || Date.now();
-      const options = prefix === DL_PREFIX ? { ...reportSettings, onlyReportFolders: false, lookbackDays: 3, maxDepth: 0, since } : prefix ? { ...reportSettings, onlyReportFolders: false } : reportSettings;
-      const scan = await findNewReports(folder, view, options);
-      reportState.scanned += scan.scanned;
-      reportState.truncated ||= scan.truncated;
-      files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
+    for (const [folder, prefix] of ready) {
+      try {
+        // Each folder sees its own part of the ledger; the DCM folder takes every file, whatever its folder is called.
+        const view = Object.fromEntries(Object.entries(ledger).filter(([key]) => prefix ? key.startsWith(prefix) : !key.startsWith(DCM_PREFIX) && !key.startsWith(DL_PREFIX)).map(([key, value]) => [key.slice(prefix.length), value]));
+        const since = Number(localStorage.getItem(DOWNLOADS_SINCE_KEY)) || Date.now();
+        const options = prefix === DL_PREFIX ? { ...reportSettings, onlyReportFolders: false, lookbackDays: 3, maxDepth: 0, since } : prefix ? { ...reportSettings, onlyReportFolders: false } : reportSettings;
+        const scan = await findNewReports(folder, view, options);
+        reportState.scanned += scan.scanned;
+        reportState.truncated ||= scan.truncated;
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: scan.files.length, error: "" };
+        files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
+      } catch (error) {
+        console.warn("Couldn't read a watched folder", folder.name, error);
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, error: error?.message || String(error) };
+      }
     }
     for (const entry of files.sort((a, b) => a.lastModified - b.lastModified)) {
       let outcome;
       let reason = "";
-      const prepared = await prepareImport(entry.file);
-      if (prepared.status === "duplicate") outcome = "already imported";
-      else if (prepared.status === "rejected") { outcome = "couldn't read"; reason = prepared.messages[0]; }
-      else {
-        pendingValidatedImport = prepared.pending;
-        if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
-        const check = importIsClear();
-        if (check.clear) {
-          const lines = commitPendingImport({ automatic: true });
-          outcome = "imported";
-          reason = `${lines} line${lines === 1 ? "" : "s"}`;
-          imported.push(entry.name);
-        } else { outcome = "needs review"; reason = check.reason; }
+      try {
+        const prepared = await prepareImport(entry.file);
+        if (prepared.status === "duplicate") outcome = "already imported";
+        else if (prepared.status === "rejected") { outcome = "couldn't read"; reason = prepared.messages[0]; }
+        else {
+          pendingValidatedImport = prepared.pending;
+          if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
+          const check = importIsClear();
+          if (check.clear) {
+            const lines = commitPendingImport({ automatic: true });
+            outcome = "imported";
+            reason = `${lines} line${lines === 1 ? "" : "s"}`;
+            imported.push(entry.name);
+          } else { outcome = "needs review"; reason = check.reason; }
+        }
+      } catch (error) {
+        // A file that breaks the reader is set aside for review instead of stopping every report after it.
+        console.warn("Couldn't import a report from the folder", entry.name, error);
+        outcome = "couldn't read";
+        reason = `The dashboard hit an error reading it (${error?.message || error}). Open it to review, or import it by hand.`;
+        if (!entry.key.startsWith(DL_PREFIX)) logUpload({ fileName: entry.name, kind: entry.key.startsWith(DCM_PREFIX) ? "dcm" : "report", status: "Failed", detail: reason });
+      } finally {
         pendingValidatedImport = null;
       }
       ledger = noteReport(ledger, entry.key, entry.lastModified, outcome, reportSettings);
       // Downloads holds all sorts of files: one that isn't a report is skipped quietly.
-      if (entry.key.startsWith(DL_PREFIX) && outcome === "couldn't read") continue;
-      inbox = inbox.filter(item => item.key !== entry.key);
-      if (outcome === "needs review" || outcome === "couldn't read") inbox.push({ key: entry.key, name: entry.name, folder: entry.path.join(" › "), reason, outcome, foundAt: new Date().toISOString() });
-      activity.unshift({ at: new Date().toISOString(), name: entry.name, outcome, reason });
+      if (!(entry.key.startsWith(DL_PREFIX) && outcome === "couldn't read")) {
+        inbox = inbox.filter(item => item.key !== entry.key);
+        if (outcome === "needs review" || outcome === "couldn't read") inbox.push({ key: entry.key, name: entry.name, folder: entry.path.join(" › "), reason, outcome, foundAt: new Date().toISOString() });
+        activity.unshift({ at: new Date().toISOString(), name: entry.name, outcome, reason });
+      }
+      save();
     }
-    localStorage.setItem(REPORT_LEDGER_KEY, JSON.stringify(ledger));
-    localStorage.setItem(REPORT_INBOX_KEY, JSON.stringify(inbox));
-    localStorage.setItem(REPORT_ACTIVITY_KEY, JSON.stringify(activity.slice(0, 40)));
     reportState.lastChecked = new Date();
   } catch (error) {
     console.warn("Report folder check failed", error);
-    reportState.needsClick = true;
   } finally {
+    save();
     reportState.running = false;
   }
   if (imported.length) {
@@ -3873,8 +3904,9 @@ if (folderSupported) {
     renderReportAutomation();
     return checkReportFolder();
   }).catch(() => renderReportAutomation());
-  setInterval(() => { if (watchedFolders().length && !reportState.needsClick && document.visibilityState === "visible") checkReportFolder(); }, 10 * 60_000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && watchedFolders().length && !reportState.needsClick) checkReportFolder(); });
+  // Checks keep running while a folder waits for a click: the folders that are allowed are still read.
+  setInterval(() => { if (watchedFolders().length && document.visibilityState === "visible") checkReportFolder(); }, 10 * 60_000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && watchedFolders().length) checkReportFolder(); });
 } else renderReportAutomation();
 
 document.querySelector("#sources-client").addEventListener("change", event => { sourcesFilter.client = event.target.value; renderDataSources(); });
