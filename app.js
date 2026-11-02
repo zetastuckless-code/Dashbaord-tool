@@ -65,7 +65,7 @@ import { importClients, markImportsReviewed, pendingImportReviews, readReviewedI
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { deleteRawRows, readRawRows, saveRawRows } from "./lib/raw-delivery-store.js";
 import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, localStorageUsed, readLineDeliveries, storageLevel, writeLineDeliveries } from "./lib/line-delivery-store.js";
-import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, LEAVE_OUT, placementChoiceKey, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberPlacementLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
 import { attachLineDays, billedBefore, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, repairImportedHistory, latestProjection, monthLabel, monthName, projectionDue, setProjection, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
@@ -1818,7 +1818,7 @@ async function prepareImport(file, { allowDuplicate = false } = {}) {
       recordImport(file.name, fingerprint, "Rejected", 0, messages);
       return { status: "rejected", messages };
     }
-    return { status: "ready", pending: { kind: "delivery", fileName: file.name, fingerprint, report, parsed: report.parsed, targets: {} } };
+    return { status: "ready", pending: { kind: "delivery", fileName: file.name, fingerprint, report, parsed: report.parsed, targets: {}, placements: {} } };
   }
   if (report.kind === "daily-delivery" || report.kind === "line-items") {
     // Flashtalking daily files and DSP line-item exports are not imported on their own; campaign reports carry the lines.
@@ -4367,11 +4367,48 @@ document.querySelector("#data-health-card").addEventListener("keydown", event =>
 updateReviewBadge();
 
 // --- DCM (CM360) delivery reports: matched to a campaign, split across its lines by placement, kept beside the report ---
+const NEW_LINE = "__new__:";
+/** A new line for a campaign, named like its others ("Campaign — Display") and set up like its first line. */
+function newLineRecord(template, label) {
+  const group = campaignGroupName(template);
+  const { thirdPartyDelivery, dcmTopUp, reportBase, performanceSnapshots, uploads, sourceIds, thirdPartyFiles, lineItems, lineItemFlights, deliveredRate, deliveredValue, ioLine, ...base } = template;
+  return { ...base, id: `line-${Date.now().toString(36)}-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, name: `${group} — ${label}`, campaignGroup: group, spend: 0, firstPartySpend: null, thirdPartySpend: null, impressions: 0, clicks: 0, conversions: 0, revenue: 0, videoStarts: null, videoCompletions: null, budget: null, pacing: null, dataAsOf: null, value: "—", updated: "Just now", createdAt: new Date().toISOString(), addedFrom: "dcm-import" };
+}
+/** The lines a delivery import would add: one per "New line" picked, on the campaign its source campaign goes to. */
+function pendingNewLines(plan) {
+  const added = new Map();
+  for (const item of plan) {
+    if (!item.target) continue;
+    const template = campaigns.find(record => groupKey(record) === item.target);
+    for (const [key, value] of Object.entries(pendingValidatedImport.placements || {})) {
+      if (!key.startsWith(`${item.entry.key}::`) || !String(value).startsWith(NEW_LINE) || !template) continue;
+      const record = newLineRecord(template, value.slice(NEW_LINE.length));
+      if (!campaigns.some(other => groupKey(other) === item.target && other.name === record.name)) added.set(record.name, record);
+    }
+  }
+  return [...added.values()];
+}
 function deliveryPlan() {
   const pending = pendingValidatedImport;
   const targets = Object.fromEntries(Object.entries(pending.targets).filter(([, value]) => value !== SKIP_DELIVERY));
-  const plan = planDelivery(campaigns.filter(record => !isCampaignArchived(record)), pending.parsed, thirdPartyLinks, targets);
-  return plan.map(item => pending.targets[item.entry.key] === SKIP_DELIVERY ? { ...item, target: null, skipped: true } : item);
+  const live = campaigns.filter(record => !isCampaignArchived(record));
+  const first = planDelivery(live, pending.parsed, thirdPartyLinks, targets);
+  // A "New line" pick stands for the line it will make, so the plan counts its placements already.
+  const added = pendingNewLines(first);
+  const groupName = item => campaignGroupName(campaigns.find(record => groupKey(record) === item.target) || {});
+  const choices = Object.fromEntries(Object.entries(pending.placements || {}).map(([key, value]) => {
+    if (!String(value).startsWith(NEW_LINE)) return [key, value];
+    const item = first.find(entry => key.startsWith(`${entry.entry.key}::`) && entry.target);
+    return [key, item ? `${groupName(item)} — ${value.slice(NEW_LINE.length)}` : LEAVE_OUT];
+  }));
+  const plan = planDelivery([...live, ...added], pending.parsed, thirdPartyLinks, targets, choices);
+  return Object.assign(plan.map(item => pending.targets[item.entry.key] === SKIP_DELIVERY ? { ...item, target: null, skipped: true } : item), { added, choices });
+}
+/** "Display", "Native", "Video"… from what most of the placements are, for a new line's name. */
+function suggestedLineName(names) {
+  const kinds = [["Native", /native/i], ["YouTube", /youtube|\byt\b/i], ["CTV", /\bctv\b|\bott\b/i], ["Audio", /audio/i], ["Video", /video|\bolv\b|pre-?roll/i], ["Display", /display|banner|\d{2,3}x\d{2,3}/i]];
+  const counts = kinds.map(([label, pattern]) => [label, names.filter(name => pattern.test(name)).length]).sort((a, b) => b[1] - a[1]);
+  return counts[0][1] ? counts[0][0] : "New line";
 }
 function showDeliveryImport() {
   const { parsed, report } = pendingValidatedImport;
@@ -4388,6 +4425,26 @@ function warnPill(label, intro, items, tone = "") {
   return `<details class="warn-pill${tone ? ` ${tone}` : ""}"><summary>${escapeHtml(label)}</summary><div class="warn-pill-body">${intro ? `<p>${escapeHtml(intro)}</p>` : ""}<ul>${items.map(item => `<li>${linkify(escapeHtml(item))}</li>`).join("")}</ul></div></details>`;
 }
 
+/**
+ * Placements no line matched by name: pick a line for each (or for all at once), add a new line, or leave them out.
+ * Picks are remembered, so later reports place them the same way on their own.
+ */
+function placementPicker(item, unplaced, picked, unit) {
+  const names = [...unplaced, ...picked];
+  const lineOptions = item.lines.map(name => [name, name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name]);
+  const suggested = suggestedLineName(names);
+  const options = (selected, blank) => `${blank ? `<option value="" selected>${escapeHtml(blank)}</option>` : ""}<option value="${LEAVE_OUT}"${selected === LEAVE_OUT ? " selected" : ""}>Leave out</option>${lineOptions.map(([value, label]) => `<option value="${escapeHtml(value)}"${selected === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}<option value="${escapeHtml(NEW_LINE + suggested)}"${selected === NEW_LINE + suggested ? " selected" : ""}>New line: ${escapeHtml(suggested)}</option>`;
+  const rows = names.map(name => {
+    const key = placementChoiceKey(item.entry.key, name);
+    // A placement placed by an earlier import shows where it went until you change it here.
+    const current = pendingValidatedImport.placements[key] || (item.assigned.has(name) ? item.lines[item.assigned.get(name)] : LEAVE_OUT);
+    return `<li class="placement-pick"><span>${escapeHtml(name)}</span><select data-placement-pick="${escapeHtml(key)}" aria-label="Line for ${escapeHtml(name)}">${options(current)}</select></li>`;
+  }).join("");
+  const all = `<label class="placement-pick-all">Put all ${names.length} on<select data-placement-pick-all="${escapeHtml(item.entry.key)}" data-placement-names="${escapeHtml(JSON.stringify(names))}">${options("", "Choose a line…")}</select></label>`;
+  const label = unplaced.length ? `${unplaced.length} ${unit}${unplaced.length === 1 ? "" : "s"} not on a line · choose` : `${picked.length} ${unit}${picked.length === 1 ? "" : "s"} placed by you · change`;
+  return `<details class="warn-pill${unplaced.length ? "" : " subtle"}"><summary>${escapeHtml(label)}</summary><div class="warn-pill-body"><p>These didn’t match a line by name. Pick where each one goes and later reports follow your choice.</p>${all}<ul class="placement-picks">${rows}</ul></div></details>`;
+}
+
 function renderDeliveryAssignments() {
   const plan = deliveryPlan();
   const section = document.querySelector("#import-assignments");
@@ -4399,11 +4456,12 @@ function renderDeliveryAssignments() {
     const undecided = !item.target && !item.skipped;
     const options = `${undecided ? '<option value="" selected disabled>Choose a campaign (required)</option>' : ""}<option value="${SKIP_DELIVERY}"${item.skipped ? " selected" : ""}>Skip this campaign</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${item.target === group.key ? " selected" : ""}>${escapeHtml(group.client)} · ${escapeHtml(group.name)}${!chosen && item.target === group.key ? " (matched)" : ""}</option>`).join("")}`;
     const perLine = item.lines.map((name, index) => [name, [...item.assigned.values()].filter(value => value === index).length]);
-    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${count === 1 ? "" : "s"}` : '<em class="muted">nothing matched</em>'}</span></li>`).join("")}</ul>${item.unassigned.length ? (() => {
+    const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${count === 1 ? "" : "s"}` : '<em class="muted">nothing matched</em>'}</span></li>`).join("")}</ul>${item.unassigned.length || item.chosen?.size ? (() => {
       const unit = pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement";
       const free = item.unassigned.filter(isAddedValue);
       const other = item.unassigned.filter(name => !isAddedValue(name));
-      return `${other.length || free.length ? `<div class="warn-pills">${other.length ? warnPill(`${other.length} ${unit}${other.length === 1 ? "" : "s"} left out`, `These didn’t match a line in the campaign, so their delivery isn’t counted:`, other) : ""}${free.length ? warnPill(`${free.length} added value`, `Added-value ${unit}s are free and no line is for added value, so they’re left out:`, free, "subtle") : ""}</div>` : ""}`;
+      const picked = [...(item.chosen || [])].filter(name => !other.includes(name) && !isAddedValue(name));
+      return `${other.length || free.length || picked.length ? `<div class="warn-pills">${other.length || picked.length ? placementPicker(item, other, picked, unit) : ""}${free.length ? warnPill(`${free.length} added value`, `Added-value ${unit}s are free and no line is for added value, so they’re left out:`, free, "subtle") : ""}</div>` : ""}`;
     })() : ""}` : "";
     return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>${deliveryLabel()} campaign${item.entry.sourceCampaignId ? ` ${escapeHtml(item.entry.sourceCampaignId)}` : ""} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? `<small class="import-required-note">Pick the dashboard campaign this ${deliveryLabel()} campaign belongs to. Later reports follow your choice.</small>` : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${lines}</div>`;
   }).join("");
@@ -4417,6 +4475,16 @@ function renderDeliveryAssignments() {
   confirmImportButton.disabled = Boolean(message);
 }
 document.querySelector("#import-assignment-list").addEventListener("change", event => {
+  const pick = event.target.closest("[data-placement-pick], [data-placement-pick-all]");
+  if (pick && pendingValidatedImport?.kind === "delivery") {
+    const keys = pick.dataset.placementPickAll ? JSON.parse(pick.dataset.placementNames).map(name => placementChoiceKey(pick.dataset.placementPickAll, name)) : [pick.dataset.placementPick];
+    for (const key of keys) { if (pick.value) pendingValidatedImport.placements[key] = pick.value; }
+    renderDeliveryAssignments();
+    // Keep the list open after a pick so the next one is right there.
+    const entryKey = pick.dataset.placementPickAll || pick.dataset.placementPick.slice(0, pick.dataset.placementPick.indexOf("::"));
+    document.querySelector(`#import-assignment-list [data-placement-pick-all="${CSS.escape(entryKey)}"]`)?.closest(".warn-pill")?.setAttribute("open", "");
+    return;
+  }
   const select = event.target.closest("[data-delivery-target]");
   if (!select || pendingValidatedImport?.kind !== "delivery") return;
   pendingValidatedImport.targets[select.dataset.deliveryTarget] = select.value;
@@ -4425,13 +4493,18 @@ document.querySelector("#import-assignment-list").addEventListener("change", eve
 function commitDeliveryImport({ automatic = false } = {}) {
   const { fileName, fingerprint, parsed } = pendingValidatedImport;
   const plan = deliveryPlan();
+  // Lines made from "New line" picks join the campaign before its delivery is stored on them.
+  const before = campaigns;
+  campaigns = [...campaigns, ...plan.added];
   const result = applyDelivery(campaigns, parsed, plan, { fileName });
+  campaigns = before;
   // The file's own rows are kept for billing's raw data tab.
   saveRawRows(indexedDB, parsed.source, rawRowsForPlan(parsed, plan)).catch(() => {});
   writeImportRollback(localStorage, createImportRollback({ campaigns, importHistory, fileName, fingerprint, rowCount: result.lineCount, campaignKeys: [], campaignTotals }));
   campaigns = result.campaigns;
   saveCampaigns();
   thirdPartyLinks = rememberThirdPartyLinks(localStorage, thirdPartyLinks, plan, parsed.source);
+  thirdPartyLinks = rememberPlacementLinks(localStorage, thirdPartyLinks, plan, parsed.source, plan.choices);
   const touched = campaigns.filter(record => plan.some(item => item.target && groupKey(record) === item.target) && record.thirdPartyFiles?.[0] === fileName);
   const warnings = [
     ...plan.filter(item => item.target && item.unassigned.some(name => !isAddedValue(name))).map(item => ({ ...item, unassigned: item.unassigned.filter(name => !isAddedValue(name)) })).map(item => `${item.unassigned.length} ${deliveryLabel()} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
