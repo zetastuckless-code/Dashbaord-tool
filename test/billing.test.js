@@ -295,3 +295,17 @@ test("a finished month the report stops short of bills the report's days, then D
   assert.deepEqual(noReport.missingDays, ["2026-10-15"]);
   assert.equal(noReport.rows[0].quantity, 30 * 90_000);
 });
+
+test("a row billed from the report fills the days after the report ends from DCM or DSP, and says why when it can't", () => {
+  const snapshots = [{ date: "2026-09-30", impressions: 1_000_000 }, { date: "2026-10-26", impressions: 9_000_000 }];
+  const record = line("Brand — Display", { CM360: days("2026-10-01", "2026-10-31", { impressions: 400_000 }) }, { performanceSnapshots: snapshots });
+  const config = { rows: [{ id: "d", lineName: "Display", source: "report", rateType: "cpm", rate: 4, lines: ["Brand — Display"] }] };
+  const result = computeClientBilling(config, [record], "2026-10", "2026-11-02");
+  assert.equal(result.unavailable.length, 0);
+  // Oct 1–26 from the report (8,000,000) plus Oct 27–31 from DCM (5 × 400,000).
+  assert.equal(result.rows[0].quantity, 10_000_000);
+  // No DCM or DSP days either: nothing to bill, and the row knows where the report ends.
+  const bare = computeClientBilling(config, [{ ...record, thirdPartyDelivery: {} }], "2026-10", "2026-11-02");
+  assert.deepEqual(bare.unavailable, ["Display"]);
+  assert.equal(bare.rows[0].reportEnds, "2026-10-26");
+});
