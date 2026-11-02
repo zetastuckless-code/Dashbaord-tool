@@ -775,3 +775,7 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .breakout-table tfoot td{font-weight:700;border-top:1px solid var(--line)}.breakout-table tfoot td:first-child{text-align:right;color:#4b5263}
 .breakout-problem td{background:#fff6ea}.breakout-problem td:nth-child(3){color:#8a5516;font-weight:600}
 @media(max-width:760px){.breakout-table{display:block;overflow-x:auto}}
+
+.billing-review{display:block;margin-top:6px;font-size:11px;color:#636c7e}.billing-review-button{font-size:12px;padding:4px 10px;margin-right:6px}
+.billing-reviewed{display:block;margin-top:4px;font-size:11px;font-weight:600;color:#2f7d4f}
+.breakout-reviewed td:nth-child(3){color:#2f7d4f}

@@ -294,3 +294,22 @@ test("each billing row breaks out into its lines, which add up to the row", () =
   assert.deepEqual(details.map(detail => [detail.name, detail.days, detail.totals.impressions]), [["McMaster — NY", 30, 2_585_910], ["McMaster — Chicago", 30, 2_921_070]]);
   assert.equal(Math.round(details.reduce((sum, detail) => sum + detail.billable, 0) * 100) / 100, result.rows[0].billable);
 });
+
+test("gaps marked as fine for a month stop holding it up, and can be taken back", async () => {
+  const { reviewBillingRow, unreviewBillingRow } = await import("../lib/billing.js");
+  const delivery = days("2026-10-05", "2026-10-31", { impressions: 1000 });
+  const records = [line("McMaster — Chicago", { CM360: delivery }), line("McMaster — Old", {})];
+  let config = { rows: [{ id: "m", source: "CM360", rateType: "cpm", rate: 5, lines: ["McMaster — Chicago", "McMaster — Old"] }] };
+  const before = computeClientBilling(config, records, "2026-10", "2026-11-02");
+  assert.deepEqual(before.missingDays, ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"]);
+  assert.deepEqual(before.noDataLines, ["McMaster — Old"]);
+  assert.equal(before.ready, false);
+  config = reviewBillingRow(config, "2026-10", before.rows[0], new Date("2026-11-02T12:00:00Z"));
+  const after = computeClientBilling(config, records, "2026-10", "2026-11-02");
+  assert.deepEqual([after.missingDays, after.noDataLines, after.unavailable, after.ready], [[], [], [], true]);
+  assert.equal(after.rows[0].reviewed.at, "2026-11-02T12:00:00.000Z");
+  assert.equal(after.total, before.total);
+  // Another month isn't touched, and taking it back shows the gaps again.
+  assert.equal(computeClientBilling(config, records, "2026-09", "2026-11-02").rows[0].reviewed, undefined);
+  assert.equal(computeClientBilling(unreviewBillingRow(config, "2026-10", "m"), records, "2026-10", "2026-11-02").ready, false);
+});
