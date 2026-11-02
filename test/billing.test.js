@@ -276,3 +276,22 @@ test("custom periods: October picks up after September's last billed day, days p
   assert.deepEqual(result.rows.map(item => [item.row.id, item.period.label, item.quantity]), [["h", "09/27/2026 - 10/24/2026", 24000], ["o", "09/27/2026 - 10/24/2026", 24000], ["o", "10/25/2026 - 10/31/2026", 1000]]);
   assert.equal(result.through, "2026-10-25");
 });
+
+test("a finished month the report stops short of bills the report's days, then DCM's, instead of nothing", () => {
+  const snapshots = [{ date: "2026-09-30", impressions: 500_000 }, { date: "2026-10-30", impressions: 3_500_000 }];
+  // DCM has a gap mid-month, so the report is the better source for the days it covers.
+  const delivery = days("2026-10-01", "2026-10-31", { impressions: 90_000 });
+  delete delivery["2026-10-15"];
+  const record = line("Brand — Display", { CM360: delivery }, { performanceSnapshots: snapshots });
+  const config = { rows: [{ id: "d", lineName: "Display", source: "CM360", rateType: "cpm", rate: 10, lines: ["Brand — Display"] }] };
+  const result = computeClientBilling(config, [record], "2026-10", "2026-11-02");
+  assert.equal(result.unavailable.length, 0);
+  // Oct 1–30 from the report (3,000,000) plus Oct 31 from DCM (90,000).
+  assert.equal(result.rows[0].quantity, 3_090_000);
+  assert.equal(result.rows[0].net, 30_900);
+  // With no report totals in the month at all, the DCM days bill it and the gap is named.
+  const noReport = computeClientBilling(config, [{ ...record, performanceSnapshots: [{ date: "2026-09-30", impressions: 500_000 }, { date: "2026-11-01", impressions: 9_000_000 }].slice(0, 1) }], "2026-10", "2026-11-02");
+  assert.equal(noReport.unavailable.length, 0);
+  assert.deepEqual(noReport.missingDays, ["2026-10-15"]);
+  assert.equal(noReport.rows[0].quantity, 30 * 90_000);
+});
