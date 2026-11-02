@@ -145,3 +145,21 @@ test("placements picked by hand go on the chosen line, and remembered picks plac
   assert.equal(later.assigned.has("Zeta_Display_Lookalikes_728x90"), false);
   assert.equal(later.assigned.get("YouTube_Bumper"), 1);
 });
+
+test("days the report covers with no row for a line count as zero, and New York placements go on an NY line", async () => {
+  const { planDelivery, applyDelivery } = await import("../lib/third-party-delivery.js");
+  const lines = ["NY", "Chicago"].map(label => ({ client: "McMaster", name: `McMaster Q3 — ${label}`, startDate: "2026-07-06", endDate: "2026-10-30" }));
+  const placement = (name, date, impressions) => ({ sourceCampaignId: "36221912", sourceCampaignName: "McMaster", placement: name, date, impressions });
+  const parsed = { source: "CM360", coverage: { from: "2026-10-01", to: "2026-10-31" }, campaigns: [{ key: "36221912", sourceCampaignId: "36221912", sourceCampaignName: "McMaster" }], records: [], placements: [
+    placement("Zeta Global_Standard Display_New York DMA_Prospecting_(300x250)", "2026-10-05", 100),
+    placement("Zeta Global_Standard Display_Chicago DMA_Prospecting_(300x250)", "2026-10-06", 50)
+  ] };
+  const plan = planDelivery(lines, parsed, {}, { 36221912: "mcmaster::mcmaster q3" });
+  assert.deepEqual(plan[0].unassigned, []);
+  const { campaigns } = applyDelivery(lines, parsed, plan);
+  const ny = campaigns[0].thirdPartyDelivery.CM360;
+  assert.equal(ny["2026-10-05"].impressions, 100);
+  assert.equal(ny["2026-10-01"].impressions, 0);
+  // Covered through Oct 30, the line's last day; Oct 31 is after its flight.
+  assert.equal(Object.keys(ny).length, 30);
+});

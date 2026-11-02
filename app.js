@@ -4796,6 +4796,22 @@ function billingNote(config, month) {
   const last = lastMonth ? `Last billed: ${monthLabel(lastMonth)}, ${moneyText(config.history[lastMonth].total || 0)}${config.history[lastMonth].importedAt ? " (from your billing file)" : ""}.` : "";
   return done || last ? `<p class="billing-note">${escapeHtml([done, last].filter(Boolean).join(" "))}</p>` : "";
 }
+/**
+ * Under a billing row: each of its lines with the days and numbers it bills, so the row's total can be checked line
+ * by line against the DCM or DSP report.
+ */
+function lineBreakout(item) {
+  const details = item.lineDetails || [];
+  if (!details.length) return "";
+  const second = item.row.rateType === "cpv" ? ["Completions", "videoCompletions"] : item.row.rateType === "spend" ? ["Spend", "spend"] : ["Clicks", "clicks"];
+  const short = name => name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name;
+  const dataText = detail => detail.noData ? "No DCM or DSP days"
+    : `${shortDate(detail.from)} to ${shortDate(detail.through)} · ${detail.days} day${detail.days === 1 ? "" : "s"}${detail.missing.length ? ` · missing ${dayList(detail.missing)}` : ""}${detail.pending.length ? ` · ${dayList(detail.pending)} not in yet` : ""}`;
+  const rows = details.map(detail => `<tr class="${detail.noData || detail.missing.length ? "breakout-problem" : ""}"><td>${escapeHtml(short(detail.name))}</td><td>${escapeHtml(detail.source ? BILLING_SOURCES[detail.source] : "—")}</td><td>${escapeHtml(dataText(detail))}</td><td>${formatCount(detail.totals.impressions || 0)}</td><td>${second[1] === "spend" ? moneyText(detail.totals.spend || 0) : formatCount(detail.totals[second[1]] || 0)}</td><td>${detail.billable === null ? "—" : moneyText(detail.billable)}</td></tr>`).join("");
+  const sum = details.reduce((total, detail) => total + (detail.billable || 0), 0);
+  return `<tr class="billing-breakout-row"><td colspan="5"><details class="billing-breakout"${item.noDataLines?.length || item.missingDays.length ? " open" : ""}><summary>See each line (${details.length})</summary><table class="breakout-table"><thead><tr><th>Line</th><th>From</th><th>Data</th><th>Impressions</th><th>${second[0]}</th><th>Billable</th></tr></thead><tbody>${rows}</tbody>${item.row.rateType !== "flat" ? `<tfoot><tr><td colspan="5">Lines together${item.capped ? " (before the IO cap)" : ""}</td><td>${moneyText(Math.round(sum * 100) / 100)}</td></tr></tfoot>` : ""}</table></details></td></tr>`;
+}
+
 /** Opens Line items and setup at a row's line in the table, and points it out. */
 function showBillingRow(id) {
   const setup = document.querySelector("#billing-setup");
@@ -4803,6 +4819,9 @@ function showBillingRow(id) {
   const rows = [...document.querySelectorAll(`#billing-lines-table [data-billing-row-item="${CSS.escape(id)}"]`)];
   const target = rows.find(row => row.querySelector(".billing-problem")) || rows[0];
   if (!target) { setup.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+  // Open the row's line breakout so the line the problem is about is right there.
+  const breakout = rows.at(-1)?.nextElementSibling?.querySelector(".billing-breakout");
+  if (breakout) breakout.open = true;
   target.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
   rows.forEach(row => { row.classList.remove("billing-flash"); void row.offsetWidth; row.classList.add("billing-flash"); });
   const focusable = target.querySelector(".billing-problem button, .billing-problem a");
@@ -4830,7 +4849,7 @@ function renderBillingPreview() {
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
   document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your DCM and DSP reports.</p>';
-  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr data-billing-row-item="${escapeHtml(item.row.id)}"><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(`${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.row.source !== "report" && item.source !== item.row.source ? ` (no newer ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${billedCheck(result, item, config.history?.[month])}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>`).join("")}</tbody></table>` : "";
+  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr data-billing-row-item="${escapeHtml(item.row.id)}"><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(`${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.row.source !== "report" && item.source !== item.row.source ? ` (no newer ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${billedCheck(result, item, config.history?.[month])}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>${lineBreakout(item)}`).join("")}</tbody></table>` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {

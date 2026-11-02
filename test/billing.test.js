@@ -285,3 +285,12 @@ test("a row names the lines that have no DCM or DSP days, while its other lines 
   assert.deepEqual(result.noDataLines, ["McMaster — Chicago"]);
   assert.equal(result.ready, false);
 });
+
+test("each billing row breaks out into its lines, which add up to the row", () => {
+  const ny = line("McMaster — NY", { CM360: days("2026-10-01", "2026-10-30", { impressions: 86_197, clicks: 42 }) });
+  const chicago = line("McMaster — Chicago", { CM360: days("2026-10-01", "2026-10-30", { impressions: 97_369, clicks: 45 }) });
+  const result = computeClientBilling({ rows: [{ id: "m", source: "CM360", rateType: "cpm", rate: 5, lines: ["McMaster — NY", "McMaster — Chicago"] }] }, [ny, chicago], "2026-10", "2026-11-02");
+  const details = result.rows[0].lineDetails;
+  assert.deepEqual(details.map(detail => [detail.name, detail.days, detail.totals.impressions]), [["McMaster — NY", 30, 2_585_910], ["McMaster — Chicago", 30, 2_921_070]]);
+  assert.equal(Math.round(details.reduce((sum, detail) => sum + detail.billable, 0) * 100) / 100, result.rows[0].billable);
+});
