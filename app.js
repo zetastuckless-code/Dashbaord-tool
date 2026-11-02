@@ -4667,10 +4667,16 @@ function billingResult(client, month) {
   return result;
 }
 function moneyText(value) { return formatExactMoney(value); }
+/** Line names without their campaign ("NY" for "McMaster Q3 2026 - Zeta — NY"), the first few then a count. */
+function listLines(names) {
+  const short = names.map(name => name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name);
+  return short.length > 3 ? `${short.slice(0, 3).join(", ")} and ${short.length - 3} more` : short.join(", ");
+}
 function dayList(days) { return days.length > 4 ? `${shortDate(days[0])} to ${shortDate(days.at(-1))} (${days.length} days)` : days.map(shortDate).join(", "); }
 function billingStatusText(result) {
   if (!result.rows.length) return "Not set up";
   if (result.running) return result.through ? `Month to date through ${shortDate(result.through)} · final numbers after the month ends` : "Month to date · no data this month yet";
+  if (result.noDataLines?.length) return `Needs data: no DCM or DSP days for ${listLines(result.noDataLines)}`;
   if (result.unavailable.length) return `Needs data: ${result.unavailable.join(", ")} has no numbers for these dates`;
   if (result.missingDays.length) return `Missing ${dayList(result.missingDays)}`;
   if (result.pendingDays?.length) return `Data through ${shortDate(result.dataThrough)} · ${dayList(result.pendingDays)} not in yet`;
@@ -4687,6 +4693,11 @@ function rowProblem(item, month) {
   const move = unbilled.map(campaign => `<button class="text-button" type="button" data-billing-move-row="${escapeHtml(item.row.id)}" data-billing-campaign="${escapeHtml(campaign.key)}" data-billing-for="${month}">Bill ${escapeHtml(campaign.name)} on this row</button>`).join(" ");
   if (!known.length) return `<small class="billing-problem">None of this row’s lines are on the dashboard. ${move || `<button class="text-button" type="button" data-billing-pick-lines="${escapeHtml(item.row.id)}">Pick its lines ›</button>`}</small>`;
   if (item.notLive) return `<small class="billing-problem">Its lines ran before or after ${escapeHtml(monthName(month))}. ${move || ""}</small>`;
+  if (item.noDataLines?.length) {
+    const names = item.noDataLines;
+    const which = names.length === known.length ? (known.length === 1 ? "its line" : "any of its lines") : `${names.length} of its ${known.length} lines`;
+    return `<small class="billing-problem">No DCM or DSP days from ${escapeHtml(shortDate(item.period.from))} to ${escapeHtml(shortDate(item.period.to))} for ${which}:</small><ul class="billing-missing-lines">${names.map(name => `<li>${escapeHtml(listLines([name]))}</li>`).join("")}</ul><small class="billing-problem">If they ran, import the DCM or DSP report and put their placements on these lines (the “not on a line” list). If they didn’t run this month, take them off the row. <button class="text-button" type="button" data-billing-drop-lines="${escapeHtml(item.row.id)}" data-billing-lines="${escapeHtml(JSON.stringify(names))}">Take ${names.length === 1 ? "it" : "them"} off this row</button></small>`;
+  }
   if (item.unavailable && !item.quantity) return `<small class="billing-problem">No DCM or DSP days for ${known.length === 1 ? "its line" : "its lines"} from ${escapeHtml(shortDate(item.period.from))} to ${escapeHtml(shortDate(item.period.to))}. Billing reads only DCM and DSP, so import the DCM or DSP report for these dates.</small>`;
   if (item.pendingDays?.length) return `<small class="billing-note-inline">Data through ${escapeHtml(shortDate(item.through))}. ${escapeHtml(dayList(item.pendingDays))} not in yet.</small>`;
   if (!item.quantity && !item.unavailable) return `<small class="billing-problem">No delivery found for these dates in its ${known.length} line${known.length === 1 ? "" : "s"}${Object.keys(item.lineSources || {}).length ? "" : ""}. Check the DCM or DSP report covers them.</small>`;
@@ -4846,6 +4857,20 @@ document.querySelector("#client-billing").addEventListener("click", event => {
   }
   const show = event.target.closest("[data-billing-show]");
   if (show) { showBillingRow(show.dataset.billingShow); return; }
+  const drop = event.target.closest("[data-billing-drop-lines]");
+  if (drop && clientScope) {
+    const config = billingConfig(clientScope);
+    const row = config.rows.find(item => item.id === drop.dataset.billingDropLines);
+    const names = JSON.parse(drop.dataset.billingLines);
+    if (row) {
+      row.lines = (row.lines || []).filter(name => !names.includes(name));
+      saveBilling();
+      renderClientBilling();
+      if (pageView === "billing") renderBillingPage();
+      showToast("Lines taken off the row", `${listLines(names)} no longer bill${names.length === 1 ? "s" : ""} on ${row.lineName || row.campaignName}. Tick ${names.length === 1 ? "it" : "them"} under the row’s lines to add ${names.length === 1 ? "it" : "them"} back.`);
+    }
+    return;
+  }
   const pick = event.target.closest("[data-billing-pick-lines]");
   if (pick) {
     const row = document.querySelector(`#billing-rows [data-billing-row="${CSS.escape(pick.dataset.billingPickLines)}"]`);
