@@ -68,7 +68,7 @@ import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, local
 import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, LEAVE_OUT, placementChoiceKey, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberPlacementLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
-import { attachLineDays, billedBefore, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, repairImportedHistory, latestProjection, monthLabel, monthName, projectionDue, setProjection, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
+import { attachLineDays, billedBefore, reviewBillingRow, unreviewBillingRow, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, repairImportedHistory, latestProjection, monthLabel, monthName, projectionDue, setProjection, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
 import { kpiWatch } from "./lib/kpi-watch.js";
 import { cleanDomain, findOpportunityId, isOpportunityId, opportunityUrl, readSalesforce, writeSalesforce } from "./lib/salesforce.js";
 import { WINDOWS as REPORT_WINDOWS, buildAdapterPrompt, buildReportingPack, buildSchedulePrompt, buildSkillPrompt, CADENCES, DEFAULT_PROMPT_ANSWERS, defaultSkillName, PROMPT_BREAKDOWNS, PROMPT_INCLUDES, PROMPT_OUTPUTS, isPackDue, lastDueDate, PACK_FOLDER, packFileNames, readReporting, weekdayName, writeReporting } from "./lib/reporting-pack.js";
@@ -4701,6 +4701,20 @@ function billingStatusText(result) {
 function billingPreviewMonths() { return Array.from({ length: 13 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
 /** Why a row bills nothing: its lines ended, or none of them are on the dashboard; with the fix one click away. */
 function rowProblem(item, month) {
+  return `${rowGaps(item, month)}${reviewControls(item, month)}`;
+}
+/** "Looks good" for a row whose gaps are expected (live from the 5th), or the note that you already said so. */
+function reviewControls(item, month) {
+  const open = item.missingDays.length || item.pendingDays?.length || item.noDataLines?.length;
+  if (open) {
+    // Say exactly what the check covers, so a line that did run isn't marked fine by accident.
+    const covers = [[...item.missingDays, ...(item.pendingDays || [])].length ? dayList([...item.missingDays, ...(item.pendingDays || [])].sort()) : "", item.noDataLines?.length ? listLines(item.noDataLines) : ""].filter(Boolean).join(" and ");
+    return `<small class="billing-review"><button class="secondary-button billing-review-button" type="button" data-billing-review="${escapeHtml(item.row.id)}" data-billing-for="${month}">✓ Looks good, nothing to bill for ${escapeHtml(covers)}</button> Use this when the gaps are expected, like a campaign that went live mid-month.</small>`;
+  }
+  if (item.reviewed) return `<small class="billing-reviewed">✓ Gaps marked as fine${item.reviewed.at ? ` on ${escapeHtml(new Date(item.reviewed.at).toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}${item.reviewed.days.length ? ` · ${escapeHtml(dayList(item.reviewed.days))}` : ""}${item.reviewed.lines.length ? ` · ${escapeHtml(listLines(item.reviewed.lines))}` : ""} <button class="text-button" type="button" data-billing-unreview="${escapeHtml(item.row.id)}" data-billing-for="${month}">Undo</button></small>`;
+  return "";
+}
+function rowGaps(item, month) {
   const lines = clientLines(clientScope);
   const known = (item.row.lines || []).filter(name => lines.some(line => line.name === name));
   const unbilled = unbilledCampaigns(clientScope, month, billingConfig(clientScope));
@@ -4713,6 +4727,7 @@ function rowProblem(item, month) {
     return `<small class="billing-problem">No DCM or DSP days from ${escapeHtml(shortDate(item.period.from))} to ${escapeHtml(shortDate(item.period.to))} for ${which}:</small><ul class="billing-missing-lines">${names.map(name => `<li>${escapeHtml(listLines([name]))}</li>`).join("")}</ul><small class="billing-problem">If they ran, import the DCM or DSP report and put their placements on these lines (the “not on a line” list). If they didn’t run this month, take them off the row. <button class="text-button" type="button" data-billing-drop-lines="${escapeHtml(item.row.id)}" data-billing-lines="${escapeHtml(JSON.stringify(names))}">Take ${names.length === 1 ? "it" : "them"} off this row</button></small>`;
   }
   if (item.unavailable && !item.quantity) return `<small class="billing-problem">No DCM or DSP days for ${known.length === 1 ? "its line" : "its lines"} from ${escapeHtml(shortDate(item.period.from))} to ${escapeHtml(shortDate(item.period.to))}. Billing reads only DCM and DSP, so import the DCM or DSP report for these dates.</small>`;
+  if (item.missingDays.length) return `<small class="billing-problem">No DCM or DSP numbers for ${escapeHtml(dayList(item.missingDays))}. If the campaign wasn’t live then, those days have nothing to bill.</small>`;
   if (item.pendingDays?.length) return `<small class="billing-note-inline">Data through ${escapeHtml(shortDate(item.through))}. ${escapeHtml(dayList(item.pendingDays))} not in yet.</small>`;
   if (!item.quantity && !item.unavailable) return `<small class="billing-problem">No delivery found for these dates in its ${known.length} line${known.length === 1 ? "" : "s"}${Object.keys(item.lineSources || {}).length ? "" : ""}. Check the DCM or DSP report covers them.</small>`;
   return "";
@@ -4807,7 +4822,7 @@ function lineBreakout(item) {
   const short = name => name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name;
   const dataText = detail => detail.noData ? "No DCM or DSP days"
     : `${shortDate(detail.from)} to ${shortDate(detail.through)} · ${detail.days} day${detail.days === 1 ? "" : "s"}${detail.missing.length ? ` · missing ${dayList(detail.missing)}` : ""}${detail.pending.length ? ` · ${dayList(detail.pending)} not in yet` : ""}`;
-  const rows = details.map(detail => `<tr class="${detail.noData || detail.missing.length ? "breakout-problem" : ""}"><td>${escapeHtml(short(detail.name))}</td><td>${escapeHtml(detail.source ? BILLING_SOURCES[detail.source] : "—")}</td><td>${escapeHtml(dataText(detail))}</td><td>${formatCount(detail.totals.impressions || 0)}</td><td>${second[1] === "spend" ? moneyText(detail.totals.spend || 0) : formatCount(detail.totals[second[1]] || 0)}</td><td>${detail.billable === null ? "—" : moneyText(detail.billable)}</td></tr>`).join("");
+  const rows = details.map(detail => `<tr class="${(detail.noData && !detail.reviewed) || detail.missing.length ? "breakout-problem" : detail.reviewed ? "breakout-reviewed" : ""}"><td>${escapeHtml(short(detail.name))}</td><td>${escapeHtml(detail.source ? BILLING_SOURCES[detail.source] : "—")}</td><td>${escapeHtml(dataText(detail))}</td><td>${formatCount(detail.totals.impressions || 0)}</td><td>${second[1] === "spend" ? moneyText(detail.totals.spend || 0) : formatCount(detail.totals[second[1]] || 0)}</td><td>${detail.billable === null ? "—" : moneyText(detail.billable)}</td></tr>`).join("");
   const sum = details.reduce((total, detail) => total + (detail.billable || 0), 0);
   return `<tr class="billing-breakout-row"><td colspan="5"><details class="billing-breakout"${item.noDataLines?.length || item.missingDays.length ? " open" : ""}><summary>See each line (${details.length})</summary><table class="breakout-table"><thead><tr><th>Line</th><th>From</th><th>Data</th><th>Impressions</th><th>${second[0]}</th><th>Billable</th></tr></thead><tbody>${rows}</tbody>${item.row.rateType !== "flat" ? `<tfoot><tr><td colspan="5">Lines together${item.capped ? " (before the IO cap)" : ""}</td><td>${moneyText(Math.round(sum * 100) / 100)}</td></tr></tfoot>` : ""}</table></details></td></tr>`;
 }
@@ -4890,6 +4905,21 @@ document.querySelector("#client-billing").addEventListener("click", event => {
   }
   const show = event.target.closest("[data-billing-show]");
   if (show) { showBillingRow(show.dataset.billingShow); return; }
+  const review = event.target.closest("[data-billing-review], [data-billing-unreview]");
+  if (review && clientScope) {
+    const month = review.dataset.billingFor;
+    const id = review.dataset.billingReview || review.dataset.billingUnreview;
+    if (review.dataset.billingReview) {
+      // Every period of the row this month (custom billing periods split a month in two).
+      const items = billingResult(clientScope, month).rows.filter(item => item.row.id === id);
+      billing[clientScope] = items.reduce((config, item) => reviewBillingRow(config, month, item), billingConfig(clientScope));
+    } else billing[clientScope] = unreviewBillingRow(billingConfig(clientScope), month, id);
+    saveBilling();
+    renderClientBilling();
+    if (pageView === "billing") renderBillingPage();
+    showToast(review.dataset.billingReview ? "Marked as fine" : "Gaps showing again", review.dataset.billingReview ? `${monthLabel(month)} no longer waits on those days. Undo is on the row.` : `${monthLabel(month)} shows the row’s gaps again.`);
+    return;
+  }
   const drop = event.target.closest("[data-billing-drop-lines]");
   if (drop && clientScope) {
     const config = billingConfig(clientScope);
