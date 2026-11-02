@@ -288,7 +288,7 @@
 
         <section class="billing-page" id="billing-page" aria-label="Billing" hidden>
           <article class="panel">
-            <div class="panel-header"><div><h2>Monthly billing</h2><p id="billing-page-context">Each client’s billing for the month, filled from DCM and DSP</p></div><div class="panel-actions"><label class="billing-month">Month <select id="billing-month"></select></label></div></div>
+            <div class="panel-header"><div><h2>Monthly billing</h2><p id="billing-page-context">Each client’s billing for the month, filled from DCM and DSP</p></div><div class="panel-actions"><div class="month-stepper" data-stepper-for="billing-month"><button class="month-step" type="button" data-month-step="-1" aria-label="Previous month">‹</button><select id="billing-month" aria-label="Billing month"></select><button class="month-step" type="button" data-month-step="1" aria-label="Next month">›</button></div></div></div>
             <ul class="billing-list" id="billing-list"></ul>
             <div class="billing-projections" id="billing-projections" hidden></div>
           </article>

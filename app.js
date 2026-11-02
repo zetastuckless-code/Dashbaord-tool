@@ -27,7 +27,7 @@ import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { isZipName, unzipReports } from "./lib/zip.js";
-import { addTrailEntry, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
+import { addTrailEntry, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
@@ -2614,11 +2614,14 @@ function campaignImportKey(campaign) {
 function recordImport(fileName, fingerprint, status, rowCount = 0, errors = [], campaignKeys = [], warnings = []) {
   importHistory = addImportRecord(importHistory, createImportRecord({ fileName, fingerprint, status, rowCount, errors, campaignKeys, warnings }));
   writeImportHistory(localStorage, importHistory);
+  // A duplicate carries no campaigns of its own: it takes them from the import it repeats.
+  const earlier = status === "Duplicate" ? importHistory.find(record => record.fingerprint === fingerprint && record.status !== "Duplicate" && record.campaignKeys?.length) : null;
+  if (earlier) campaignKeys = earlier.campaignKeys;
   const dcm = campaignKeys.some(key => key.endsWith("::cm360"));
   const keys = new Set(campaignKeys.map(key => key.replace(/::cm360$/, "")));
   const touched = campaigns.filter(record => keys.has(campaignImportKey(record)));
-  const failed = ["Rejected", "Duplicate"].includes(status);
-  logUpload({ fileName, kind: dcm ? "dcm" : "report", status, clients: touched.map(record => record.client), campaigns: touched.map(campaignGroupName), detail: failed ? errors[0] || "" : `${rowCount} line${rowCount === 1 ? "" : "s"}${warnings.some(warning => /automatically/i.test(warning)) ? " · from the watched folder" : ""}` });
+  const failed = status === "Rejected";
+  logUpload({ fileName, kind: dcm ? "dcm" : "report", status, clients: touched.map(record => record.client), campaigns: touched.map(campaignGroupName), detail: status === "Duplicate" ? "Same report as one already imported, so nothing changed" : failed ? errors[0] || "" : `${rowCount} line${rowCount === 1 ? "" : "s"}${warnings.some(warning => /automatically/i.test(warning)) ? " · from the watched folder" : ""}` });
   renderImportHistory();
   renderDataHealth();
 }
@@ -2853,9 +2856,9 @@ function renderUploadTrail() {
     ? `${uploadTrail.length} upload${uploadTrail.length === 1 ? "" : "s"} on record${filtered.length === uploadTrail.length ? "" : ` · showing ${filtered.length}`} · every file pulled in, day by day`
     : "Nothing has been uploaded yet";
   const time = at => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const row = entry => `<div class="source-row trail-row${trailFailed(entry) ? " failed" : ""}"><span class="document-kind kind-trail-${escapeHtml(entry.kind)}">${escapeHtml(TRAIL_KINDS[entry.kind] || entry.kind)}</span><span class="document-main"><strong>${escapeHtml(entry.fileName)}</strong><small>${escapeHtml([trailFailed(entry) ? entry.status : "", entry.clients.join(", "), entry.campaigns.length && entry.campaigns.join(", ") !== entry.clients.join(", ") ? entry.campaigns.slice(0, 3).join(", ") + (entry.campaigns.length > 3 ? ` +${entry.campaigns.length - 3}` : "") : "", entry.detail, entry.backfilled ? "from before the trail started" : ""].filter(Boolean).join(" · "))}</small></span><span class="source-when">${escapeHtml(time(entry.at))}</span></div>`;
+  const row = entry => `<div class="source-row trail-row${trailFailed(entry) ? " failed" : trailDuplicate(entry) ? " duplicate" : ""}"><span class="document-kind kind-trail-${escapeHtml(entry.kind)}">${escapeHtml(TRAIL_KINDS[entry.kind] || entry.kind)}</span><span class="document-main"><strong>${escapeHtml(entry.fileName)}</strong><small>${escapeHtml([trailFailed(entry) ? entry.status : trailDuplicate(entry) ? "Already imported" : "", entry.clients.join(", "), entry.campaigns.length && entry.campaigns.join(", ") !== entry.clients.join(", ") ? entry.campaigns.slice(0, 3).join(", ") + (entry.campaigns.length > 3 ? ` +${entry.campaigns.length - 3}` : "") : "", entry.detail, entry.backfilled ? "from before the trail started" : ""].filter(Boolean).join(" · "))}</small></span><span class="source-when">${escapeHtml(time(entry.at))}</span></div>`;
   document.querySelector("#data-sources-list").innerHTML = days.length
-    ? days.map(day => `<section class="source-group" aria-label="${escapeHtml(trailDayLabel(day.day))}"><div class="source-group-head"><h3>${escapeHtml(trailDayLabel(day.day))}</h3><small>${day.imported} pulled in${day.failed ? ` · ${day.failed} not imported` : ""}</small></div>${day.entries.map(row).join("")}</section>`).join("")
+    ? days.map(day => `<section class="source-group" aria-label="${escapeHtml(trailDayLabel(day.day))}"><div class="source-group-head"><h3>${escapeHtml(trailDayLabel(day.day))}</h3><small>${day.imported} pulled in${day.duplicates ? ` · ${day.duplicates} already imported` : ""}${day.failed ? ` · ${day.failed} not imported` : ""}</small></div>${day.entries.map(row).join("")}</section>`).join("")
     : `<p class="history-empty">${uploadTrail.length ? "No uploads match these filters." : "Every report, DCM file, IO, billing file, status doc, and morning brief you pull in is listed here by day."}</p>`;
 }
 
@@ -4601,7 +4604,7 @@ function billingStatusText(result) {
 }
 // The client's billing preview shows the month billing is on (this month, or last month in the first week); you can
 // switch to another recent month.
-function billingPreviewMonths() { return Array.from({ length: 4 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
+function billingPreviewMonths() { return Array.from({ length: 13 }, (_, index) => previousMonth(new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() - index + 1, 15)))); }
 /** Why a row bills nothing: its lines ended, or none of them are on the dashboard; with the fix one click away. */
 function rowProblem(item, month) {
   const lines = clientLines(clientScope);
@@ -4622,7 +4625,8 @@ function rowPaceText(result, item) {
 }
 /** The always-visible line: the month, where it stands, its total so far, and the download. */
 function billingHead(result, month, config, client = clientScope) {
-  return `<div class="billing-preview-head"><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${billingPreviewMonths().map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${emptyRowsNotice(result)}${unbilledNotice(client, month, config)}${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
+  const months = billingPreviewMonths();
+  return `<div class="billing-preview-head"><div class="month-stepper"><button class="month-step" type="button" data-billing-step="1" aria-label="Previous month"${month === months.at(-1) ? " disabled" : ""}>‹</button><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${months.map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><button class="month-step" type="button" data-billing-step="-1" aria-label="Next month"${month === months[0] ? " disabled" : ""}>›</button></div><span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">${escapeHtml(billingStatusText(result))}</span><strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${emptyRowsNotice(result)}${unbilledNotice(client, month, config)}${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
 }
 /** The client's campaigns live this month whose lines no billing row includes, one entry per campaign. */
 function unbilledCampaigns(client, month, config) {
@@ -4683,11 +4687,25 @@ function paceBar(pace, running) {
 /** Under the preview: when this month was downloaded, and what the month before it billed. */
 function billingNote(config, month) {
   const entry = config.history?.[month];
+  if (entry && month < todayLocal().slice(0, 7)) return `<p class="billing-note">${escapeHtml(`${monthLabel(month)} billed ${moneyText(entry.total || 0)}${entry.downloadedAt ? `, downloaded ${new Date(entry.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" })}` : entry.importedAt ? ", from your billing file" : ""}${entry.from && entry.to ? ` (${shortDate(entry.from)} to ${shortDate(entry.to)})` : ""}. Each row shows what was billed beside what the dashboard works out now.`)}</p>`;
   const done = entry?.downloadedAt ? `Downloaded ${new Date(entry.downloadedAt).toLocaleDateString([], { month: "short", day: "numeric" })}.` : entry?.importedAt ? "Read from your billing file." : "";
   const lastMonth = Object.keys(config.history || {}).filter(key => key < month).sort().at(-1);
   const last = lastMonth ? `Last billed: ${monthLabel(lastMonth)}, ${moneyText(config.history[lastMonth].total || 0)}${config.history[lastMonth].importedAt ? " (from your billing file)" : ""}.` : "";
   return done || last ? `<p class="billing-note">${escapeHtml([done, last].filter(Boolean).join(" "))}</p>` : "";
 }
+/**
+ * For a month already billed: what the billing file (or your download) said for this row, beside what the dashboard
+ * works out now. Shown once, on the row's last period, so you can check a past month is right.
+ */
+function billedCheck(result, item, entry) {
+  if (!entry?.rows || !(item.row.id in entry.rows) || result.rows.filter(other => other.row.id === item.row.id).at(-1) !== item) return "";
+  const billed = Number(entry.rows[item.row.id]) || 0;
+  const here = result.rows.filter(other => other.row.id === item.row.id).reduce((sum, other) => sum + (other.billable || 0), 0);
+  const gap = here - billed;
+  const close = Math.abs(gap) <= Math.max(1, billed * 0.01);
+  return `<small class="billed-check ${close ? "match" : "off"}">Billed ${moneyText(billed)}${close ? " · matches" : ` · dashboard ${gap > 0 ? "+" : "−"}${moneyText(Math.abs(gap))}`}</small>`;
+}
+
 function renderBillingPreview() {
   if (!clientScope) return;
   const preview = document.querySelector("#billing-preview");
@@ -4695,7 +4713,7 @@ function renderBillingPreview() {
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
   document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your reports.</p>';
-  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.row.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : `${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.source !== item.row.source ? ` (no ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>`).join("")}</tbody></table>` : "";
+  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.row.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : `${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.source !== item.row.source ? ` (no ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${billedCheck(result, item, config.history?.[month])}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>`).join("")}</tbody></table>` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
@@ -4725,6 +4743,15 @@ document.querySelector("#client-billing").addEventListener("change", event => {
   if (field?.dataset.billingField === "rateType") renderClientBilling(); else renderBillingPreview();
 });
 document.querySelector("#client-billing").addEventListener("click", event => {
+  const step = event.target.closest("[data-billing-step]");
+  if (step && clientScope) {
+    const months = billingPreviewMonths();
+    const preview = document.querySelector("#billing-preview");
+    const current = months.includes(preview.dataset.month) ? preview.dataset.month : billingMonth();
+    const next = months[months.indexOf(current) + Number(step.dataset.billingStep)];
+    if (next) { preview.dataset.month = next; renderBillingPreview(); preview.querySelector(`[data-billing-step="${step.dataset.billingStep}"]`)?.focus(); }
+    return;
+  }
   const remove = event.target.closest("[data-billing-remove]");
   if (remove && clientScope) {
     const config = billingConfig(clientScope);
@@ -4848,6 +4875,9 @@ function renderBillingPage() {
   const chosen = select.value || billingMonth();
   select.innerHTML = months.map(month => `<option value="${month}"${month === chosen ? " selected" : ""}>${escapeHtml(monthLabel(month))}</option>`).join("");
   const month = select.value;
+  const stepper = document.querySelector('[data-stepper-for="billing-month"]');
+  stepper.querySelector('[data-month-step="-1"]').disabled = select.selectedIndex === select.options.length - 1;
+  stepper.querySelector('[data-month-step="1"]').disabled = select.selectedIndex === 0;
   const items = billedClients().map(client => ({ client, result: billingResult(client, month), config: billing[client] }));
   const ready = items.filter(item => item.result.ready);
   const running = items.some(item => item.result.running);
@@ -4870,6 +4900,16 @@ function renderBillingPage() {
   }).join("") || '<li class="billing-empty">No clients yet.</li>';
 }
 document.querySelector("#billing-month").addEventListener("change", renderBillingPage);
+document.querySelector('[data-stepper-for="billing-month"]').addEventListener("click", event => {
+  const step = event.target.closest("[data-month-step]");
+  if (!step) return;
+  const select = document.querySelector("#billing-month");
+  // The list runs newest first, so an earlier month is further down it.
+  const index = select.selectedIndex - Number(step.dataset.monthStep);
+  if (index < 0 || index >= select.options.length) return;
+  select.selectedIndex = index;
+  renderBillingPage();
+});
 document.querySelector("#billing-list").addEventListener("click", event => {
   const setup = event.target.closest("[data-billing-setup]");
   if (!setup) return;

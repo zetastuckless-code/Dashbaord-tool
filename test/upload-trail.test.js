@@ -20,7 +20,7 @@ test("groups the trail by day and counts what didn't import", () => {
   trail = addTrailEntry(trail, { fileName: "dcm.csv", kind: "dcm", at: "2026-10-29T09:00:00" });
   trail = addTrailEntry(trail, { fileName: "dcm.csv", kind: "dcm", status: "Duplicate", at: "2026-10-29T10:00:00" });
   const days = groupTrailByDay(trail);
-  assert.deepEqual(days.map(day => [day.day, day.imported, day.failed]), [["2026-10-29", 1, 1], ["2026-10-28", 1, 0]]);
+  assert.deepEqual(days.map(day => [day.day, day.imported, day.duplicates, day.failed]), [["2026-10-29", 1, 1, 0], ["2026-10-28", 1, 0, 0]]);
   assert.deepEqual(days[0].entries.map(entry => entry.status), ["Duplicate", "Imported"]);
 });
 
