@@ -121,3 +121,27 @@ test("IO format names match DCM's: Standard Display, Native Display and Online V
   const withAv = assignPlacements([...lines, { name: "Highmark B2B — Standard Display DE Added Value" }], [`${prefix}DISPLAY-ZETA-DE-ADDEDVALUE`]);
   assert.equal(withAv.assigned.get(`${prefix}DISPLAY-ZETA-DE-ADDEDVALUE`), 4);
 });
+
+test("placements picked by hand go on the chosen line, and remembered picks place later reports", async () => {
+  const { planDelivery, placementChoiceKey, rememberPlacementLinks, LEAVE_OUT } = await import("../lib/third-party-delivery.js");
+  const lines = [{ client: "Brand", name: "Brand 2026" }, { client: "Brand", name: "Brand 2026 — YouTube" }].map(record => ({ ...record, campaignGroup: "Brand 2026" }));
+  const parsed = { source: "CM360", campaigns: [{ key: "123", sourceCampaignId: "123", sourceCampaignName: "Brand 2026" }], placements: [
+    { sourceCampaignId: "123", placement: "Zeta_Display_Conversion_300x250", date: "2026-10-01", impressions: 10 },
+    { sourceCampaignId: "123", placement: "Zeta_Display_Lookalikes_728x90", date: "2026-10-01", impressions: 5 },
+    { sourceCampaignId: "123", placement: "YouTube_Bumper", date: "2026-10-01", impressions: 7 }
+  ], records: [] };
+  const target = "brand::brand 2026";
+  const unpicked = planDelivery(lines, parsed, {}, { 123: target })[0];
+  assert.deepEqual(unpicked.unassigned, ["Zeta_Display_Conversion_300x250", "Zeta_Display_Lookalikes_728x90"]);
+  const choices = { [placementChoiceKey("123", "Zeta_Display_Conversion_300x250")]: "Brand 2026", [placementChoiceKey("123", "Zeta_Display_Lookalikes_728x90")]: LEAVE_OUT };
+  const picked = planDelivery(lines, parsed, {}, { 123: target }, choices)[0];
+  assert.equal(picked.assigned.get("Zeta_Display_Conversion_300x250"), 0);
+  assert.deepEqual(picked.unassigned, ["Zeta_Display_Lookalikes_728x90"]);
+  // Remembered, the next report places them the same way with nothing picked.
+  const store = new Map();
+  const links = rememberPlacementLinks({ setItem: (key, value) => store.set(key, value) }, {}, [picked], "CM360", choices);
+  const later = planDelivery(lines, parsed, links, { 123: target })[0];
+  assert.equal(later.assigned.get("Zeta_Display_Conversion_300x250"), 0);
+  assert.equal(later.assigned.has("Zeta_Display_Lookalikes_728x90"), false);
+  assert.equal(later.assigned.get("YouTube_Bumper"), 1);
+});
