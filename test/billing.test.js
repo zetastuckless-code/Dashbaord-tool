@@ -275,3 +275,13 @@ test("a row set to the old report option bills from whichever of DCM and DSP rea
   assert.equal(result.rows[0].revenue, 31 * 50);
 });
 
+
+test("a row names the lines that have no DCM or DSP days, while its other lines still bill", () => {
+  const ny = line("McMaster — NY", { CM360: days("2026-10-01", "2026-10-31", { impressions: 1000 }) });
+  const chicago = line("McMaster — Chicago", {});
+  const result = computeClientBilling({ rows: [{ id: "m", lineName: "McMaster", source: "CM360", rateType: "cpm", rate: 5, lines: ["McMaster — NY", "McMaster — Chicago"] }] }, [ny, chicago], "2026-10", "2026-11-02");
+  assert.equal(result.rows[0].quantity, 31_000);
+  assert.deepEqual(result.rows[0].noDataLines, ["McMaster — Chicago"]);
+  assert.deepEqual(result.noDataLines, ["McMaster — Chicago"]);
+  assert.equal(result.ready, false);
+});
