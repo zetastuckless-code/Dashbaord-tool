@@ -764,3 +764,14 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 
 .document-auto{font-size:11px;font-weight:700;color:#4b5263;background:#eef0f4;border-radius:999px;padding:2px 9px;white-space:nowrap}.document-auto.muted{background:transparent;color:#8b93a3;font-weight:600}
 .document-more{display:block;margin:10px auto 0}
+
+/* Line breakout under each billing row. */
+.billing-breakout-row>td{padding-top:0!important;border-top:0!important}
+.billing-breakout>summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--accent,#5b4be3);padding:2px 0 6px;list-style:none}.billing-breakout>summary::-webkit-details-marker{display:none}
+.billing-breakout>summary::before{content:"▸ ";}.billing-breakout[open]>summary::before{content:"▾ "}
+.breakout-table{width:100%;border-collapse:collapse;font-size:12px;margin:0 0 10px;background:#fafbfd;border:1px solid var(--line);border-radius:8px}
+.breakout-table th,.breakout-table td{padding:6px 10px;text-align:left;border-top:1px solid #eef0f4;white-space:nowrap}.breakout-table th{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#636c7e;border-top:0}
+.billing-table .breakout-table td:nth-child(-n+3),.billing-table .breakout-table th:nth-child(-n+3){text-align:left}.breakout-table td:nth-child(3){white-space:normal;color:#4b5263}.billing-table .breakout-table td:nth-child(n+4),.billing-table .breakout-table th:nth-child(n+4){text-align:right}
+.breakout-table tfoot td{font-weight:700;border-top:1px solid var(--line)}.breakout-table tfoot td:first-child{text-align:right;color:#4b5263}
+.breakout-problem td{background:#fff6ea}.breakout-problem td:nth-child(3){color:#8a5516;font-weight:600}
+@media(max-width:760px){.breakout-table{display:block;overflow-x:auto}}
