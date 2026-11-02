@@ -4600,6 +4600,7 @@ function billingStatusText(result) {
   if (result.running) return result.through ? `Month to date through ${shortDate(result.through)} · final numbers after the month ends` : "Month to date · no data this month yet";
   if (result.unavailable.length) return `Needs data: ${result.unavailable.join(", ")} has no numbers for these dates`;
   if (result.missingDays.length) return `Missing ${dayList(result.missingDays)}`;
+  if (result.pendingDays?.length) return `Data through ${shortDate(result.dataThrough)} · ${dayList(result.pendingDays)} not in yet`;
   return "Ready";
 }
 // The client's billing preview shows the month billing is on (this month, or last month in the first week); you can
@@ -4613,7 +4614,8 @@ function rowProblem(item, month) {
   const move = unbilled.map(campaign => `<button class="text-button" type="button" data-billing-move-row="${escapeHtml(item.row.id)}" data-billing-campaign="${escapeHtml(campaign.key)}" data-billing-for="${month}">Bill ${escapeHtml(campaign.name)} on this row</button>`).join(" ");
   if (!known.length) return `<small class="billing-problem">None of this row’s lines are on the dashboard. ${move || `<button class="text-button" type="button" data-billing-pick-lines="${escapeHtml(item.row.id)}">Pick its lines ›</button>`}</small>`;
   if (item.notLive) return `<small class="billing-problem">Its lines ran before or after ${escapeHtml(monthName(month))}. ${move || ""}</small>`;
-  if (item.unavailable && !item.quantity) return `<small class="billing-problem">${item.reportEnds ? `Its report only runs through ${escapeHtml(shortDate(item.reportEnds))}` : "Its lines have no report numbers for these dates"}, and there are no DCM or DSP days for ${escapeHtml(shortDate(item.period.from))} to ${escapeHtml(shortDate(item.period.to))}. Upload a report that covers the whole period, or bring in the DCM or DSP report for it.</small>`;
+  if (item.unavailable && !item.quantity) return `<small class="billing-problem">No DCM or DSP days for ${known.length === 1 ? "its line" : "its lines"} from ${escapeHtml(shortDate(item.period.from))} to ${escapeHtml(shortDate(item.period.to))}. Billing reads only DCM and DSP, so import the DCM or DSP report for these dates.</small>`;
+  if (item.pendingDays?.length) return `<small class="billing-note-inline">Data through ${escapeHtml(shortDate(item.through))}. ${escapeHtml(dayList(item.pendingDays))} not in yet.</small>`;
   if (!item.quantity && !item.unavailable) return `<small class="billing-problem">No delivery found for these dates in its ${known.length} line${known.length === 1 ? "" : "s"}${Object.keys(item.lineSources || {}).length ? "" : ""}. Check the DCM or DSP report covers them.</small>`;
   return "";
 }
@@ -4644,7 +4646,7 @@ function emptyRowsNotice(result) {
   return empty.length ? `<div class="billing-unbilled"><b>Billing nothing this month:</b> ${empty.map(([id, name]) => `<button class="billing-jump" type="button" data-billing-show="${escapeHtml(id)}">${escapeHtml(name)} ›</button>`).join(" ")} <span>Click one to see why and fix it.</span></div>` : "";
 }
 /** The first row that needs attention: billing nothing, missing days, or no numbers for its dates. */
-function problemRowId(result) { return result.rows.find(item => item.notLive || item.unavailable || item.missingDays.length)?.row.id || null; }
+function problemRowId(result) { return result.rows.find(item => item.notLive || item.unavailable || item.missingDays.length || item.pendingDays?.length)?.row.id || null; }
 function unbilledNotice(client, month, config) {
   if (!config.rows?.length) return "";
   const missing = unbilledCampaigns(client, month, config);
@@ -4729,8 +4731,8 @@ function renderBillingPreview() {
   const month = billingPreviewMonths().includes(preview.dataset.month) ? preview.dataset.month : billingMonth();
   const result = billingResult(clientScope, month);
   const config = billingConfig(clientScope);
-  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your reports.</p>';
-  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr data-billing-row-item="${escapeHtml(item.row.id)}"><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(item.fromReport || item.source === "report" ? `Uploaded report${item.estimated ? ", split by days" : ""}` : `${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.source !== item.row.source ? item.row.source === "report" ? " (the report doesn’t cover these dates)" : ` (no ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${billedCheck(result, item, config.history?.[month])}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>`).join("")}</tbody></table>` : "";
+  document.querySelector("#billing-preview").innerHTML = result.rows.length ? `${billingHead(result, month, config)}` : '<p class="billing-empty">No billing set up yet. Upload last month’s billing file and this month fills in from your DCM and DSP reports.</p>';
+  document.querySelector("#billing-lines-table").innerHTML = result.rows.length ? `<table class="billing-table"><thead><tr><th>Line item</th><th>Period</th><th>Quantity</th><th>Rate</th><th>Billable</th></tr></thead><tbody>${result.rows.map(item => `<tr data-billing-row-item="${escapeHtml(item.row.id)}"><td>${escapeHtml(item.row.lineName || item.row.campaignName || "—")}<small>${escapeHtml(`${BILLING_SOURCES[item.source] || BILLING_SOURCES[item.row.source]}${item.source && item.row.source !== "report" && item.source !== item.row.source ? ` (no newer ${BILLING_SOURCES[item.row.source]} days)` : ""}`)} · ${escapeHtml(RATE_TYPES[item.row.rateType])}</small></td><td>${escapeHtml(item.period.label || `${shortDate(item.period.from)} to ${shortDate(item.period.to)}`)}</td><td>${formatCount(item.quantity)}</td><td>${escapeHtml(item.row.rateType === "spend" ? "spend" : String(item.rate))}</td><td>${moneyText(item.billable)}${item.capped ? `<small class="billing-capped">Capped at the IO · ${moneyText(item.deliveredBillable)} delivered</small>` : ""}${billedCheck(result, item, config.history?.[month])}${rowPaceText(result, item)}${rowProblem(item, month)}</td></tr>`).join("")}</tbody></table>` : "";
 }
 
 document.querySelector("#client-billing").addEventListener("change", event => {
@@ -4872,7 +4874,7 @@ async function downloadBilling(client, month) {
   const result = billingResult(client, month);
   if (!result.rows.length) return;
   for (const item of result.rows) {
-    if (item.row.source === "report" || item.source === "report") continue;
+    if (!["CM360", "DSP"].includes(item.source)) continue;
     const lines = (item.row.lines || []).filter(name => (item.lineSources?.[name] || item.source) === item.source);
     item.rawRows = await readRawRows(indexedDB, item.source || item.row.source, lines, item.period.from, item.period.to).catch(() => []);
   }
