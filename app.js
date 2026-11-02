@@ -27,7 +27,7 @@ import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { isZipName, unzipReports } from "./lib/zip.js";
-import { addTrailEntry, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
+import { addTrailEntry, clientFileHistory, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
@@ -2785,15 +2785,28 @@ document.querySelector("#client-io").addEventListener("click", event => {
   openCampaignEdit(edit.dataset.editCampaign);
 });
 
+let clientDocumentsAll = false;
 function renderClientDocuments() {
   const panel = document.querySelector("#client-documents");
   panel.hidden = !clientScope;
   if (!clientScope) { lastClientDocuments = []; return; }
   lastClientDocuments = listClientDocuments({ campaigns, totals: campaignTotals, client: clientScope });
-  document.querySelector("#client-documents-context").textContent = lastClientDocuments.length ? `${lastClientDocuments.length} upload${lastClientDocuments.length === 1 ? "" : "s"} for ${clientScope} · remove anything that was uploaded by mistake` : `Nothing has been uploaded for ${clientScope} yet`;
-  document.querySelector("#client-document-list").innerHTML = lastClientDocuments.length
-    ? lastClientDocuments.map(doc => `<div class="document-row"><span class="document-kind kind-${escapeHtml(doc.kind)}">${escapeHtml(DOCUMENT_KINDS[doc.kind] || doc.kind)}</span><span class="document-main"><strong>${escapeHtml(doc.fileName)}</strong><small>${escapeHtml(documentDetail(doc))}</small></span><button class="text-button destructive-text" type="button" data-remove-document="${escapeHtml(doc.id)}" aria-label="Remove ${escapeHtml(doc.fileName)}">Remove</button></div>`).join("")
-    : '<p class="history-empty">Reports and insertion orders you import for this client are listed here.</p>';
+  // Everything else pulled in for the client: DCM and DSP files, folder imports, billing files and status docs.
+  const history = clientFileHistory(uploadTrail, clientScope, { docs: lastClientDocuments, campaigns });
+  const items = [...lastClientDocuments.map(doc => ({ doc, at: doc.uploadedAt || doc.dataAsOf || "" })), ...history.map(entry => ({ entry, at: entry.at || "" }))].sort((a, b) => b.at.localeCompare(a.at));
+  const total = items.length;
+  document.querySelector("#client-documents-context").textContent = total ? `${total} file${total === 1 ? "" : "s"} for ${clientScope}, uploaded and automatic · remove a report or IO that was added by mistake` : `Nothing has been uploaded for ${clientScope} yet`;
+  const docRow = doc => `<div class="document-row"><span class="document-kind kind-${escapeHtml(doc.kind)}">${escapeHtml(DOCUMENT_KINDS[doc.kind] || doc.kind)}</span><span class="document-main"><strong>${escapeHtml(doc.fileName)}</strong><small>${escapeHtml(documentDetail(doc))}</small></span><button class="text-button destructive-text" type="button" data-remove-document="${escapeHtml(doc.id)}" aria-label="Remove ${escapeHtml(doc.fileName)}">Remove</button></div>`;
+  const entryRow = entry => {
+    const label = entry.kind === "delivery" ? "DCM or DSP report" : TRAIL_KINDS[entry.kind] || entry.kind;
+    const when = entry.at ? new Date(entry.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+    const detail = [trailFailed(entry) ? entry.status : trailDuplicate(entry) ? "Already imported" : "", entry.campaigns.join(", "), trailDuplicate(entry) ? "" : entry.detail, entry.times > 1 ? `came in ${entry.times} times` : "", when && `${entry.automatic ? "imported" : "added"} ${when}`].filter(Boolean).join(" · ");
+    return `<div class="document-row trail-row${trailFailed(entry) ? " failed" : trailDuplicate(entry) ? " duplicate" : ""}"><span class="document-kind kind-trail-${escapeHtml(entry.kind)}">${escapeHtml(label)}</span><span class="document-main"><strong>${escapeHtml(entry.fileName)}</strong><small>${escapeHtml(detail)}</small></span>${entry.automatic ? '<span class="document-auto" title="Imported on its own from a watched folder">Automatic</span>' : '<span class="document-auto muted">Record</span>'}</div>`;
+  };
+  const shown = clientDocumentsAll ? items : items.slice(0, 15);
+  document.querySelector("#client-document-list").innerHTML = total
+    ? `${shown.map(item => item.doc ? docRow(item.doc) : entryRow(item.entry)).join("")}${total > shown.length ? `<button class="text-button document-more" type="button" data-documents-all>Show all ${total} files</button>` : clientDocumentsAll && total > 15 ? '<button class="text-button document-more" type="button" data-documents-less>Show fewer</button>' : ""}`
+    : '<p class="history-empty">Reports, DCM and DSP files, insertion orders, billing files and status docs for this client are listed here.</p>';
 }
 
 const DOCUMENT_REMOVAL_NOTES = {
@@ -2817,6 +2830,7 @@ function removeUploadedDocument(client, doc) {
 }
 
 document.querySelector("#client-document-list").addEventListener("click", event => {
+  if (event.target.closest("[data-documents-all], [data-documents-less]")) { clientDocumentsAll = Boolean(event.target.closest("[data-documents-all]")); renderClientDocuments(); return; }
   const button = event.target.closest("[data-remove-document]");
   const doc = button ? lastClientDocuments.find(item => item.id === button.dataset.removeDocument) : null;
   if (doc) removeUploadedDocument(clientScope, doc);
