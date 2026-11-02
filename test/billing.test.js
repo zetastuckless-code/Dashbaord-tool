@@ -16,7 +16,10 @@ test("a calendar month bills each row from its lines' DSP days at the CPM, with 
   assert.equal(result.rows[0].quantity, 30 * 1000 + 29 * 2000);
   assert.equal(result.rows[0].gross, 1936);
   assert.equal(result.rows[0].net, 1742.4);
-  assert.deepEqual(result.missingDays, ["2026-09-30"]);
+  // Sep 30 is after the last day of data, so it's billed through Sep 29 and Sep 30 is "not in yet", not a gap.
+  assert.deepEqual(result.missingDays, []);
+  assert.deepEqual(result.pendingDays, ["2026-09-30"]);
+  assert.equal(result.dataThrough, "2026-09-29");
   assert.equal(result.ready, false);
   // Spend passed through bills the DSP spend itself.
   const spend = computeClientBilling({ rows: [{ ...config.rows[0], rateType: "spend", discount: 0 }] }, records, "2026-09");
@@ -98,13 +101,11 @@ test("a running month bills month to date through the newest data, and isn't mar
   assert.equal(result.through, "2026-10-22");
   assert.deepEqual(result.missingDays, []);
   assert.equal(result.rows[0].quantity, 22_000);
-  // From the client's report: the newest total in the month, against the total on the last day of September.
-  const snapshots = [{ date: "2026-09-30", impressions: 50_000 }, { date: "2026-10-17", impressions: 70_000 }, { date: "2026-10-22", impressions: 80_000 }];
-  const report = line("McMaster — NY", {}, { performanceSnapshots: snapshots });
+  // A line's own uploaded report is never billed from: with no DCM or DSP days there's nothing to bill.
+  const report = line("McMaster — NY", {}, { performanceSnapshots: [{ date: "2026-09-30", impressions: 50_000 }, { date: "2026-10-22", impressions: 80_000 }] });
   const fromReport = computeClientBilling({ rows: [{ source: "report", rateType: "cpm", rate: 5, lines: ["McMaster — NY"] }] }, [report], "2026-10", "2026-10-26");
-  assert.equal(fromReport.rows[0].quantity, 30_000);
-  assert.equal(fromReport.through, "2026-10-22");
-  assert.deepEqual(fromReport.unavailable, []);
+  assert.equal(fromReport.rows[0].quantity, 0);
+  assert.equal(fromReport.rows[0].unavailable, true);
 });
 
 test("a CPM row with a minus sign on its hand-adjusted quantity still reads as CPM", () => {
@@ -146,19 +147,6 @@ test("a monthly budget caps each month on its own", () => {
   assert.equal(item.capped, true);
 });
 
-test("a DSP row whose lines have no DSP days bills from the uploaded report's raw-tab numbers, month to date", () => {
-  const snapshots = [{ date: "2026-09-30", impressions: 3_000_000, spend: 15000 }, { date: "2026-10-17", impressions: 4_000_000, spend: 20000 }, { date: "2026-10-22", impressions: 4_400_000, spend: 22000 }];
-  const records = [line("Display", {}, { performanceSnapshots: snapshots }), line("Video", { DSP: days("2026-10-01", "2026-10-20", { impressions: 1000 }) })];
-  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Display", source: "DSP", rateType: "cpm", rate: 5, lines: ["Display"] }, { id: "b", lineName: "Video", source: "DSP", rateType: "cpm", rate: 10, lines: ["Video"] }] };
-  const result = computeClientBilling(config, records, "2026-10", "2026-10-26");
-  assert.equal(result.rows[0].fromReport, true);
-  assert.equal(result.rows[0].quantity, 1_400_000);
-  assert.equal(result.rows[0].billable, 7000);
-  assert.equal(result.rows[1].fromReport, false);
-  assert.equal(result.rows[1].quantity, 20_000);
-  assert.equal(result.through, "2026-10-22");
-});
-
 test("a past billing file keeps what each row billed, for the month in its periods or its file name", () => {
   const rows = [[], ["Customer / Agency Name", "Advertiser", "Sales Force ID", "Campaign Name", "Line Item", "", "Quantity", "Rate", "Revenue", "PO #", "Currency", "Note", "Gross Amount", "Net Amount", "Billable Amount"],
     ["Agency", "Brand", "006X", "Camp", "Display", "", 2_000_000, 5, 10000, "", "USD", "", 10000, 9000, 9000],
@@ -179,22 +167,6 @@ test("a past billing file keeps what each row billed, for the month in its perio
   const result = computeClientBilling(config, [line("Display", { DSP: days("2026-10-01", "2026-10-31", { impressions: 100_000 }) })], "2026-10");
   assert.equal(result.rows[0].billable, 1200);
   assert.equal(result.rows[0].capped, true);
-});
-
-test("report totals that miss the month's edges are split by days, and a newer report beats stale DCM days", () => {
-  const snapshots = [{ date: "2026-09-28", source: "Zeta", impressions: 2_800_000, spend: 14000 }, { date: "2026-10-12", source: "Zeta", impressions: 4_200_000, spend: 21000 }, { date: "2026-10-25", source: "Zeta", impressions: 5_500_000, spend: 27500 }];
-  const records = [line("Display", { CM360: days("2026-10-01", "2026-10-07", { impressions: 50_000, spend: 250 }) }, { performanceSnapshots: snapshots })];
-  const config = { periodMode: "month", rows: [{ id: "a", lineName: "Display", source: "CM360", rateType: "cpm", rate: 4, lines: ["Display"] }] };
-  const running = computeClientBilling(config, records, "2026-10", "2026-10-26");
-  // Sep 30 sits 2 of 14 days between the Sep 28 and Oct 12 totals: 2,800,000 + 1,400,000 × 2/14 = 3,000,000.
-  assert.equal(running.rows[0].fromReport, true);
-  assert.equal(running.rows[0].estimated, true);
-  assert.equal(running.rows[0].quantity, 2_500_000);
-  assert.equal(running.through, "2026-10-25");
-  // September, closed: Sep 1 to Sep 30 needs both edges; the start falls before the first total, the flight began Jul 1.
-  const september = computeClientBilling({ ...config, rows: [{ ...config.rows[0], source: "report" }] }, records, "2026-09");
-  assert.equal(september.rows[0].unavailable, false);
-  assert.ok(september.rows[0].quantity > 0);
 });
 
 test("the IO pace spreads the whole IO by day, so a month with two flights expects its days' share", () => {
@@ -277,35 +249,29 @@ test("custom periods: October picks up after September's last billed day, days p
   assert.equal(result.through, "2026-10-25");
 });
 
-test("a finished month the report stops short of bills the report's days, then DCM's, instead of nothing", () => {
-  const snapshots = [{ date: "2026-09-30", impressions: 500_000 }, { date: "2026-10-30", impressions: 3_500_000 }];
-  // DCM has a gap mid-month, so the report is the better source for the days it covers.
-  const delivery = days("2026-10-01", "2026-10-31", { impressions: 90_000 });
-  delete delivery["2026-10-15"];
-  const record = line("Brand — Display", { CM360: delivery }, { performanceSnapshots: snapshots });
-  const config = { rows: [{ id: "d", lineName: "Display", source: "CM360", rateType: "cpm", rate: 10, lines: ["Brand — Display"] }] };
-  const result = computeClientBilling(config, [record], "2026-10", "2026-11-02");
-  assert.equal(result.unavailable.length, 0);
-  // Oct 1–30 from the report (3,000,000) plus Oct 31 from DCM (90,000).
-  assert.equal(result.rows[0].quantity, 3_090_000);
-  assert.equal(result.rows[0].net, 30_900);
-  // With no report totals in the month at all, the DCM days bill it and the gap is named.
-  const noReport = computeClientBilling(config, [{ ...record, performanceSnapshots: [{ date: "2026-09-30", impressions: 500_000 }, { date: "2026-11-01", impressions: 9_000_000 }].slice(0, 1) }], "2026-10", "2026-11-02");
-  assert.equal(noReport.unavailable.length, 0);
-  assert.deepEqual(noReport.missingDays, ["2026-10-15"]);
-  assert.equal(noReport.rows[0].quantity, 30 * 90_000);
+test("billing reads only DCM or DSP days, even when the line's report is newer", () => {
+  const record = line("Brand — Display", { CM360: days("2026-10-01", "2026-10-31", { impressions: 100_000 }) }, { performanceSnapshots: [{ date: "2026-09-30", impressions: 0 }, { date: "2026-10-31", impressions: 9_999_999 }] });
+  const result = computeClientBilling({ rows: [{ id: "d", source: "CM360", rateType: "cpm", rate: 4, lines: ["Brand — Display"] }] }, [record], "2026-10", "2026-11-02");
+  assert.equal(result.rows[0].quantity, 3_100_000);
+  assert.equal(result.rows[0].source, "CM360");
+  assert.equal(result.ready, true);
 });
 
-test("a row billed from the report fills the days after the report ends from DCM or DSP, and says why when it can't", () => {
-  const snapshots = [{ date: "2026-09-30", impressions: 1_000_000 }, { date: "2026-10-26", impressions: 9_000_000 }];
-  const record = line("Brand — Display", { CM360: days("2026-10-01", "2026-10-31", { impressions: 400_000 }) }, { performanceSnapshots: snapshots });
-  const config = { rows: [{ id: "d", lineName: "Display", source: "report", rateType: "cpm", rate: 4, lines: ["Brand — Display"] }] };
-  const result = computeClientBilling(config, [record], "2026-10", "2026-11-02");
-  assert.equal(result.unavailable.length, 0);
-  // Oct 1–26 from the report (8,000,000) plus Oct 27–31 from DCM (5 × 400,000).
-  assert.equal(result.rows[0].quantity, 10_000_000);
-  // No DCM or DSP days either: nothing to bill, and the row knows where the report ends.
-  const bare = computeClientBilling(config, [{ ...record, thirdPartyDelivery: {} }], "2026-10", "2026-11-02");
-  assert.deepEqual(bare.unavailable, ["Display"]);
-  assert.equal(bare.rows[0].reportEnds, "2026-10-26");
+test("a finished month with its last days not in yet bills through the last day of data and says so", () => {
+  const record = line("Brand — Display", { CM360: days("2026-10-01", "2026-10-29", { impressions: 100_000 }) });
+  const result = computeClientBilling({ rows: [{ id: "d", source: "CM360", rateType: "cpm", rate: 4, lines: ["Brand — Display"] }] }, [record], "2026-10", "2026-11-02");
+  assert.equal(result.rows[0].quantity, 2_900_000);
+  assert.equal(result.total, 11_600);
+  assert.deepEqual(result.pendingDays, ["2026-10-30", "2026-10-31"]);
+  assert.equal(result.dataThrough, "2026-10-29");
+  assert.deepEqual(result.missingDays, []);
+  assert.equal(result.ready, false);
 });
+
+test("a row set to the old report option bills from whichever of DCM and DSP reaches further", () => {
+  const record = line("Brand — YouTube", { DSP: days("2026-10-01", "2026-10-31", { impressions: 10_000, spend: 50 }), CM360: days("2026-10-01", "2026-10-20", { impressions: 9_000 }) });
+  const result = computeClientBilling({ rows: [{ id: "y", source: "report", rateType: "spend", lines: ["Brand — YouTube"] }] }, [record], "2026-10", "2026-11-02");
+  assert.equal(result.rows[0].source, "DSP");
+  assert.equal(result.rows[0].revenue, 31 * 50);
+});
+

@@ -753,3 +753,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 @keyframes billing-flash{0%,30%{background:#fff3d6}100%{background:transparent}}
 .billing-flash>td{animation:billing-flash 2.4s ease-out}
 @media(prefers-reduced-motion:reduce){.billing-flash>td{animation:none;background:#fff3d6}}
+.billing-note-inline{display:block;margin-top:2px;font-size:11px;color:#8a5516}
