@@ -4744,7 +4744,7 @@ function rowPaceText(result, item) {
 /** The always-visible line: the month, where it stands, its total so far, and the download. */
 function billingHead(result, month, config, client = clientScope) {
   const months = billingPreviewMonths();
-  return `<div class="billing-preview-head"><div class="month-stepper"><button class="month-step" type="button" data-billing-step="1" aria-label="Previous month"${month === months.at(-1) ? " disabled" : ""}>‹</button><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${months.map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><button class="month-step" type="button" data-billing-step="-1" aria-label="Next month"${month === months[0] ? " disabled" : ""}>›</button></div>${!result.ready && !result.running && problemRowId(result) ? `<button type="button" class="billing-status warn billing-jump-status" data-billing-show="${escapeHtml(problemRowId(result))}" title="Show the row this is about">` : `<span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">`}${escapeHtml(billingStatusText(result))}${!result.ready && !result.running && problemRowId(result) ? " ›</button>" : "</span>"}<strong>${moneyText(result.total)}</strong><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${emptyRowsNotice(result)}${unbilledNotice(client, month, config)}${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
+  return `<div class="billing-preview-head"><div class="month-stepper"><button class="month-step" type="button" data-billing-step="1" aria-label="Previous month"${month === months.at(-1) ? " disabled" : ""}>‹</button><select class="billing-month-select" data-billing-preview-month aria-label="Billing month">${months.map(option => `<option value="${option}"${option === month ? " selected" : ""}>${escapeHtml(monthLabel(option))}</option>`).join("")}</select><button class="month-step" type="button" data-billing-step="-1" aria-label="Next month"${month === months[0] ? " disabled" : ""}>›</button></div>${!result.ready && !result.running && problemRowId(result) ? `<button type="button" class="billing-status warn billing-jump-status" data-billing-show="${escapeHtml(problemRowId(result))}" title="Show the row this is about">` : `<span class="billing-status ${result.ready ? "ready" : result.running ? "progress" : "warn"}">`}${escapeHtml(billingStatusText(result))}${!result.ready && !result.running && problemRowId(result) ? " ›</button>" : "</span>"}<strong>${moneyText(result.total)}</strong><label class="billing-by-line" title="List each dashboard line under its billing line item in the downloaded file. The total stays the same."><input type="checkbox" data-billing-by-line${config.fileByLine ? " checked" : ""} /> Break out by line</label><button class="secondary-button" type="button" data-billing-download="${escapeHtml(client)}" data-billing-month="${month}">Download</button></div>${emptyRowsNotice(result)}${unbilledNotice(client, month, config)}${paceBar(result.pace, result.running)}${month === todayLocal().slice(0, 7) ? projectionField(config, month, result.pace, client) : ""}${billingNote(config, month)}`;
 }
 /** The client's campaigns live this month whose lines no billing row includes, one entry per campaign. */
 function unbilledCampaigns(client, month, config) {
@@ -4871,6 +4871,14 @@ function renderBillingPreview() {
 
 document.querySelector("#client-billing").addEventListener("change", event => {
   if (!clientScope) return;
+  const byLine = event.target.closest("[data-billing-by-line]");
+  if (byLine) {
+    billingConfig(clientScope).fileByLine = byLine.checked;
+    saveBilling();
+    if (pageView === "billing") renderBillingPage();
+    showToast(byLine.checked ? "Breaking out by line" : "One row per line item", byLine.checked ? `${clientScope}’s billing file lists each line under its billing line item. The total stays the same.` : `${clientScope}’s billing file has one row per billing line item again.`);
+    return;
+  }
   const previewMonth = event.target.closest("[data-billing-preview-month]");
   if (previewMonth) { document.querySelector("#billing-preview").dataset.month = previewMonth.value; renderBillingPreview(); return; }
   const config = billingConfig(clientScope);

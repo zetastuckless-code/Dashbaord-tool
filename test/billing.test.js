@@ -313,3 +313,16 @@ test("gaps marked as fine for a month stop holding it up, and can be taken back"
   assert.equal(computeClientBilling(config, records, "2026-09", "2026-11-02").rows[0].reviewed, undefined);
   assert.equal(computeClientBilling(unreviewBillingRow(config, "2026-10", "m"), records, "2026-10", "2026-11-02").ready, false);
 });
+
+test("with Break out by line on, the billing file lists each line under its billing line item, with the same total", async () => {
+  const { billingEntries, billingSheets } = await import("../lib/billing.js");
+  const records = [line("Carter — AA Audio", { DSP: days("2026-10-01", "2026-10-31", { impressions: 1000 }) }), line("Carter — Hispanic Audio", { DSP: days("2026-10-01", "2026-10-31", { impressions: 2000 }) })];
+  const config = { agency: "Agency", rows: [{ id: "a", lineName: "Streaming Audio", source: "DSP", rateType: "cpm", rate: 22, lines: ["Carter — AA Audio", "Carter — Hispanic Audio"] }] };
+  const result = computeClientBilling(config, records, "2026-10", "2026-11-02");
+  assert.deepEqual(billingEntries(config, result).map(entry => [entry.lineName, entry.quantity]), [["Streaming Audio", 93_000]]);
+  const split = billingEntries({ ...config, fileByLine: true }, result);
+  assert.deepEqual(split.map(entry => [entry.lineName, entry.quantity]), [["Streaming Audio — AA Audio", 31_000], ["Streaming Audio — Hispanic Audio", 62_000]]);
+  assert.equal(split.reduce((sum, entry) => sum + entry.quantity, 0), result.rows[0].quantity);
+  const sheet = billingSheets({ ...config, fileByLine: true }, result, "Carter")[0].data;
+  assert.deepEqual(sheet.slice(3, 5).map(row => row[4]), ["Streaming Audio — AA Audio", "Streaming Audio — Hispanic Audio"]);
+});
