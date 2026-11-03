@@ -4406,7 +4406,9 @@ function deliveryPlan() {
   const pending = pendingValidatedImport;
   const targets = Object.fromEntries(Object.entries(pending.targets).filter(([, value]) => value !== SKIP_DELIVERY));
   const live = campaigns.filter(record => !isCampaignArchived(record));
-  const first = planDelivery(live, pending.parsed, thirdPartyLinks, targets);
+  // The IO's flights, in date order, tell "Flight 1", "Flight 2"… lines which placements are theirs.
+  const flightsFor = key => (campaignTotals[key]?.orders || []).flatMap(order => order.placements || []);
+  const first = planDelivery(live, pending.parsed, thirdPartyLinks, targets, {}, { flightsFor });
   // A "New line" pick stands for the line it will make, so the plan counts its placements already.
   const added = pendingNewLines(first);
   const groupName = item => campaignGroupName(campaigns.find(record => groupKey(record) === item.target) || {});
@@ -4415,7 +4417,7 @@ function deliveryPlan() {
     const item = first.find(entry => key.startsWith(`${entry.entry.key}::`) && entry.target);
     return [key, item ? `${groupName(item)} — ${value.slice(NEW_LINE.length)}` : LEAVE_OUT];
   }));
-  const plan = planDelivery([...live, ...added], pending.parsed, thirdPartyLinks, targets, choices);
+  const plan = planDelivery([...live, ...added], pending.parsed, thirdPartyLinks, targets, choices, { flightsFor });
   return Object.assign(plan.map(item => pending.targets[item.entry.key] === SKIP_DELIVERY ? { ...item, target: null, skipped: true } : item), { added, choices });
 }
 /** "Display", "Native", "Video"… from what most of the placements are, for a new line's name. */

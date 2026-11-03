@@ -163,3 +163,18 @@ test("days the report covers with no row for a line count as zero, and New York 
   // Covered through Oct 30, the line's last day; Oct 31 is after its flight.
   assert.equal(Object.keys(ny).length, 30);
 });
+
+test("placements named with flight dates go on Flight 1, Flight 2… lines, from the IO's flights or in date order", async () => {
+  const { assignByFlight } = await import("../lib/third-party-delivery.js");
+  const lines = [1, 2, 3].map(number => ({ name: `RAC Hyperlocal — Flight ${number}`, startDate: "2026-04-26", endDate: "2026-10-24" }));
+  const names = ["P3F0ZKV_P3F0ZKV_Cross Screen Standard Display - CRM_160 x 600_2026-04-26_2026-05-30", "P3F0ZTP_P3F0ZTP_Cross Screen Standard Display - CRM_160 x 600_2026-05-31_2026-06-27", "P3F102B_P3F102B_Cross Screen Standard Display - CRM_160 x 600_2026-09-27_2026-10-24"];
+  const flights = [{ startDate: "2026-04-26", endDate: "2026-05-30" }, { startDate: "2026-05-31", endDate: "2026-06-27" }, { startDate: "2026-09-27", endDate: "2026-10-24" }];
+  assert.deepEqual([...assignByFlight(lines, names, flights).values()], [0, 1, 2]);
+  // With no IO, three date ranges for three flight lines go in date order.
+  assert.deepEqual([...assignByFlight(lines, names).values()], [0, 1, 2]);
+  // A line whose own dates are the flight takes it, whatever it's called.
+  const own = [{ name: "RAC — Fall", startDate: "2026-09-27", endDate: "2026-10-24" }, { name: "RAC — Spring", startDate: "2026-04-26", endDate: "2026-05-30" }];
+  assert.deepEqual([...assignByFlight(own, [names[2], names[0]])], [[names[2], 0], [names[0], 1]]);
+  // Two ranges for three flight lines, with no IO, isn't guessed.
+  assert.equal(assignByFlight(lines, names.slice(0, 2)).size, 0);
+});
