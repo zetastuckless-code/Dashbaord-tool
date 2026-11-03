@@ -779,3 +779,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .billing-review{display:block;margin-top:6px;font-size:11px;color:#636c7e}.billing-review-button{font-size:12px;padding:4px 10px;margin-right:6px}
 .billing-reviewed{display:block;margin-top:4px;font-size:11px;font-weight:600;color:#2f7d4f}
 .breakout-reviewed td:nth-child(3){color:#2f7d4f}
+.billing-by-line{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#454e60;white-space:nowrap;cursor:pointer}.billing-by-line input{width:15px;height:15px;accent-color:var(--accent,#5b4be3)}
