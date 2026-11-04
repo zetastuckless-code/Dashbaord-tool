@@ -20,14 +20,13 @@ import { sortCampaigns } from "./lib/campaign-sort.js";
 import { filterCampaignsByAttention } from "./lib/campaign-attention.js";
 import { DEFAULT_DASHBOARD_VIEW, readDashboardView, writeDashboardView } from "./lib/dashboard-view.js";
 import { aggregateKpiView } from "./lib/kpi-view.js";
-import { buildPortfolioSpendTrend, exportPortfolioSpendTrendCsv } from "./lib/portfolio-trend.js";
 import { exportAlertsCsv } from "./lib/alert-export.js";
 import { exportValidationIssuesCsv } from "./lib/validation-export.js";
 import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.js";
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { isZipName, unzipReports } from "./lib/zip.js";
-import { bestDays, bucketLabel, buildReport, pivotReport, REPORT_GRAINS, REPORT_RANGES, resolveReportRange } from "./lib/report-builder.js";
+import { bestDays, bucketLabel, buildReport, pacingSeries, pivotReport, REPORT_GRAINS, REPORT_RANGES, resolveReportRange } from "./lib/report-builder.js";
 import { buildBillingCsv, buildChatGptPrompt, buildGuide, buildLinesCsv, buildSnapshotMarkdown, SNAPSHOT_FILES, SNAPSHOT_FOLDER } from "./lib/dashboard-snapshot.js";
 import { addTrailEntry, clientFileHistory, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
@@ -54,7 +53,6 @@ import { auditLine } from "./lib/line-audit.js";
 import { campaignGroupName, groupKey, isPlaceholder } from "./lib/campaign-groups.js";
 import { applyDeliveredValue } from "./lib/delivered-value.js";
 import { BRIEF_LOG_KEY, campaignStatusRow, logItems, readJson, readStatusDoc, STATUS_DRAFTS_KEY, statusDue, statusPrompt, statusRowTsv, statusWeeks, weekKey } from "./lib/status-doc.js";
-import { dailyPacingView } from "./lib/daily-pacing.js";
 import { applyBulkEdits, lineKey, validateBulkEdits } from "./lib/bulk-edit.js";
 import { findCampaignForIo } from "./lib/io-match.js";
 import { pacingBand } from "./lib/client-rollup.js";
@@ -101,7 +99,6 @@ let visibleColumns = readColumnPreferences(localStorage);
 let acknowledgedAlertIds = readAcknowledgedAlerts(localStorage);
 let activeAlertId = null;
 let dashboardView = readDashboardView(localStorage);
-let currentSpendTrend = [];
 let currentVisibleAlerts = [];
 let currentValidationIssues = [];
 let pendingWorkspaceBackup = null;
@@ -205,7 +202,6 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
   else document.querySelector("#kpi-watch-detail").innerHTML = !watch.watched
     ? `<span>No live lines have a KPI goal yet</span>`
     : `<span><b class="${watch.off.length ? "warning-text" : "positive"}">${watch.off.length ? "off goal" : "all on goal"}</b> of ${watch.watched} line${watch.watched === 1 ? "" : "s"} with a goal${watch.near.length ? ` · ${watch.near.length} close` : ""}</span>${worst ? `<small class="kpi-watch-worst">Furthest: ${escapeHtml(recordLineLabel(worst.record) || worst.record.name)} · ${escapeHtml(worst.metric)} ${escapeHtml(worst.formatted)} vs ${escapeHtml(worst.goalText)}</small>` : ""}`;
-  renderSpendChart(activeRows);
   // The report builder covers every campaign in view, finished ones too, so past dates can be pulled.
   renderReport(rows.filter(record => !isPlaceholder(record)));
   lastPacingRows = activeRows;
@@ -1067,63 +1063,9 @@ document.querySelector("#metric-picker-form").addEventListener("submit", event =
   renderCampaigns(document.querySelector("#client-filter").value);
 });
 
-// --- Spend chart: cumulative vs. plan, or daily spend against the baseline daily budget ---
-let chartMode = "cumulative";
-let currentDailyView = null;
 let lastPacingRows = [];
-try { chartMode = localStorage.getItem("northstar-chart-mode") === "daily" ? "daily" : "cumulative"; } catch { chartMode = "cumulative"; }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
-
-function setChartMode(mode) {
-  chartMode = mode;
-  try { localStorage.setItem("northstar-chart-mode", mode); } catch { /* the toggle still works without storage */ }
-  renderCampaigns(document.querySelector("#client-filter").value);
-}
-
-document.querySelector("#chart-mode").addEventListener("click", event => {
-  const button = event.target.closest("[data-chart-mode]");
-  if (button && button.dataset.chartMode !== chartMode) setChartMode(button.dataset.chartMode);
-});
-
-function renderDailyChart(points, units, chart) {
-  const view = dailyPacingView(points, units, { today: todayIso() });
-  currentDailyView = view;
-  const days = view.days;
-  const bars = document.querySelector("#spend-chart-bars");
-  const note = document.querySelector("#spend-chart-note");
-  if (!days.length) {
-    chart.hidden = true;
-    document.querySelector("#spend-chart-empty").hidden = false;
-    document.querySelector("#spend-chart-empty").textContent = "The daily view needs at least two dated reports.";
-    document.querySelector("#spend-chart-x-axis").hidden = true;
-    document.querySelector("#spend-chart-y-axis").hidden = true;
-    note.hidden = true;
-    return;
-  }
-  const maximum = Math.max(...days.flatMap(day => [day.actual, day.baseline]), 1);
-  const step = 760 / days.length;
-  const barWidth = Math.max(1, step * 0.68);
-  const y = value => 256 - value / maximum * 236;
-  bars.innerHTML = days.map((day, index) => {
-    const percent = day.baseline > 0 ? day.actual / day.baseline * 100 : null;
-    const band = percent === null ? "on-track" : pacingBand(percent, alertRules);
-    return `<rect class="daily-bar pace-bar-${band}${day.estimated ? " estimated" : ""}" x="${(index * step + (step - barWidth) / 2).toFixed(2)}" y="${y(day.actual).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${(256 - y(day.actual)).toFixed(2)}"><title>${day.date}: ${formatExactMoney(day.actual)}${day.baseline > 0 ? ` vs ${formatExactMoney(day.baseline)} baseline (${Math.round(percent)}%)` : ""}${day.estimated ? " · averaged between reports" : ""}</title></rect>`;
-  }).join("");
-  const baselinePoints = days.map((day, index) => `${index ? "L" : "M"}${(index * step + step / 2).toFixed(2)},${y(day.baseline).toFixed(2)}`).join(" ");
-  document.querySelector("#spend-chart-baseline").setAttribute("d", baselinePoints);
-  document.querySelector("#spend-chart-y-axis").innerHTML = [maximum, maximum * 2 / 3, maximum / 3, 0].map(value => `<span>${formatMoney(value)}</span>`).join("");
-  const labels = [...new Set([days[0], days[Math.floor((days.length - 1) / 2)], days.at(-1)])];
-  document.querySelector("#spend-chart-x-axis").innerHTML = labels.map(day => `<span>${new Date(`${day.date}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" })}</span>`).join("");
-  const parts = [];
-  if (view.recentBaseline > 0) parts.push(`Baseline ${formatExactMoney(view.recentBaseline)}/day`);
-  if (view.recentActual !== null) parts.push(`last ${Math.min(7, days.length)} days averaged ${formatExactMoney(view.recentActual)}/day${view.recentPercent === null ? "" : ` (${Math.round(view.recentPercent)}% of baseline)`}`);
-  if (view.requiredFromToday !== null) parts.push(`needs ${formatExactMoney(view.requiredFromToday)}/day from today to spend the remaining budget by the end dates`);
-  if (view.skippedUnits) parts.push(`${view.skippedUnits} campaign${view.skippedUnits === 1 ? "" : "s"} without a budget or flight dates ${view.skippedUnits === 1 ? "is" : "are"} left out of the baseline`);
-  note.hidden = false;
-  note.textContent = parts.join(" · ") || "Add budgets and flight dates to see a daily baseline.";
-  chart.setAttribute("aria-label", `Daily spend against the baseline daily budget from ${days[0].date} to ${days.at(-1).date}`);
-}
 
 // --- Report builder: spend and results over any dates, as a table, chart, pivot, or best days ---
 const REPORT_COLUMNS = Object.freeze([
@@ -1137,7 +1079,9 @@ function builderState() {
   if (!builderState.value) {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(REPORT_STATE_KEY)) || {}; } catch { /* defaults */ }
-    builderState.value = { range: "30", custom: {}, grain: "total", group: null, spend: "billable", metrics: ["spend", "impressions", "clicks", "ctr", "conversions", "cpa"], view: "table", chartMetric: "spend", chartType: "line", series: "groups", pivotMetric: "spend", bestMetric: "ctr", bestMin: "1000", ...saved };
+    builderState.value = { range: "30", custom: {}, grain: "total", group: null, spend: "billable", metrics: ["spend", "impressions", "clicks", "ctr", "conversions", "cpa"], view: "table", chartMetric: "spend", chartType: "line", series: "groups", bestMetric: "ctr", bestMin: "1000", pacingMode: "cumulative", ...saved };
+    // Pivot was folded into the table and chart.
+    if (!["table", "chart", "best", "pacing"].includes(builderState.value.view)) builderState.value.view = "table";
   }
   return builderState.value;
 }
@@ -1165,10 +1109,11 @@ function renderReport(records) {
   fill("#report-grain", REPORT_GRAINS.map(grain => [grain.id, grain.label]), state.grain);
   document.querySelector("#report-group").value = group;
   document.querySelector("#report-spend").value = state.spend;
-  for (const [id, key] of [["#report-chart-metric", "chartMetric"], ["#report-pivot-metric", "pivotMetric"], ["#report-best-metric", "bestMetric"]]) fill(id, REPORT_COLUMNS.map(([column, label]) => [column, label]), state[key]);
+  for (const [id, key] of [["#report-chart-metric", "chartMetric"], ["#report-best-metric", "bestMetric"]]) fill(id, REPORT_COLUMNS.map(([column, label]) => [column, label]), state[key]);
   document.querySelector("#report-chart-type").value = state.chartType;
   document.querySelector("#report-chart-series").value = state.series;
   document.querySelector("#report-best-min").value = state.bestMin;
+  document.querySelector("#report-pacing-mode").value = state.pacingMode;
   const metricsBox = document.querySelector("#report-metrics");
   if (!metricsBox.querySelector("input")) metricsBox.insertAdjacentHTML("beforeend", REPORT_COLUMNS.map(([key, label]) => `<label><input type="checkbox" data-report-metric="${key}" />${escapeHtml(label)}</label>`).join(""));
   metricsBox.querySelectorAll("[data-report-metric]").forEach(box => { box.checked = state.metrics.includes(box.dataset.reportMetric); });
@@ -1188,11 +1133,10 @@ function renderReport(records) {
   note.textContent = range.error || "≈ marks rows that include days with no DCM or DSP numbers, where the report's totals are spread evenly between report dates. DCM and DSP days are exact.";
   document.querySelectorAll("[data-report-view]").forEach(button => button.setAttribute("aria-selected", String(button.dataset.reportView === state.view)));
   document.querySelectorAll(".report-view").forEach(view => { view.hidden = view.id !== `report-view-${state.view}`; });
-  document.querySelector(".report-controls").classList.toggle("muted-controls", state.view === "pacing");
   if (state.view === "table") renderReportTable(report, state);
   else if (state.view === "chart") renderReportChart(report, state);
-  else if (state.view === "pivot") renderReportPivot(report, state);
   else if (state.view === "best") renderReportBest(records, range, state);
+  else if (state.view === "pacing") renderReportPacing(records, range, state);
 }
 
 function renderReportTable(report, state) {
@@ -1207,62 +1151,101 @@ function renderReportTable(report, state) {
   document.querySelector("#report-view-table").innerHTML = `<div class="report-table-wrap"><table class="report-table"><thead><tr>${byDate ? "<th>Date</th>" : ""}<th>${escapeHtml({ campaign: "Campaign", line: "Line", client: "Client", all: "" }[lastReport.state.group] || "Group")}</th>${columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${body}${groupTotals}</tbody><tfoot><tr><td${byDate ? ' colspan="2"' : ""}>Total</td>${cells(report.total)}</tr></tfoot></table></div>`;
 }
 
-/** An SVG chart of one metric over the buckets: a line or bar per group (the six biggest), or the total. */
+/** Group names without the part every group shares ("McMaster · NY" → "NY" when every group is McMaster's). */
+function shortGroupNames(names) {
+  const parts = names.map(name => String(name).split(" · "));
+  let shared = 0;
+  while (parts.length > 1 && parts.every(list => list.length > shared + 1 && list[shared] === parts[0][shared])) shared += 1;
+  return names.map((name, index) => parts[index].slice(shared).join(" · "));
+}
+
+/**
+ * A line or bar chart over dates: `series` are { name, values, color?, dashed? } against `categories`. Labels along the
+ * bottom are spread out so they never run into each other.
+ */
+function timeChart({ categories, labelFor, series, format, type = "line", ariaLabel }) {
+  const width = 760, height = 290, left = 74, right = 24, topPad = 14, bottom = 40;
+  const values = series.flatMap(item => item.values).filter(Number.isFinite);
+  const max = Math.max(...values, 0) || 1;
+  const plotWidth = width - left - right;
+  const slot = plotWidth / Math.max(categories.length, 1);
+  const centre = index => type === "bar" ? left + (index + 0.5) * slot : left + (categories.length === 1 ? plotWidth / 2 : index * plotWidth / (categories.length - 1));
+  const y = value => topPad + (1 - value / max) * (height - topPad - bottom);
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(share => max * share).map(value => `<line x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}" class="report-grid"/><text x="${left - 8}" y="${y(value) + 4}" text-anchor="end" class="report-axis">${escapeHtml(format(value))}</text>`).join("");
+  // About 110px per label keeps "Week of Oct 12" clear of its neighbours; the last date always shows.
+  const every = Math.max(1, Math.ceil(categories.length / Math.max(1, Math.floor(plotWidth / 110))));
+  const labels = categories.map((category, index) => {
+    const last = index === categories.length - 1;
+    if (index % every && !last) return "";
+    if (last && index % every && (index % every) < every / 2) return "";
+    const anchor = index === 0 && type !== "bar" ? "start" : last && type !== "bar" ? "end" : "middle";
+    return `<text x="${centre(index)}" y="${height - bottom + 20}" text-anchor="${anchor}" class="report-axis">${escapeHtml(labelFor(category))}</text>`;
+  }).join("");
+  let marks = "";
+  series.forEach((item, seriesIndex) => {
+    const color = item.color || REPORT_COLORS[seriesIndex % REPORT_COLORS.length];
+    if (type === "bar") {
+      const barWidth = Math.max(1.5, slot * 0.8 / series.length);
+      item.values.forEach((value, index) => {
+        if (!Number.isFinite(value)) return;
+        marks += `<rect x="${left + index * slot + slot * 0.1 + seriesIndex * barWidth}" y="${y(value)}" width="${barWidth}" height="${Math.max(0, y(0) - y(value))}" fill="${color}" rx="2"><title>${escapeHtml(`${item.name} · ${labelFor(categories[index])}: ${format(value)}`)}</title></rect>`;
+      });
+      return;
+    }
+    const points = item.values.map((value, index) => Number.isFinite(value) ? [centre(index), y(value), value, index] : null);
+    const path = points.reduce((d, point, index) => point ? `${d}${d && points[index - 1] ? "L" : "M"}${point[0].toFixed(1)},${point[1].toFixed(1)}` : d, "");
+    marks += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"${item.dashed ? ' stroke-dasharray="6 5"' : ""}/>`;
+    if (categories.length <= 45 && !item.dashed) marks += points.filter(Boolean).map(([px, py, value, index]) => `<circle cx="${px}" cy="${py}" r="3" fill="${color}"><title>${escapeHtml(`${item.name} · ${labelFor(categories[index])}: ${format(value)}`)}</title></circle>`).join("");
+  });
+  const legend = `<div class="report-legend">${series.map((item, index) => `<span><i style="background:${item.color || REPORT_COLORS[index % REPORT_COLORS.length]}"></i>${escapeHtml(item.name)}</span>`).join("")}</div>`;
+  return `<svg viewBox="0 0 ${width} ${height}" class="report-svg" role="img" aria-label="${escapeHtml(ariaLabel)}">${grid}${marks}${labels}</svg>${legend}`;
+}
+
+/** Bars across, one per group, with the names written out in full on the left: a "whole range" comparison. */
+function groupBars(rows, metric) {
+  const names = shortGroupNames(rows.map(row => row.group));
+  const max = Math.max(...rows.map(row => row[metric]).filter(Number.isFinite), 0) || 1;
+  return `<div class="report-hbars" role="img" aria-label="${escapeHtml(`${columnLabel(metric)} by group`)}">${rows.map((row, index) => `<div class="report-hbar"><span class="report-hbar-name" title="${escapeHtml(row.group)}">${escapeHtml(names[index] || row.group)}</span><span class="report-hbar-track"><span style="width:${Number.isFinite(row[metric]) ? Math.max(0.5, row[metric] / max * 100).toFixed(1) : 0}%"></span></span><b>${formatReportValue(metric, row[metric])}</b></div>`).join("")}</div>`;
+}
+
+/** The chart view: groups compared side by side for the whole range, or a line or bar per group over the dates. */
 function renderReportChart(report, state) {
   const host = document.querySelector("#report-chart");
   const metric = state.chartMetric;
-  const byDate = report.grain !== "total";
   if (!report.rows.length) { host.innerHTML = '<p class="report-empty">No numbers for these dates yet.</p>'; return; }
+  if (report.grain === "total") { host.innerHTML = groupBars(report.groups, metric); return; }
   const top = report.groups.slice(0, 6).map(row => row.group);
-  const categories = byDate ? report.buckets : report.groups.map(row => row.group);
-  const series = !byDate || state.series === "total"
-    ? [{ name: byDate ? "Total" : columnLabel(metric), values: byDate ? report.buckets.map(bucket => pivotReport(report, metric).totals[report.buckets.indexOf(bucket)]) : report.groups.map(row => row[metric]) }]
-    : top.map(name => ({ name, values: report.buckets.map(bucket => report.rows.find(row => row.group === name && row.bucket === bucket)?.[metric] ?? null) }));
-  const width = 760, height = 280, left = 70, right = 46, topPad = 14, bottom = 46;
-  const values = series.flatMap(item => item.values).filter(Number.isFinite);
-  const max = Math.max(...values, 0) || 1;
-  const x = index => left + (categories.length === 1 ? (width - left - right) / 2 : index * (width - left - right) / Math.max(categories.length - 1, 1));
-  const y = value => topPad + (1 - value / max) * (height - topPad - bottom);
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(share => max * share);
-  const grid = ticks.map(value => `<line x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}" class="report-grid"/><text x="${left - 8}" y="${y(value) + 4}" text-anchor="end" class="report-axis">${escapeHtml(formatReportValue(metric, value))}</text>`).join("");
-  const every = Math.max(1, Math.ceil(categories.length / 10));
-  const labels = categories.map((category, index) => index % every ? "" : `<text x="${state.chartType === "bar" || !byDate ? barCenter(index) : x(index)}" y="${height - bottom + 18}" text-anchor="middle" class="report-axis">${escapeHtml(byDate ? bucketLabel(category, report.grain) : truncate(category, 18))}</text>`).join("");
-  function barCenter(index) { return left + (index + 0.5) * (width - left - right) / categories.length; }
-  let marks = "";
-  if (state.chartType === "bar" || !byDate) {
-    const slot = (width - left - right) / categories.length;
-    const barWidth = Math.max(2, slot * 0.8 / series.length);
-    series.forEach((item, seriesIndex) => item.values.forEach((value, index) => {
-      if (!Number.isFinite(value)) return;
-      const xPos = left + index * slot + slot * 0.1 + seriesIndex * barWidth;
-      marks += `<rect x="${xPos}" y="${y(value)}" width="${barWidth}" height="${Math.max(0, y(0) - y(value))}" fill="${REPORT_COLORS[seriesIndex % REPORT_COLORS.length]}" rx="2"><title>${escapeHtml(`${item.name} · ${byDate ? bucketLabel(categories[index], report.grain) : categories[index]}: ${formatReportValue(metric, value)}`)}</title></rect>`;
-    }));
-  } else {
-    series.forEach((item, seriesIndex) => {
-      const color = REPORT_COLORS[seriesIndex % REPORT_COLORS.length];
-      const points = item.values.map((value, index) => Number.isFinite(value) ? [x(index), y(value), value, index] : null);
-      const path = points.reduce((d, point, index) => point ? `${d}${d && points[index - 1] ? "L" : "M"}${point[0].toFixed(1)},${point[1].toFixed(1)}` : d, "");
-      marks += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>`;
-      if (categories.length <= 45) marks += points.filter(Boolean).map(([px, py, value, index]) => `<circle cx="${px}" cy="${py}" r="3" fill="${color}"><title>${escapeHtml(`${item.name} · ${bucketLabel(categories[index], report.grain)}: ${formatReportValue(metric, value)}`)}</title></circle>`).join("");
-    });
-  }
-  const legend = series.length > 1 || byDate ? `<div class="report-legend">${series.map((item, index) => `<span><i style="background:${REPORT_COLORS[index % REPORT_COLORS.length]}"></i>${escapeHtml(item.name)}</span>`).join("")}${byDate && state.series !== "total" && report.groups.length > top.length ? `<span class="muted">+${report.groups.length - top.length} smaller groups not drawn</span>` : ""}</div>` : "";
-  host.innerHTML = `<svg viewBox="0 0 ${width} ${height}" class="report-svg" role="img" aria-label="${escapeHtml(`${columnLabel(metric)} ${byDate ? "over time" : "by group"}`)}">${grid}${marks}${labels}</svg>${legend}`;
+  const short = shortGroupNames(top);
+  const totals = pivotReport(report, metric).totals;
+  const series = state.series === "total"
+    ? [{ name: "Total", values: totals }]
+    : top.map((name, index) => ({ name: short[index] || name, values: report.buckets.map(bucket => report.rows.find(row => row.group === name && row.bucket === bucket)?.[metric] ?? null) }));
+  host.innerHTML = timeChart({ categories: report.buckets, labelFor: bucket => bucketLabel(bucket, report.grain), series, format: value => formatReportValue(metric, value), type: state.chartType, ariaLabel: `${columnLabel(metric)} over time` })
+    + (state.series !== "total" && report.groups.length > top.length ? `<p class="report-note">The six biggest groups are drawn; ${report.groups.length - top.length} smaller ${report.groups.length - top.length === 1 ? "one isn't" : "ones aren't"}.</p>` : "");
+}
+
+/** Spend against plan over the chosen dates, cumulative or day by day, from the same daily numbers as the table. */
+function renderReportPacing(records, range, state) {
+  const host = document.querySelector("#report-pacing");
+  const summary = document.querySelector("#report-pacing-summary");
+  const units = budgetUnits(records, campaignTotals);
+  const series = pacingSeries(records, units, { start: range.start, end: range.end, spendView: state.spend });
+  const withData = series.filter(day => day.actual !== null);
+  if (!withData.length) { summary.textContent = ""; host.innerHTML = '<p class="report-empty">No spend for these dates yet.</p>'; return; }
+  const last = withData.at(-1);
+  const percent = last.cumulativePlanned > 0 ? last.cumulativeActual / last.cumulativePlanned * 100 : null;
+  summary.innerHTML = last.cumulativePlanned > 0
+    ? `Spent <b>${escapeHtml(formatExactMoney(last.cumulativeActual))}</b> of <b>${escapeHtml(formatExactMoney(last.cumulativePlanned))}</b> planned from ${escapeHtml(shortDate(range.start))} through ${escapeHtml(shortDate(last.date))}: <b class="${paceClass(percent)}">${percent.toFixed(0)}% of plan</b>.`
+    : `Spent <b>${escapeHtml(formatExactMoney(last.cumulativeActual))}</b> through ${escapeHtml(shortDate(last.date))}. Add budgets and flight dates to compare with a plan.`;
+  const daily = state.pacingMode === "daily";
+  host.innerHTML = timeChart({
+    categories: series.map(day => day.date), labelFor: day => shortDate(day),
+    series: [{ name: daily ? "Spend per day" : "Spent", values: series.map(day => daily ? day.actual : day.cumulativeActual), color: "#6658e8" }, { name: daily ? "Planned per day" : "Planned", values: series.map(day => daily ? day.planned : day.cumulativePlanned), color: "#8b93a3", dashed: true }],
+    format: value => formatMoney(value), type: daily ? "bar" : "line", ariaLabel: `${daily ? "Daily" : "Cumulative"} spend against plan`
+  });
 }
 const columnLabel = key => reportColumn(key)?.[1] || key;
 const truncate = (text, length) => String(text).length > length ? `${String(text).slice(0, length - 1)}…` : String(text);
-
-function renderReportPivot(report, state) {
-  const host = document.querySelector("#report-pivot");
-  if (report.grain === "total") { host.innerHTML = '<p class="report-empty">Pick Daily, Weekly, Monthly, or Quarterly above to spread the dates across the columns.</p>'; return; }
-  const pivot = pivotReport(report, state.pivotMetric);
-  if (!pivot.rows.length) { host.innerHTML = '<p class="report-empty">No numbers for these dates yet.</p>'; return; }
-  const values = pivot.rows.flatMap(row => row.values).filter(Number.isFinite);
-  const max = Math.max(...values, 0) || 1;
-  // Shade each cell by its size, so the strongest and weakest stand out.
-  const shade = value => Number.isFinite(value) ? ` style="background:rgba(102,88,232,${(0.06 + 0.3 * value / max).toFixed(3)})"` : "";
-  host.innerHTML = `<div class="report-table-wrap"><table class="report-table report-pivot-table"><thead><tr><th>${escapeHtml(columnLabel(state.pivotMetric))}</th>${pivot.columns.map(column => `<th>${escapeHtml(bucketLabel(column, report.grain))}</th>`).join("")}<th>Total</th></tr></thead><tbody>${pivot.rows.map(row => `<tr><td>${escapeHtml(row.group)}</td>${row.values.map(value => `<td${shade(value)}>${formatReportValue(state.pivotMetric, value)}</td>`).join("")}<td><b>${formatReportValue(state.pivotMetric, row.total)}</b></td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td>${pivot.totals.map(value => `<td>${formatReportValue(state.pivotMetric, value)}</td>`).join("")}<td>${formatReportValue(state.pivotMetric, pivot.grand)}</td></tr></tfoot></table></div>`;
-}
 
 function renderReportBest(records, range, state) {
   const host = document.querySelector("#report-best");
@@ -1283,9 +1266,9 @@ function exportReport() {
   const { report, state } = lastReport;
   const columns = state.metrics.map(reportColumn).filter(Boolean);
   let rows;
-  if (state.view === "pivot" && report.grain !== "total") {
-    const pivot = pivotReport(report, state.pivotMetric);
-    rows = [[columnLabel(state.pivotMetric), ...pivot.columns, "Total"], ...pivot.rows.map(row => [row.group, ...row.values.map(value => value ?? ""), row.total ?? ""]), ["Total", ...pivot.totals.map(value => value ?? ""), pivot.grand ?? ""]];
+  if (state.view === "pacing") {
+    const series = pacingSeries(lastReport.records, budgetUnits(lastReport.records, campaignTotals), { start: lastReport.range.start, end: lastReport.range.end, spendView: state.spend });
+    rows = [["date", "spend", "planned", "cumulative_spend", "cumulative_planned"], ...series.map(day => [day.date, day.actual ?? "", day.planned, day.cumulativeActual ?? "", day.cumulativePlanned])];
   } else {
     rows = [["date", "group", ...columns.map(([key]) => key), "days", "estimated_days"], ...report.rows.map(row => [report.grain === "total" ? `${report.start} to ${report.end}` : row.bucket, row.group, ...columns.map(([key]) => row[key] ?? ""), row.days, row.estimatedDays]), ["total", "", ...columns.map(([key]) => report.total[key] ?? ""), report.total.days, report.total.estimatedDays]];
   }
@@ -1300,7 +1283,7 @@ function rerenderReport() { saveBuilderState(); if (lastReport) renderReport(las
 document.querySelector("#report-builder")?.addEventListener("change", event => {
   const state = builderState();
   const target = event.target;
-  const map = { "report-range": "range", "report-grain": "grain", "report-group": "group", "report-spend": "spend", "report-chart-metric": "chartMetric", "report-chart-type": "chartType", "report-chart-series": "series", "report-pivot-metric": "pivotMetric", "report-best-metric": "bestMetric", "report-best-min": "bestMin" };
+  const map = { "report-range": "range", "report-grain": "grain", "report-group": "group", "report-spend": "spend", "report-chart-metric": "chartMetric", "report-chart-type": "chartType", "report-chart-series": "series", "report-best-metric": "bestMetric", "report-best-min": "bestMin", "report-pacing-mode": "pacingMode" };
   if (map[target.id]) state[map[target.id]] = target.value;
   else if (target.id === "report-from" || target.id === "report-to") state.custom = { ...state.custom, [target.id === "report-from" ? "start" : "end"]: target.value };
   else if (target.dataset.reportMetric) state.metrics = REPORT_COLUMNS.map(([key]) => key).filter(key => key === target.dataset.reportMetric ? target.checked : state.metrics.includes(key));
@@ -1324,50 +1307,6 @@ document.addEventListener("keydown", event => {
   if (event.key !== "Escape" || !document.querySelector("#report-builder.report-expanded")) return;
   document.querySelector("#report-expand").click();
 });
-
-function renderSpendChart(visibleCampaigns) {
-  const points = buildPortfolioSpendTrend(visibleCampaigns, { spendView: selectedSource }).filter(point => point.actual !== null);
-  currentSpendTrend = points;
-  const daily = chartMode === "daily";
-  document.querySelectorAll("#chart-mode [data-chart-mode]").forEach(button => {
-    const active = button.dataset.chartMode === chartMode;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
-  document.querySelector("#spend-chart-legend").innerHTML = daily
-    ? '<span><i class="actual"></i>Daily spend</span><span><i class="baseline"></i>Baseline daily budget</span>'
-    : '<span><i class="actual"></i>Actual</span><span><i class="planned"></i>Planned</span>';
-  document.querySelector("#spend-chart-title").textContent = daily ? "Daily spend vs. baseline" : "Spend performance";
-  for (const id of ["#spend-chart-area", "#spend-chart-planned", "#spend-chart-actual"]) document.querySelector(id).style.display = daily ? "none" : "";
-  document.querySelector("#spend-chart-bars").style.display = daily ? "" : "none";
-  document.querySelector("#spend-chart-baseline").style.display = daily ? "" : "none";
-  document.querySelector("#spend-chart-note").hidden = true;
-  document.querySelector("#export-spend-trend").disabled = points.length === 0;
-  const chart = document.querySelector("#spend-chart");
-  const empty = document.querySelector("#spend-chart-empty");
-  const hasTrend = points.length >= 2;
-  const sourceLabel = { billing: "Billing", first: "1st-party", third: "3rd-party" }[selectedSource];
-  const coverage = points.at(-1);
-  document.querySelector("#spend-chart-context").textContent = coverage ? `${sourceLabel} spend ${daily ? "per day vs. the budget baseline" : "vs. plan"} · ${coverage.historyCampaigns}/${coverage.totalCampaigns} campaigns with history` : `${sourceLabel} spend ${daily ? "per day" : "vs. plan"} across active campaigns`;
-  chart.hidden = !hasTrend;
-  empty.hidden = hasTrend;
-  empty.textContent = "Import at least two dated campaign reports to display the portfolio trend.";
-  document.querySelector("#spend-chart-x-axis").hidden = !hasTrend;
-  document.querySelector("#spend-chart-y-axis").hidden = !hasTrend;
-  if (!hasTrend) return;
-  if (daily) { renderDailyChart(points, budgetUnits(visibleCampaigns, campaignTotals), chart); return; }
-  const maximum = Math.max(...points.flatMap(point => [point.actual || 0, point.planned || 0]), 1);
-  const coordinate = (point, index, key) => `${index / (points.length - 1) * 760},${256 - (point[key] || 0) / maximum * 236}`;
-  const pathFor = key => points.map((point, index) => `${index ? "L" : "M"}${coordinate(point, index, key)}`).join(" ");
-  const actualPath = pathFor("actual");
-  document.querySelector("#spend-chart-actual").setAttribute("d", actualPath);
-  document.querySelector("#spend-chart-planned").setAttribute("d", pathFor("planned"));
-  document.querySelector("#spend-chart-area").setAttribute("d", `${actualPath} L760,256 L0,256 Z`);
-  document.querySelector("#spend-chart-y-axis").innerHTML = [maximum, maximum * 2 / 3, maximum / 3, 0].map(value => `<span>${formatMoney(value)}</span>`).join("");
-  const labels = [...new Set([points[0], points[Math.floor((points.length - 1) / 2)], points.at(-1)])];
-  document.querySelector("#spend-chart-x-axis").innerHTML = labels.map(point => `<span>${new Date(`${point.date}T00:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" })}</span>`).join("");
-  chart.setAttribute("aria-label", `Actual and planned cumulative spend from ${points[0].date} to ${points.at(-1).date}`);
-}
 
 // --- Pacing details: click the Overall pacing card for daily spend against a 100% pace ---
 const pacingDialog = document.querySelector("#pacing-dialog");
@@ -1669,18 +1608,6 @@ metricDialog.addEventListener("click", event => {
   event.preventDefault();
   metricDialog.close();
   openCampaignEdit(edit.dataset.metricEdit);
-});
-
-document.querySelector("#export-spend-trend").addEventListener("click", () => {
-  const daily = chartMode === "daily" && currentDailyView?.days.length;
-  if (!daily && !currentSpendTrend.length) return;
-  const text = daily
-    ? rowsToCsv([["date", "daily_spend", "baseline_daily_budget", "percent_of_baseline", "averaged_between_reports"], ...currentDailyView.days.map(day => [day.date, Number(day.actual.toFixed(2)), Number(day.baseline.toFixed(2)), day.baseline > 0 ? Number((day.actual / day.baseline * 100).toFixed(1)) : "", day.estimated ? "yes" : "no"])])
-    : exportPortfolioSpendTrendCsv(currentSpendTrend, selectedSource);
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-${daily ? "daily-spend" : "spend-trend"}-${selectedSource}-${todayIso()}.csv` });
-  link.click();
-  URL.revokeObjectURL(url);
 });
 
 function refreshClientFilter() {

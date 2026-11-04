@@ -702,7 +702,6 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
             <div class="report-views" role="tablist" aria-label="Report view">
               <button type="button" role="tab" data-report-view="table" aria-selected="true">Table</button>
               <button type="button" role="tab" data-report-view="chart" aria-selected="false">Chart</button>
-              <button type="button" role="tab" data-report-view="pivot" aria-selected="false">Pivot</button>
               <button type="button" role="tab" data-report-view="best" aria-selected="false">Best days</button>
               <button type="button" role="tab" data-report-view="pacing" aria-selected="false">Pacing</button>
             </div>
@@ -712,36 +711,14 @@ decodeUriComponent(first(split(last(split(replace(first(split(last(split(substri
               <div class="report-view-controls"><label>Chart<select id="report-chart-metric"></select></label><label>As<select id="report-chart-type"><option value="line">Lines</option><option value="bar">Bars</option></select></label><label>Series<select id="report-chart-series"><option value="groups">Each group</option><option value="total">Total only</option></select></label></div>
               <div class="report-chart" id="report-chart"></div>
             </div>
-            <div class="report-view" id="report-view-pivot" role="tabpanel" hidden>
-              <div class="report-view-controls"><label>Values<select id="report-pivot-metric"></select></label><small>Groups down, dates across. Pick Daily, Weekly, Monthly, or Quarterly above for the columns.</small></div>
-              <div class="report-pivot" id="report-pivot"></div>
-            </div>
             <div class="report-view" id="report-view-best" role="tabpanel" hidden>
               <div class="report-view-controls"><label>Judge by<select id="report-best-metric"></select></label><label>Ignore days under<select id="report-best-min"><option value="1000">1,000 impressions</option><option value="10000">10,000 impressions</option><option value="100000">100,000 impressions</option><option value="0">No minimum</option></select></label></div>
               <div id="report-best"></div>
             </div>
             <div class="report-view" id="report-view-pacing" role="tabpanel" hidden>
-              <div class="report-pacing-head">
-              <div><h3 id="spend-chart-title">Spend performance</h3><p id="spend-chart-context">Billing spend vs. plan across active campaigns</p></div>
-              <div class="chart-controls"><div class="chart-toggle" id="chart-mode" role="group" aria-label="Chart view"><button type="button" data-chart-mode="cumulative" class="active" aria-pressed="true">Cumulative</button><button type="button" data-chart-mode="daily" aria-pressed="false">Daily</button></div><div class="legend" id="spend-chart-legend"><span><i class="actual"></i>Actual</span><span><i class="planned"></i>Planned</span></div><button class="text-button" id="export-spend-trend" type="button">Export trend</button></div>
-              </div>
-            <div class="chart-wrap">
-              <div class="y-axis" id="spend-chart-y-axis"><span>—</span><span>—</span><span>—</span><span>$0</span></div>
-              <svg class="spend-chart" id="spend-chart" viewBox="0 0 760 270" preserveAspectRatio="none" role="img" aria-label="Actual and planned cumulative spend chart">
-                <defs>
-                  <linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6658e8" stop-opacity=".24"/><stop offset="1" stop-color="#6658e8" stop-opacity="0"/></linearGradient>
-                </defs>
-                <g class="grid-lines"><line x1="0" x2="760" y1="10" y2="10"/><line x1="0" x2="760" y1="92" y2="92"/><line x1="0" x2="760" y1="174" y2="174"/><line x1="0" x2="760" y1="256" y2="256"/></g>
-                <path class="area" id="spend-chart-area" d=""/>
-                <path class="planned-line" id="spend-chart-planned" d=""/>
-                <path class="actual-line" id="spend-chart-actual" d=""/>
-                <g id="spend-chart-bars" style="display:none"></g>
-                <path class="baseline-line" id="spend-chart-baseline" d="" style="display:none"/>
-              </svg>
-              <p class="chart-empty" id="spend-chart-empty" hidden>Import at least two dated campaign reports to display the portfolio trend.</p>
-              <div class="x-axis" id="spend-chart-x-axis"></div>
-            </div>
-            <p class="chart-note" id="spend-chart-note" hidden></p>
+              <div class="report-view-controls"><label>Show<select id="report-pacing-mode"><option value="cumulative">Cumulative</option><option value="daily">Daily</option></select></label><small>Spend against the plan for the dates above. The plan spreads each IO’s budget (or each line’s own) evenly over its flight.</small></div>
+              <p class="report-best-summary" id="report-pacing-summary"></p>
+              <div class="report-chart" id="report-pacing"></div>
             </div>
           </article>
 
