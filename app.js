@@ -2361,7 +2361,8 @@ document.querySelector("#mobile-menu").addEventListener("click", event => {
   const open = document.querySelector(".sidebar").classList.toggle("open");
   event.currentTarget.setAttribute("aria-expanded", String(open));
 });
-document.querySelector("#alert-settings-button").addEventListener("click", () => {
+// Alert rules open from the Alerts page and from Settings.
+function openAlertRules() {
   document.querySelector("#under-pacing-input").value = alertRules.underPacing;
   document.querySelector("#over-pacing-input").value = alertRules.overPacing;
   document.querySelector("#discrepancy-input").value = alertRules.discrepancy;
@@ -2375,7 +2376,7 @@ document.querySelector("#alert-settings-button").addEventListener("click", () =>
   resetAcknowledged.disabled = acknowledgedAlertIds.length === 0;
   renderAcknowledgmentList();
   alertDialog.showModal();
-});
+}
 
 function renderAcknowledgmentList() {
   const container = document.querySelector("#acknowledgment-list");
@@ -3226,7 +3227,7 @@ document.querySelector("#alerts-client").addEventListener("change", event => { a
 document.querySelector("#alerts-severity").addEventListener("change", event => { alertsFilter.severity = event.target.value; renderAlertsPage(); });
 document.querySelector("#alerts-type").addEventListener("change", event => { alertsFilter.type = event.target.value; renderAlertsPage(); });
 document.querySelector("#alerts-search").addEventListener("input", event => { alertsFilter.query = event.target.value; renderAlertsPage(); });
-document.querySelector("#alerts-page-rules").addEventListener("click", () => document.querySelector("#alert-settings-button").click());
+document.querySelector("#alerts-page-rules").addEventListener("click", openAlertRules);
 document.querySelector("#alerts-page-export").addEventListener("click", () => {
   if (!alertsPageAlerts.length) return;
   const url = URL.createObjectURL(new Blob([exportAlertsCsv(alertsPageAlerts)], { type: "text/csv;charset=utf-8" }));
@@ -3252,7 +3253,6 @@ document.querySelector("#alerts-page").addEventListener("click", event => {
 });
 document.querySelector("#alert-card").addEventListener("click", () => setAlertsView(true));
 document.querySelector("#alert-card").addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setAlertsView(true); } });
-document.querySelector("#view-all-alerts").addEventListener("click", () => setAlertsView(true));
 
 // --- Client to-dos: the morning scan's checklist plus what the dashboard's own alerts say to do ---
 const saveTodos = () => { todos = pruneTodos(todos); writeTodos(localStorage, todos); scheduleSnapshot(); };
@@ -4330,27 +4330,12 @@ document.querySelector("#export-import-history").addEventListener("click", () =>
 function renderAlerts(visibleCampaigns) {
   const alerts = unacknowledgedAlerts(evaluateAlerts(visibleCampaigns), acknowledgedAlertIds);
   currentVisibleAlerts = alerts;
-  document.querySelector("#export-alerts-button").disabled = alerts.length === 0;
   const critical = alerts.filter(alert => alert.severity === "critical").length;
   document.querySelector("#alert-count").textContent = alerts.length;
   document.querySelector("#alert-summary").innerHTML = `<span class="warning-text">${critical} critical</span><span>across ${new Set(alerts.map(alert => alert.campaign.name)).size} campaigns</span>`;
   document.querySelector("#nav-alert-count").textContent = alerts.length;
   document.querySelector("#nav-alert-count").hidden = alerts.length === 0;
-  document.querySelector("#alert-list").innerHTML = alerts.length ? alerts.slice(0, 3).map(alert => `<button class="alert-item" data-alert-id="${escapeHtml(alert.id)}" data-campaign-index="${campaigns.indexOf(alert.campaign)}" aria-label="Open ${escapeHtml(alert.campaign.name)}: ${escapeHtml(alert.title)}"><span class="alert-symbol ${alert.severity}">${alert.symbol}</span><span><strong>${escapeHtml(alert.title)}</strong><small>${escapeHtml(alert.campaign.client)} · ${escapeHtml(alert.campaign.name)}</small><em>${escapeHtml(alert.detail)}</em></span><span class="chevron">›</span></button>`).join("") : '<p class="no-alerts">No active alerts for these campaigns.</p>';
 }
-
-document.querySelector("#export-alerts-button").addEventListener("click", () => {
-  if (!currentVisibleAlerts.length) return;
-  const url = URL.createObjectURL(new Blob([exportAlertsCsv(currentVisibleAlerts)], { type: "text/csv;charset=utf-8" }));
-  const link = Object.assign(document.createElement("a"), { href: url, download: `northstar-active-alerts-${new Date().toISOString().slice(0, 10)}.csv` });
-  link.click();
-  URL.revokeObjectURL(url);
-});
-
-document.querySelector("#alert-list").addEventListener("click", event => {
-  const alert = event.target.closest(".alert-item[data-campaign-index]");
-  if (alert) openCampaignDialog(Number(alert.dataset.campaignIndex), alert.dataset.alertId);
-});
 
 document.querySelector("#acknowledge-alert-button").addEventListener("click", () => {
   if (!activeAlertId) return;
