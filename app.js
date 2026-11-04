@@ -27,6 +27,7 @@ import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { isZipName, unzipReports } from "./lib/zip.js";
+import { bestDays, bucketLabel, buildReport, pivotReport, REPORT_GRAINS, REPORT_RANGES, resolveReportRange } from "./lib/report-builder.js";
 import { buildBillingCsv, buildChatGptPrompt, buildGuide, buildLinesCsv, buildSnapshotMarkdown, SNAPSHOT_FILES, SNAPSHOT_FOLDER } from "./lib/dashboard-snapshot.js";
 import { addTrailEntry, clientFileHistory, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
@@ -205,6 +206,8 @@ function renderCampaigns(filter = "all", statusFilter = document.querySelector("
     ? `<span>No live lines have a KPI goal yet</span>`
     : `<span><b class="${watch.off.length ? "warning-text" : "positive"}">${watch.off.length ? "off goal" : "all on goal"}</b> of ${watch.watched} line${watch.watched === 1 ? "" : "s"} with a goal${watch.near.length ? ` · ${watch.near.length} close` : ""}</span>${worst ? `<small class="kpi-watch-worst">Furthest: ${escapeHtml(recordLineLabel(worst.record) || worst.record.name)} · ${escapeHtml(worst.metric)} ${escapeHtml(worst.formatted)} vs ${escapeHtml(worst.goalText)}</small>` : ""}`;
   renderSpendChart(activeRows);
+  // The report builder covers every campaign in view, finished ones too, so past dates can be pulled.
+  renderReport(rows.filter(record => !isPlaceholder(record)));
   lastPacingRows = activeRows;
   const activeUnits = budgetUnits(activeRows, campaignTotals);
   const budget = unitsBudget(activeUnits);
@@ -1121,6 +1124,206 @@ function renderDailyChart(points, units, chart) {
   note.textContent = parts.join(" · ") || "Add budgets and flight dates to see a daily baseline.";
   chart.setAttribute("aria-label", `Daily spend against the baseline daily budget from ${days[0].date} to ${days.at(-1).date}`);
 }
+
+// --- Report builder: spend and results over any dates, as a table, chart, pivot, or best days ---
+const REPORT_COLUMNS = Object.freeze([
+  ["spend", "Spend", "money"], ["impressions", "Impressions", "count"], ["clicks", "Clicks", "count"], ["ctr", "CTR", "percent"], ["cpm", "CPM", "rate"], ["cpc", "CPC", "rate"],
+  ["conversions", "Conversions", "count"], ["cpa", "CPA", "rate"], ["revenue", "Revenue", "money"], ["roas", "ROAS", "rate"], ["videoCompletions", "Completions", "count"], ["vcr", "VCR", "percent"]
+]);
+const REPORT_COLORS = ["#6658e8", "#1f9d8b", "#e3973c", "#d6456b", "#3b82c4", "#9b59b6", "#8b93a3"];
+const REPORT_STATE_KEY = "northstar-report-builder";
+// Kept on the function so a render during startup (before this part of the file runs) can read it.
+function builderState() {
+  if (!builderState.value) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(REPORT_STATE_KEY)) || {}; } catch { /* defaults */ }
+    builderState.value = { range: "30", custom: {}, grain: "total", group: null, spend: "billable", metrics: ["spend", "impressions", "clicks", "ctr", "conversions", "cpa"], view: "table", chartMetric: "spend", chartType: "line", series: "groups", pivotMetric: "spend", bestMetric: "ctr", bestMin: "1000", ...saved };
+  }
+  return builderState.value;
+}
+function saveBuilderState() { try { localStorage.setItem(REPORT_STATE_KEY, JSON.stringify(builderState())); } catch { /* this visit only */ } }
+const reportColumn = key => REPORT_COLUMNS.find(([id]) => id === key);
+function formatReportValue(key, value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const kind = reportColumn(key)?.[2];
+  if (kind === "money") return formatExactMoney(value);
+  if (kind === "rate") return `$${value.toFixed(2)}`;
+  if (kind === "percent") return `${value.toFixed(2)}%`;
+  return Math.round(value).toLocaleString("en-US");
+}
+let lastReport = null;
+
+/** Draws the report builder for the records in view, in the chosen view. */
+function renderReport(records) {
+  const panel = document.querySelector("#report-builder");
+  if (!panel) return;
+  const state = builderState();
+  // A client page reads best by line; the overview by campaign, until you pick one yourself.
+  const group = state.group || (clientScope ? "line" : "campaign");
+  const fill = (id, options, value) => { const select = document.querySelector(id); if (!select.options.length) select.innerHTML = options.map(([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`).join(""); select.value = value; };
+  fill("#report-range", REPORT_RANGES.map(range => [range.id, range.label]), state.range);
+  fill("#report-grain", REPORT_GRAINS.map(grain => [grain.id, grain.label]), state.grain);
+  document.querySelector("#report-group").value = group;
+  document.querySelector("#report-spend").value = state.spend;
+  for (const [id, key] of [["#report-chart-metric", "chartMetric"], ["#report-pivot-metric", "pivotMetric"], ["#report-best-metric", "bestMetric"]]) fill(id, REPORT_COLUMNS.map(([column, label]) => [column, label]), state[key]);
+  document.querySelector("#report-chart-type").value = state.chartType;
+  document.querySelector("#report-chart-series").value = state.series;
+  document.querySelector("#report-best-min").value = state.bestMin;
+  const metricsBox = document.querySelector("#report-metrics");
+  if (!metricsBox.querySelector("input")) metricsBox.insertAdjacentHTML("beforeend", REPORT_COLUMNS.map(([key, label]) => `<label><input type="checkbox" data-report-metric="${key}" />${escapeHtml(label)}</label>`).join(""));
+  metricsBox.querySelectorAll("[data-report-metric]").forEach(box => { box.checked = state.metrics.includes(box.dataset.reportMetric); });
+  const custom = document.querySelector("#report-custom");
+  custom.hidden = state.range !== "custom";
+  const today = todayLocal();
+  const starts = records.map(record => record.startDate).filter(Boolean).sort();
+  const ends = records.map(record => record.endDate).filter(Boolean).sort();
+  const range = resolveReportRange(state.range, { today, custom: state.custom, flight: { start: starts[0], end: ends.at(-1) } });
+  if (state.range === "custom") { document.querySelector("#report-from").value = state.custom.start || range.start; document.querySelector("#report-to").value = state.custom.end || range.end; }
+  const report = buildReport(records, { start: range.start, end: range.end, grain: state.grain, groupBy: group === "all" ? "all" : group, spendView: state.spend });
+  lastReport = { report, records, range, state: { ...state, group } };
+  const label = REPORT_RANGES.find(item => item.id === state.range)?.label || "";
+  document.querySelector("#report-context").textContent = `${label}: ${shortDate(range.start)} to ${shortDate(range.end)}${report.dataEnd && report.dataEnd < range.end ? ` · data through ${shortDate(report.dataEnd)}` : ""} · ${records.length} line${records.length === 1 ? "" : "s"} in view`;
+  const note = document.querySelector("#report-note");
+  note.hidden = !(range.error || report.total.estimatedDays);
+  note.textContent = range.error || "≈ marks rows that include days with no DCM or DSP numbers, where the report's totals are spread evenly between report dates. DCM and DSP days are exact.";
+  document.querySelectorAll("[data-report-view]").forEach(button => button.setAttribute("aria-selected", String(button.dataset.reportView === state.view)));
+  document.querySelectorAll(".report-view").forEach(view => { view.hidden = view.id !== `report-view-${state.view}`; });
+  document.querySelector(".report-controls").classList.toggle("muted-controls", state.view === "pacing");
+  if (state.view === "table") renderReportTable(report, state);
+  else if (state.view === "chart") renderReportChart(report, state);
+  else if (state.view === "pivot") renderReportPivot(report, state);
+  else if (state.view === "best") renderReportBest(records, range, state);
+}
+
+function renderReportTable(report, state) {
+  const columns = state.metrics.map(reportColumn).filter(Boolean);
+  const byDate = report.grain !== "total";
+  const mark = row => row.estimatedDays ? '<span class="report-estimated" title="Includes days spread evenly between report dates">≈</span>' : "";
+  const cells = row => columns.map(([key]) => `<td>${formatReportValue(key, row[key])}</td>`).join("");
+  const body = report.rows.length
+    ? report.rows.map(row => `<tr>${byDate ? `<td>${escapeHtml(bucketLabel(row.bucket, report.grain))}</td>` : ""}<td>${escapeHtml(row.group)} ${mark(row)}</td>${cells(row)}</tr>`).join("")
+    : `<tr><td colspan="${columns.length + (byDate ? 2 : 1)}" class="report-empty">No numbers for these dates yet.</td></tr>`;
+  const groupTotals = byDate && report.groups.length > 1 ? report.groups.map(row => `<tr class="report-subtotal"><td>All dates</td><td>${escapeHtml(row.group)} ${mark(row)}</td>${cells(row)}</tr>`).join("") : "";
+  document.querySelector("#report-view-table").innerHTML = `<div class="report-table-wrap"><table class="report-table"><thead><tr>${byDate ? "<th>Date</th>" : ""}<th>${escapeHtml({ campaign: "Campaign", line: "Line", client: "Client", all: "" }[lastReport.state.group] || "Group")}</th>${columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${body}${groupTotals}</tbody><tfoot><tr><td${byDate ? ' colspan="2"' : ""}>Total</td>${cells(report.total)}</tr></tfoot></table></div>`;
+}
+
+/** An SVG chart of one metric over the buckets: a line or bar per group (the six biggest), or the total. */
+function renderReportChart(report, state) {
+  const host = document.querySelector("#report-chart");
+  const metric = state.chartMetric;
+  const byDate = report.grain !== "total";
+  if (!report.rows.length) { host.innerHTML = '<p class="report-empty">No numbers for these dates yet.</p>'; return; }
+  const top = report.groups.slice(0, 6).map(row => row.group);
+  const categories = byDate ? report.buckets : report.groups.map(row => row.group);
+  const series = !byDate || state.series === "total"
+    ? [{ name: byDate ? "Total" : columnLabel(metric), values: byDate ? report.buckets.map(bucket => pivotReport(report, metric).totals[report.buckets.indexOf(bucket)]) : report.groups.map(row => row[metric]) }]
+    : top.map(name => ({ name, values: report.buckets.map(bucket => report.rows.find(row => row.group === name && row.bucket === bucket)?.[metric] ?? null) }));
+  const width = 760, height = 280, left = 70, right = 46, topPad = 14, bottom = 46;
+  const values = series.flatMap(item => item.values).filter(Number.isFinite);
+  const max = Math.max(...values, 0) || 1;
+  const x = index => left + (categories.length === 1 ? (width - left - right) / 2 : index * (width - left - right) / Math.max(categories.length - 1, 1));
+  const y = value => topPad + (1 - value / max) * (height - topPad - bottom);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(share => max * share);
+  const grid = ticks.map(value => `<line x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}" class="report-grid"/><text x="${left - 8}" y="${y(value) + 4}" text-anchor="end" class="report-axis">${escapeHtml(formatReportValue(metric, value))}</text>`).join("");
+  const every = Math.max(1, Math.ceil(categories.length / 10));
+  const labels = categories.map((category, index) => index % every ? "" : `<text x="${state.chartType === "bar" || !byDate ? barCenter(index) : x(index)}" y="${height - bottom + 18}" text-anchor="middle" class="report-axis">${escapeHtml(byDate ? bucketLabel(category, report.grain) : truncate(category, 18))}</text>`).join("");
+  function barCenter(index) { return left + (index + 0.5) * (width - left - right) / categories.length; }
+  let marks = "";
+  if (state.chartType === "bar" || !byDate) {
+    const slot = (width - left - right) / categories.length;
+    const barWidth = Math.max(2, slot * 0.8 / series.length);
+    series.forEach((item, seriesIndex) => item.values.forEach((value, index) => {
+      if (!Number.isFinite(value)) return;
+      const xPos = left + index * slot + slot * 0.1 + seriesIndex * barWidth;
+      marks += `<rect x="${xPos}" y="${y(value)}" width="${barWidth}" height="${Math.max(0, y(0) - y(value))}" fill="${REPORT_COLORS[seriesIndex % REPORT_COLORS.length]}" rx="2"><title>${escapeHtml(`${item.name} · ${byDate ? bucketLabel(categories[index], report.grain) : categories[index]}: ${formatReportValue(metric, value)}`)}</title></rect>`;
+    }));
+  } else {
+    series.forEach((item, seriesIndex) => {
+      const color = REPORT_COLORS[seriesIndex % REPORT_COLORS.length];
+      const points = item.values.map((value, index) => Number.isFinite(value) ? [x(index), y(value), value, index] : null);
+      const path = points.reduce((d, point, index) => point ? `${d}${d && points[index - 1] ? "L" : "M"}${point[0].toFixed(1)},${point[1].toFixed(1)}` : d, "");
+      marks += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>`;
+      if (categories.length <= 45) marks += points.filter(Boolean).map(([px, py, value, index]) => `<circle cx="${px}" cy="${py}" r="3" fill="${color}"><title>${escapeHtml(`${item.name} · ${bucketLabel(categories[index], report.grain)}: ${formatReportValue(metric, value)}`)}</title></circle>`).join("");
+    });
+  }
+  const legend = series.length > 1 || byDate ? `<div class="report-legend">${series.map((item, index) => `<span><i style="background:${REPORT_COLORS[index % REPORT_COLORS.length]}"></i>${escapeHtml(item.name)}</span>`).join("")}${byDate && state.series !== "total" && report.groups.length > top.length ? `<span class="muted">+${report.groups.length - top.length} smaller groups not drawn</span>` : ""}</div>` : "";
+  host.innerHTML = `<svg viewBox="0 0 ${width} ${height}" class="report-svg" role="img" aria-label="${escapeHtml(`${columnLabel(metric)} ${byDate ? "over time" : "by group"}`)}">${grid}${marks}${labels}</svg>${legend}`;
+}
+const columnLabel = key => reportColumn(key)?.[1] || key;
+const truncate = (text, length) => String(text).length > length ? `${String(text).slice(0, length - 1)}…` : String(text);
+
+function renderReportPivot(report, state) {
+  const host = document.querySelector("#report-pivot");
+  if (report.grain === "total") { host.innerHTML = '<p class="report-empty">Pick Daily, Weekly, Monthly, or Quarterly above to spread the dates across the columns.</p>'; return; }
+  const pivot = pivotReport(report, state.pivotMetric);
+  if (!pivot.rows.length) { host.innerHTML = '<p class="report-empty">No numbers for these dates yet.</p>'; return; }
+  const values = pivot.rows.flatMap(row => row.values).filter(Number.isFinite);
+  const max = Math.max(...values, 0) || 1;
+  // Shade each cell by its size, so the strongest and weakest stand out.
+  const shade = value => Number.isFinite(value) ? ` style="background:rgba(102,88,232,${(0.06 + 0.3 * value / max).toFixed(3)})"` : "";
+  host.innerHTML = `<div class="report-table-wrap"><table class="report-table report-pivot-table"><thead><tr><th>${escapeHtml(columnLabel(state.pivotMetric))}</th>${pivot.columns.map(column => `<th>${escapeHtml(bucketLabel(column, report.grain))}</th>`).join("")}<th>Total</th></tr></thead><tbody>${pivot.rows.map(row => `<tr><td>${escapeHtml(row.group)}</td>${row.values.map(value => `<td${shade(value)}>${formatReportValue(state.pivotMetric, value)}</td>`).join("")}<td><b>${formatReportValue(state.pivotMetric, row.total)}</b></td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td>${pivot.totals.map(value => `<td>${formatReportValue(state.pivotMetric, value)}</td>`).join("")}<td>${formatReportValue(state.pivotMetric, pivot.grand)}</td></tr></tfoot></table></div>`;
+}
+
+function renderReportBest(records, range, state) {
+  const host = document.querySelector("#report-best");
+  const result = bestDays(records, { start: range.start, end: range.end, metric: state.bestMetric, spendView: state.spend, minImpressions: Number(state.bestMin) });
+  if (!result.judgedDays) { host.innerHTML = '<p class="report-empty">Not enough days with delivery in these dates to compare. Try a longer range or a lower minimum.</p>'; return; }
+  const label = columnLabel(state.bestMetric);
+  const better = result.lowerIsBetter ? "lowest" : "highest";
+  const max = Math.max(...result.weekdays.map(day => day[state.bestMetric]).filter(Number.isFinite), 0) || 1;
+  const summary = result.best ? `<p class="report-best-summary"><b>${escapeHtml(result.best)}s</b> had the best ${escapeHtml(label)}${result.worst ? ` and <b>${escapeHtml(result.worst)}s</b> the worst` : ""}, over ${result.judgedDays} days with delivery (${better} is better). Days of the week only matter if they hold over several weeks, so check a long range before shifting budget.</p>` : "";
+  const weekdays = `<div class="report-table-wrap report-weekdays-wrap"><table class="report-table report-weekdays"><thead><tr><th>Day</th><th>${escapeHtml(label)}</th><th></th><th>Avg impressions</th><th>Avg spend</th><th>Days</th></tr></thead><tbody>${result.weekdays.map(day => `<tr class="${day.weekday === result.best ? "report-best-row" : day.weekday === result.worst ? "report-worst-row" : ""}"><td>${escapeHtml(day.weekday)}</td><td>${formatReportValue(state.bestMetric, day[state.bestMetric])}</td><td class="report-bar-cell"><span style="width:${Number.isFinite(day[state.bestMetric]) ? (day[state.bestMetric] / max * 100).toFixed(1) : 0}%"></span></td><td>${formatReportValue("impressions", day.impressions)}</td><td>${formatReportValue("spend", day.spend)}</td><td>${day.days}</td></tr>`).join("")}</tbody></table></div>`;
+  const list = (title, days) => `<div class="report-day-list"><h4>${escapeHtml(title)}</h4><ol>${days.map(day => `<li><span>${escapeHtml(new Date(`${day.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }))}</span><b>${formatReportValue(state.bestMetric, day[state.bestMetric])}</b><small>${formatReportValue("impressions", day.impressions)} impr.</small></li>`).join("")}</ol></div>`;
+  host.innerHTML = `${summary}${weekdays}<div class="report-day-lists">${list(`Best days by ${label}`, result.topDays)}${list(`Weakest days by ${label}`, result.bottomDays)}</div>`;
+}
+
+/** The current table (or pivot) as a CSV file, raw numbers rather than formatted ones. */
+function exportReport() {
+  if (!lastReport) return;
+  const { report, state } = lastReport;
+  const columns = state.metrics.map(reportColumn).filter(Boolean);
+  let rows;
+  if (state.view === "pivot" && report.grain !== "total") {
+    const pivot = pivotReport(report, state.pivotMetric);
+    rows = [[columnLabel(state.pivotMetric), ...pivot.columns, "Total"], ...pivot.rows.map(row => [row.group, ...row.values.map(value => value ?? ""), row.total ?? ""]), ["Total", ...pivot.totals.map(value => value ?? ""), pivot.grand ?? ""]];
+  } else {
+    rows = [["date", "group", ...columns.map(([key]) => key), "days", "estimated_days"], ...report.rows.map(row => [report.grain === "total" ? `${report.start} to ${report.end}` : row.bucket, row.group, ...columns.map(([key]) => row[key] ?? ""), row.days, row.estimatedDays]), ["total", "", ...columns.map(([key]) => report.total[key] ?? ""), report.total.days, report.total.estimatedDays]];
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([rowsToCsv(rows)], { type: "text/csv" }));
+  link.download = `${(clientScope || "All clients").replace(/[^A-Za-z0-9]+/g, "_")}_report_${report.start}_to_${report.end}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function rerenderReport() { saveBuilderState(); if (lastReport) renderReport(lastReport.records); }
+document.querySelector("#report-builder")?.addEventListener("change", event => {
+  const state = builderState();
+  const target = event.target;
+  const map = { "report-range": "range", "report-grain": "grain", "report-group": "group", "report-spend": "spend", "report-chart-metric": "chartMetric", "report-chart-type": "chartType", "report-chart-series": "series", "report-pivot-metric": "pivotMetric", "report-best-metric": "bestMetric", "report-best-min": "bestMin" };
+  if (map[target.id]) state[map[target.id]] = target.value;
+  else if (target.id === "report-from" || target.id === "report-to") state.custom = { ...state.custom, [target.id === "report-from" ? "start" : "end"]: target.value };
+  else if (target.dataset.reportMetric) state.metrics = REPORT_COLUMNS.map(([key]) => key).filter(key => key === target.dataset.reportMetric ? target.checked : state.metrics.includes(key));
+  else return;
+  rerenderReport();
+});
+document.querySelector("#report-builder")?.addEventListener("click", event => {
+  const tab = event.target.closest("[data-report-view]");
+  if (tab) { builderState().view = tab.dataset.reportView; rerenderReport(); return; }
+  if (event.target.closest("#report-export")) { exportReport(); return; }
+  const expand = event.target.closest("#report-expand");
+  if (expand) {
+    const panel = document.querySelector("#report-builder");
+    const open = panel.classList.toggle("report-expanded");
+    expand.textContent = open ? "Close" : "Expand";
+    expand.setAttribute("aria-pressed", String(open));
+    document.body.classList.toggle("report-open", open);
+  }
+});
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape" || !document.querySelector("#report-builder.report-expanded")) return;
+  document.querySelector("#report-expand").click();
+});
 
 function renderSpendChart(visibleCampaigns) {
   const points = buildPortfolioSpendTrend(visibleCampaigns, { spendView: selectedSource }).filter(point => point.actual !== null);
