@@ -440,6 +440,27 @@
             </li>
           </ol>
 
+          <h3 class="automation-heading" id="snapshot-automation-title" data-summary="The whole dashboard kept current in your OneDrive, so ChatGPT can answer questions, write reports, fill the status doc, and check billing.">ChatGPT can read the dashboard</h3>
+          <p class="automation-lede">The dashboard keeps four files current in a “Dashboard for ChatGPT” folder inside your morning brief folder: a snapshot of every client (campaigns, pacing, KPIs, alerts, to-dos, status doc rows, and billing for this month and last), every line’s numbers, every billing row, and a guide that tells ChatGPT how to read them. They rewrite themselves whenever the data changes while the dashboard is open.</p>
+          <ol class="automation-steps" id="snapshot-steps">
+            <li class="automation-step" data-step="snapshot">
+              <div class="step-head"><span class="step-status" id="step-snapshot-status"></span><h4>Keep the files current</h4></div>
+              <p>The first time, Chrome asks to let the dashboard save files in your morning brief folder; choose <b>Allow</b> (pick “Allow on every visit” if it offers it).</p>
+              <p class="step-detail" id="snapshot-detail"></p>
+              <div class="step-actions"><button class="primary-button" id="snapshot-update" type="button">Update now</button></div>
+            </li>
+            <li class="automation-step" data-step="snapshotgpt">
+              <div class="step-head"><span class="step-status" id="step-snapshotgpt-status"></span><h4>Point ChatGPT at it</h4></div>
+              <ol class="step-substeps">
+                <li>In ChatGPT, open the project you use for clients (or make one) and turn on the <b>OneDrive</b> connector.</li>
+                <li>Paste the prompt below into the project’s <b>instructions</b>, so every chat in it knows where the numbers are.</li>
+                <li>Ask away: “How is Rent A Center pacing?”, “Write Nature’s Sunshine’s weekly recap”, “Fill in this week’s status doc rows”, or “Check October billing for McMaster.”</li>
+              </ol>
+              <details class="prompt-preview"><summary>See the prompt</summary><pre id="snapshot-prompt-preview"></pre></details>
+              <div class="step-actions"><button class="primary-button" id="snapshot-copy-prompt" type="button">Copy the prompt</button></div>
+            </li>
+          </ol>
+
           <h3 class="automation-heading" id="report-automation-title" data-summary="New client reports from the shared folder import on their own.">Report uploads</h3>
           <ol class="automation-steps" id="report-steps">
             <li class="automation-step" data-step="rfolder">
