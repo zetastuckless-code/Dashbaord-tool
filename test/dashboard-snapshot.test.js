@@ -48,3 +48,9 @@ test("the guide and prompt point ChatGPT at the folder and the files", () => {
   assert.match(prompt, new RegExp(`"Morning brief" › "${SNAPSHOT_FOLDER}"`));
   assert.match(prompt, /READ ME FIRST\.md/);
 });
+
+test("a client project's prompt keeps ChatGPT to that client", () => {
+  const prompt = buildChatGptPrompt({ folder: "Morning brief", client: "Rent A Center" });
+  assert.match(prompt, /This project is only for Rent A Center\. Use only the "Rent A Center" section of "Dashboard snapshot\.md" and the rows where client is "Rent A Center" in "Lines\.csv" and "Billing\.csv", unless I name another client\./);
+  assert.doesNotMatch(buildChatGptPrompt({ folder: "Morning brief" }), /This project is only for/);
+});
