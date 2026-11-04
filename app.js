@@ -27,6 +27,7 @@ import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { isZipName, unzipReports } from "./lib/zip.js";
+import { buildBillingCsv, buildChatGptPrompt, buildGuide, buildLinesCsv, buildSnapshotMarkdown, SNAPSHOT_FILES, SNAPSHOT_FOLDER } from "./lib/dashboard-snapshot.js";
 import { addTrailEntry, clientFileHistory, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
 import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
@@ -117,6 +118,7 @@ function saveCampaigns() {
   campaigns = applyDcmTopUps(campaigns);
   writeLineDeliveries(indexedDB, campaigns, writtenDeliveries).catch(error => storageProblem(error));
   trySaveLocal(JSON.stringify(campaigns, (key, value) => key === "thirdPartyDelivery" ? undefined : value));
+  scheduleSnapshot();
 }
 
 /** Saves the campaigns, and says so plainly when the browser is out of room instead of failing silently. */
@@ -3050,7 +3052,7 @@ document.querySelector("#alert-card").addEventListener("keydown", event => { if 
 document.querySelector("#view-all-alerts").addEventListener("click", () => setAlertsView(true));
 
 // --- Client to-dos: the morning scan's checklist plus what the dashboard's own alerts say to do ---
-const saveTodos = () => { todos = pruneTodos(todos); writeTodos(localStorage, todos); };
+const saveTodos = () => { todos = pruneTodos(todos); writeTodos(localStorage, todos); scheduleSnapshot(); };
 const TAG_LABEL = { urgent: "Urgent", waiting: "Waiting", todo: "To-do", upcoming: "Upcoming", fyi: "FYI" };
 const todoTag = item => item.tag && item.tag !== "todo" ? `<em class="todo-tag ${item.tag}">${TAG_LABEL[item.tag]}</em>` : "";
 
@@ -3570,6 +3572,7 @@ document.querySelector("#folder-access").addEventListener("click", event => {
 
 function renderAutomationPage() {
   renderFolderAccess();
+  renderSnapshotStatus();
   const clients = trackedClients();
   stepStatus("clients", clients.length ? "done" : "todo");
   document.querySelector("#step-clients-detail").textContent = clients.length ? `${clients.length} client${clients.length === 1 ? "" : "s"} on the dashboard: ${clients.join(", ")}. Add any that are missing before you copy the prompt.` : "No clients yet. Upload an IO to add your first one.";
@@ -4580,7 +4583,7 @@ document.querySelector("#dcm-remove").addEventListener("click", () => {
 // --- Billing: each client's rows set up once (or read from last month's file), filled each month from DCM and DSP ---
 function clientLines(client) { return campaigns.filter(record => record.client === client && !isCampaignArchived(record) && !isPlaceholder(record)); }
 function lineLabelText(record) { return record.name; }
-function saveBilling() { billing = writeBilling(localStorage, billing); }
+function saveBilling() { billing = writeBilling(localStorage, billing); scheduleSnapshot(); }
 function billingConfig(client) { return (billing[client] ||= { agency: "", advertiser: client, currency: "USD", periodMode: "month", periods: [], rows: [], history: {} }); }
 /**
  * A billing row's IO amount, from the insertion order: each line's IO line budget (once per IO line), or the whole
@@ -5130,8 +5133,8 @@ function updateBillingReminder() {
 updateBillingReminder();
 
 // --- Weekly status: each Monday's row per live campaign for the team status doc ---
-function saveStatusCarry() { try { localStorage.setItem(STATUS_CARRY_KEY, JSON.stringify(statusCarry)); } catch { /* kept this session */ } }
-function saveStatusDrafts() { try { localStorage.setItem(STATUS_DRAFTS_KEY, JSON.stringify(statusDrafts)); } catch { /* drafts last this session */ } }
+function saveStatusCarry() { try { localStorage.setItem(STATUS_CARRY_KEY, JSON.stringify(statusCarry)); } catch { /* kept this session */ } scheduleSnapshot(); }
+function saveStatusDrafts() { try { localStorage.setItem(STATUS_DRAFTS_KEY, JSON.stringify(statusDrafts)); } catch { /* drafts last this session */ } scheduleSnapshot(); }
 /**
  * Each line's CPM, to price DCM impressions (DCM has no spend): its IO line's rate, else the campaign IO's, else the
  * billing row it's in, else its report's own cost per thousand.
@@ -5400,6 +5403,151 @@ async function writeDuePacks({ ask = false } = {}) {
   renderClientReporting();
 }
 document.querySelector("#reporting-pending-chip").addEventListener("click", () => writeDuePacks({ ask: true }));
+
+// --- Dashboard for ChatGPT: everything on the dashboard, kept current in the morning brief folder ---
+// State lives on the function so saves during startup (before this part of the file runs) can still schedule a write.
+function snapshotStore() { return (snapshotStore.state ||= { timer: null, at: null, needsClick: false, error: "", lastBody: "" }); }
+/** Writes the snapshot a few seconds after the last change, so a burst of saves writes once. */
+function scheduleSnapshot() {
+  const state = snapshotStore();
+  clearTimeout(state.timer);
+  state.timer = setTimeout(() => writeSnapshot().catch(() => {}), 4000);
+}
+const shortLine = name => String(name).includes(" — ") ? String(name).split(" — ").slice(1).join(" — ") : String(name);
+
+/** What the dashboard shows now, gathered for the ChatGPT files. */
+function snapshotData() {
+  const today = todayLocal();
+  const records = campaigns.filter(record => !isCampaignArchived(record) && !isPlaceholder(record));
+  const clients = orderClients([...new Set(records.map(record => record.client))], readClientOrder(localStorage));
+  const alerts = unacknowledgedAlerts(evaluateAlerts(records), acknowledgedAlertIds);
+  const status = statusRows();
+  const months = [today.slice(0, 7), previousMonth()];
+  const through = record => source => Object.keys(record.thirdPartyDelivery?.[source] || {}).sort().at(-1) || "";
+  const goalOf = record => String(record.target || "").replace(/^target\s*/i, "") || "—";
+  const lines = [];
+  const clientData = clients.map(client => {
+    const mine = records.filter(record => record.client === client);
+    const groups = groupCampaigns(mine);
+    const campaignRows = groups.map(group => {
+      const totals = campaignTotals[group.key] || null;
+      const metrics = computeMetrics(group.records, { totals, asOf: new Date() });
+      const watch = kpiWatch(group.records, { tolerance: alertRules.kpiTolerance });
+      const starts = group.records.map(record => record.startDate).filter(Boolean).sort();
+      const ends = group.records.map(record => record.endDate).filter(Boolean).sort();
+      return {
+        name: group.name, status: campaignStatus[group.key] || group.status, flight: starts.length ? `${totals?.startDate || starts[0]} to ${totals?.endDate || ends.at(-1)}` : "—",
+        budget: metrics.budget, spend: metrics.spend, pacing: metrics.pacing, kpi: metrics.kpi || "—", goal: goalOf(group.records[0]),
+        goalStatus: watch.off.length ? "off" : watch.near.length ? "close" : watch.on.length ? "on" : watch.noData.length ? "no data" : "no goal",
+        addedValue: Boolean(totals?.noCost), impressionGoal: totals?.impressionGoal
+      };
+    });
+    for (const record of mine) {
+      const metrics = computeMetrics([record]);
+      const watch = kpiWatch([record], { tolerance: alertRules.kpiTolerance });
+      const item = [...watch.off, ...watch.near, ...watch.on][0];
+      lines.push({
+        client, campaign: campaignGroupName(record), line: shortLine(record.name), status: dashboardFlightStatus(record), flight_start: record.startDate || "", flight_end: record.endDate || "",
+        budget: record.budget ?? "", billable_spend: metrics.spend ?? "", media_spend: resolveSpend(record, "media") ?? "", impressions: metrics.impressions ?? "", clicks: metrics.clicks ?? "",
+        ctr_percent: Number.isFinite(metrics.ctr) ? metrics.ctr.toFixed(3) : "", conversions: metrics.conversions ?? "", revenue: metrics.revenue ?? "", video_completions: metrics.videoCompletions ?? "",
+        vcr_percent: Number.isFinite(metrics.vcr) ? metrics.vcr.toFixed(1) : "", kpi: record.kpi || "", kpi_value: item?.formatted || "", kpi_goal: goalOf(record) === "—" ? "" : goalOf(record),
+        kpi_vs_goal: item ? (watch.off.length ? "off" : watch.near.length ? "close" : "on") : "", pacing_percent: Number.isFinite(metrics.pacing) ? metrics.pacing.toFixed(1) : "",
+        data_through: record.dataAsOf || "", dcm_through: through(record)("CM360"), dsp_through: through(record)("DSP")
+      });
+    }
+    const config = billing[client];
+    const billingMonths = config?.rows?.length ? months.map(month => {
+      const result = billingResult(client, month);
+      const entry = config.history?.[month];
+      return {
+        month, label: monthLabel(month), status: billingStatusText(result), total: result.total, billedOnFile: entry ? entry.total ?? null : null,
+        rows: result.rows.map(item => {
+          const quantityOf = detail => Math.round(item.row.rateType === "cpv" ? detail.totals.videoCompletions || 0 : detail.totals.impressions || 0);
+          const lastOfRow = result.rows.filter(other => other.row.id === item.row.id).at(-1) === item;
+          const check = result.running && !item.quantity ? "Nothing in yet this month" : [item.missingDays.length ? `Missing ${dayList(item.missingDays)}` : "", item.pendingDays?.length ? `Data through ${item.through}; ${dayList(item.pendingDays)} not in yet` : "", item.noDataLines?.length ? `No DCM or DSP days for ${listLines(item.noDataLines)}` : "", item.reviewed ? "Gaps marked as fine" : ""].filter(Boolean).join("; ") || "OK";
+          return {
+            lineItem: item.row.lineName || item.row.campaignName || "—", period: item.period.label || `${item.period.from} to ${item.period.to}`, source: BILLING_SOURCES[item.source] || item.source || "—",
+            rateType: item.row.rateType, rate: item.rate, quantity: item.quantity, billable: item.billable, billed: lastOfRow && entry?.rows && item.row.id in entry.rows ? Number(entry.rows[item.row.id]) : null,
+            data: item.through ? `through ${item.through}` : "", check,
+            lines: (item.lineDetails || []).map(detail => ({ name: shortLine(detail.name), source: detail.source ? BILLING_SOURCES[detail.source] : "—", quantity: quantityOf(detail), billable: Number.isFinite(detail.billable) ? Math.round(detail.billable * 100) / 100 : null, data: detail.noData ? "No DCM or DSP days" : `${detail.from} to ${detail.through}, ${detail.days} days${detail.missing.length ? `, missing ${dayList(detail.missing)}` : ""}` }))
+          };
+        })
+      };
+    }) : [];
+    const kept = status.filter(row => row.client === client);
+    return {
+      client, dataThrough: mine.map(record => record.dataAsOf).filter(Boolean).sort().at(-1) || null, campaigns: campaignRows,
+      alerts: alerts.filter(alert => alert.campaign?.client === client).map(alert => ({ severity: alert.severity, title: ALERT_TYPES[alert.type]?.label || alert.title, line: shortLine(alert.campaign?.name || ""), detail: alert.detail || "" })),
+      todos: todos.filter(item => item.client === client && isOpen(item)).map(item => ({ text: item.text, due: item.due, urgent: item.tag === "urgent" })),
+      status: kept.map(row => ({ name: row.name, track: row.track, performance: row.performance, notes: row.notes, cadence: row.cadence, reportName: row.reportName })),
+      billing: billingMonths
+    };
+  });
+  const live = records.filter(record => dashboardFlightStatus(record) === "live");
+  const units = budgetUnits(live, campaignTotals);
+  const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+  return {
+    today,
+    portfolio: { clients: clients.length, liveCampaigns: new Set(live.map(groupKey)).size, spend: live.reduce((sum, record) => sum + (resolveSpend(record, "billing") || 0), 0), budget: unitsBudget(units), pacing: unitsPacing(units, new Date()), alerts: alerts.length },
+    clients: clientData,
+    lines,
+    uploads: uploadTrail.filter(entry => entry.at >= weekAgo).map(entry => ({ at: new Date(entry.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), fileName: entry.fileName, kind: TRAIL_KINDS[entry.kind] || entry.kind, clients: entry.clients.join(", "), result: [entry.status, entry.detail].filter(Boolean).join(" · ") }))
+  };
+}
+
+/** Writes the four ChatGPT files into "Dashboard for ChatGPT". Skips the write when nothing has changed. */
+async function writeSnapshot({ ask = false } = {}) {
+  const state = snapshotStore();
+  if (!todoFolder) { state.error = ""; renderSnapshotStatus(); return false; }
+  await deliveryReady;
+  try {
+    let permission = await todoFolder.queryPermission({ mode: "readwrite" }).catch(() => "prompt");
+    if (permission !== "granted" && ask) permission = await todoFolder.requestPermission({ mode: "readwrite" }).catch(() => "prompt");
+    state.needsClick = permission !== "granted";
+    if (state.needsClick) { renderSnapshotStatus(); return false; }
+    const data = snapshotData();
+    const linesCsv = buildLinesCsv(data.lines);
+    const billingCsv = buildBillingCsv(data.clients);
+    const body = buildSnapshotMarkdown({ ...data, generatedAt: "" }) + linesCsv + billingCsv;
+    if (body !== state.lastBody || ask) {
+      const generatedAt = new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      const folder = await todoFolder.getDirectoryHandle(SNAPSHOT_FOLDER, { create: true });
+      for (const [name, text] of [[SNAPSHOT_FILES.guide, buildGuide()], [SNAPSHOT_FILES.summary, buildSnapshotMarkdown({ ...data, generatedAt })], [SNAPSHOT_FILES.lines, linesCsv], [SNAPSHOT_FILES.billing, billingCsv]]) {
+        const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
+        await writable.write(text);
+        await writable.close();
+      }
+      state.lastBody = body;
+      state.at = new Date();
+    }
+    state.error = "";
+  } catch (error) {
+    state.error = error?.message || String(error);
+  }
+  renderSnapshotStatus();
+  return !state.error;
+}
+
+function renderSnapshotStatus() {
+  const detail = document.querySelector("#snapshot-detail");
+  if (!detail) return;
+  const state = snapshotStore();
+  const folder = todoFolder?.name;
+  stepStatus("snapshot", !todoFolder ? "todo" : state.needsClick || state.error ? "warn" : state.at ? "done" : "todo");
+  detail.textContent = !todoFolder ? "Connect your morning brief folder above first. The files go inside it."
+    : state.error ? `Couldn’t write the files: ${state.error}. Click Update now to try again.`
+    : state.needsClick ? "Chrome needs your OK to save files in the folder this visit. Click Update now and choose Allow."
+    : state.at ? `Up to date · last written ${state.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} in “${folder}” › “${SNAPSHOT_FOLDER}”. It rewrites itself when the data changes.`
+    : `Saves to “${folder}” › “${SNAPSHOT_FOLDER}” as soon as Chrome allows it.`;
+  document.querySelector("#snapshot-prompt-preview").textContent = buildChatGptPrompt({ folder: folder || "my morning brief folder" });
+  stepStatus("snapshotgpt", state.at ? "done" : "todo");
+}
+document.querySelector("#snapshot-update")?.addEventListener("click", () => writeSnapshot({ ask: true }).then(ok => { if (ok) showToast("ChatGPT files updated", `Saved in “${SNAPSHOT_FOLDER}”. ChatGPT reads them next time you ask.`); }));
+document.querySelector("#snapshot-copy-prompt")?.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(buildChatGptPrompt({ folder: todoFolder?.name || "my morning brief folder" })); showToast("Prompt copied", "Paste it into your ChatGPT project’s instructions, or start a chat with it."); }
+  catch { showToast("Copy it by hand", "Your browser blocked copying. Select the prompt under “See the prompt” and copy it."); }
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") scheduleSnapshot(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && todoFolder) writeDuePacks(); });
 
 function renderClientReporting() {
