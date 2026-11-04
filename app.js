@@ -26,6 +26,7 @@ import { isCampaignArchived, setCampaignArchived } from "./lib/campaign-archive.
 import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } from "./lib/workspace-backup.js";
 import { loadFolderHandle, readProcessedFiles, readTodoFolder, saveFolderHandle, TODO_FILES_KEY } from "./lib/todo-folder.js";
 import { isZipName, unzipReports } from "./lib/zip.js";
+import { dailyTotalRows, reportWorkbook } from "./lib/report-export.js";
 import { bestDays, bucketLabel, buildReport, pacingSeries, pivotReport, REPORT_GRAINS, REPORT_RANGES, resolveReportRange } from "./lib/report-builder.js";
 import { buildBillingCsv, buildChatGptPrompt, buildGuide, buildLinesCsv, buildSnapshotMarkdown, SNAPSHOT_FILES, SNAPSHOT_FOLDER } from "./lib/dashboard-snapshot.js";
 import { addTrailEntry, clientFileHistory, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
@@ -1279,6 +1280,40 @@ function exportReport() {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
+/**
+ * The report as an Excel file: the table on a "Report" tab and every DCM and DSP row behind it on "DCM & DSP data",
+ * like the billing file. Lines whose rows weren't kept show their daily totals instead.
+ */
+async function exportReportWithData() {
+  if (!lastReport) return;
+  const { report, records, state } = lastReport;
+  const button = document.querySelector("#report-export-data");
+  button.disabled = true;
+  button.textContent = "Preparing…";
+  try {
+    const rawRows = [];
+    for (const record of records) {
+      const kept = (await Promise.all(["CM360", "DSP"].map(source => readRawRows(indexedDB, source, [record.name], report.start, report.end).catch(() => [])))).flat();
+      rawRows.push(...(kept.length ? kept : dailyTotalRows(record, report.start, report.end)));
+    }
+    rawRows.sort((a, b) => a.date.localeCompare(b.date) || String(a.line).localeCompare(String(b.line)) || String(a.placement).localeCompare(String(b.placement)));
+    const columns = state.metrics.map(reportColumn).filter(Boolean);
+    const groupLabel = { campaign: "Campaign", line: "Line", client: "Client", all: "All" }[state.group] || "Group";
+    const blob = await writeExcelFile(reportWorkbook({ report, columns, rawRows, groupLabel, bucketText: bucket => bucketLabel(bucket, report.grain) })).toBlob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${(clientScope || "All clients").replace(/[^A-Za-z0-9]+/g, "_")}_report_${report.start}_to_${report.end}.xlsx`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    showToast("Report exported", `${rawRows.length.toLocaleString("en-US")} DCM and DSP row${rawRows.length === 1 ? "" : "s"} are on the “DCM & DSP data” tab.`);
+  } catch (error) {
+    showToast("Couldn’t export", error?.message || String(error));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Export with data";
+  }
+}
+
 function rerenderReport() { saveBuilderState(); if (lastReport) renderReport(lastReport.records); }
 document.querySelector("#report-builder")?.addEventListener("change", event => {
   const state = builderState();
@@ -1294,6 +1329,7 @@ document.querySelector("#report-builder")?.addEventListener("click", event => {
   const tab = event.target.closest("[data-report-view]");
   if (tab) { builderState().view = tab.dataset.reportView; rerenderReport(); return; }
   if (event.target.closest("#report-export")) { exportReport(); return; }
+  if (event.target.closest("#report-export-data")) { exportReportWithData(); return; }
   const expand = event.target.closest("#report-expand");
   if (expand) {
     const panel = document.querySelector("#report-builder");
