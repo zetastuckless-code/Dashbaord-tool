@@ -62,3 +62,15 @@ test("best days rank single days and weekdays by a metric, ignoring days too sma
   assert.equal(result.best, "Wednesday");
   assert.ok(!result.topDays.some(day => day.date === "2026-10-11"));
 });
+
+test("pacing compares spend with each budget spread evenly over its flight, within the chosen dates", async () => {
+  const { pacingSeries } = await import("../lib/report-builder.js");
+  const record = line("NY", { thirdPartyDelivery: { DSP: days("2026-10-01", "2026-10-04", { impressions: 1000, spend: 120 }) } });
+  const units = [{ budget: 3100, startDate: "2026-10-01", endDate: "2026-10-31" }];
+  const series = pacingSeries([record], units, { start: "2026-10-01", end: "2026-10-06", spendView: "media" });
+  assert.deepEqual(series.map(day => day.planned), [100, 100, 100, 100, 100, 100]);
+  assert.deepEqual(series.slice(0, 4).map(day => day.cumulativeActual), [120, 240, 360, 480]);
+  // After the newest day of data there's no actual yet, but the plan keeps counting.
+  assert.equal(series[4].actual, null);
+  assert.equal(series[5].cumulativePlanned, 600);
+});

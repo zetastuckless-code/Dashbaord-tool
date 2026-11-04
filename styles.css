@@ -828,3 +828,11 @@ body.report-open::before{content:"";position:fixed;inset:0;background:rgba(20,22
 .report-builder .report-table-wrap{max-width:100%}
 /* With the alerts panel gone the builder spans the whole row. */
 .content-grid{grid-template-columns:minmax(0,1fr)}
+
+/* Whole-range comparisons: one bar per group with its full name. */
+.report-hbars{display:grid;gap:8px}
+.report-hbar{display:grid;grid-template-columns:minmax(120px,32%) 1fr auto;gap:12px;align-items:center;font-size:12px}
+.report-hbar-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#30384b;font-weight:600}
+.report-hbar-track{height:18px;background:#f1f2f6;border-radius:5px;overflow:hidden}.report-hbar-track span{display:block;height:100%;background:var(--accent,#6658e8);border-radius:5px}
+.report-hbar b{font-variant-numeric:tabular-nums;min-width:90px;text-align:right}
+@media(max-width:640px){.report-hbar{grid-template-columns:1fr auto}.report-hbar-track{grid-column:1/-1;grid-row:2}}
