@@ -4190,6 +4190,7 @@ const deliveryReady = readLineDeliveries(indexedDB).then(stored => {
   deliveryLoaded = true;
   saveCampaigns();
   renderCampaigns();
+  renderSnapshotStatus();
   updateStorageWarning();
 });
 // Ask Chrome to keep the reports database even when the disk gets low.
@@ -5539,13 +5540,25 @@ function renderSnapshotStatus() {
     : state.needsClick ? "Chrome needs your OK to save files in the folder this visit. Click Update now and choose Allow."
     : state.at ? `Up to date · last written ${state.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} in “${folder}” › “${SNAPSHOT_FOLDER}”. It rewrites itself when the data changes.`
     : `Saves to “${folder}” › “${SNAPSHOT_FOLDER}” as soon as Chrome allows it.`;
-  document.querySelector("#snapshot-prompt-preview").textContent = buildChatGptPrompt({ folder: folder || "my morning brief folder" });
+  // The client list follows the dashboard; the choice is kept while you copy one project's prompt after another.
+  const picker = document.querySelector("#snapshot-client");
+  const clients = orderClients([...new Set(campaigns.filter(record => !isCampaignArchived(record) && !isPlaceholder(record)).map(record => record.client))], readClientOrder(localStorage));
+  const chosen = clients.includes(picker.value) ? picker.value : "";
+  picker.innerHTML = `<option value="">All clients (one project for everything)</option>${clients.map(client => `<option value="${escapeHtml(client)}"${client === chosen ? " selected" : ""}>${escapeHtml(client)}</option>`).join("")}`;
+  picker.value = chosen;
+  document.querySelector("#snapshot-prompt-preview").textContent = buildChatGptPrompt({ folder: folder || "my morning brief folder", client: chosen });
   stepStatus("snapshotgpt", state.at ? "done" : "todo");
 }
 document.querySelector("#snapshot-update")?.addEventListener("click", () => writeSnapshot({ ask: true }).then(ok => { if (ok) showToast("ChatGPT files updated", `Saved in “${SNAPSHOT_FOLDER}”. ChatGPT reads them next time you ask.`); }));
 document.querySelector("#snapshot-copy-prompt")?.addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(buildChatGptPrompt({ folder: todoFolder?.name || "my morning brief folder" })); showToast("Prompt copied", "Paste it into your ChatGPT project’s instructions, or start a chat with it."); }
+  const client = document.querySelector("#snapshot-client")?.value || "";
+  try { await navigator.clipboard.writeText(buildChatGptPrompt({ folder: todoFolder?.name || "my morning brief folder", client })); showToast("Prompt copied", client ? `Paste it into the ${client} project’s instructions in ChatGPT.` : "Paste it into your ChatGPT project’s instructions, or start a chat with it."); }
   catch { showToast("Copy it by hand", "Your browser blocked copying. Select the prompt under “See the prompt” and copy it."); }
+});
+// Opening the list refreshes it, so a client added since the page was drawn is there.
+document.querySelector("#snapshot-client")?.addEventListener("focus", () => renderSnapshotStatus());
+document.querySelector("#snapshot-client")?.addEventListener("change", event => {
+  document.querySelector("#snapshot-prompt-preview").textContent = buildChatGptPrompt({ folder: todoFolder?.name || "my morning brief folder", client: event.target.value });
 });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") scheduleSnapshot(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && todoFolder) writeDuePacks(); });

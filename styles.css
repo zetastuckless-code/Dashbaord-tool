@@ -780,3 +780,4 @@ a.meeting-card:focus-visible{outline:2px solid var(--primary);outline-offset:2px
 .billing-reviewed{display:block;margin-top:4px;font-size:11px;font-weight:600;color:#2f7d4f}
 .breakout-reviewed td:nth-child(3){color:#2f7d4f}
 .billing-by-line{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#454e60;white-space:nowrap;cursor:pointer}.billing-by-line input{width:15px;height:15px;accent-color:var(--accent,#5b4be3)}
+.snapshot-client{display:grid;gap:4px;margin:10px 0;font-size:12px;font-weight:700;color:#30384b;max-width:420px}.snapshot-client select{font:inherit;font-weight:600;height:34px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:#fff}.snapshot-client small{font-weight:500;color:#636c7e}
