@@ -3254,7 +3254,7 @@ function renderMorningBrief() {
   const open = sortTodos(todos.filter(isOpen));
   const stale = brief && brief.date < today;
   document.querySelector("#morning-brief-title").textContent = brief ? `Morning brief · ${new Date(`${brief.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}` : "To-dos";
-  document.querySelector("#morning-brief-context").innerHTML = brief ? `${escapeHtml(brief.sources || "Morning scan")}${brief.skipped ? ` · <span class="warning-text">${escapeHtml(brief.skipped)}</span>` : ""}${stale ? ' · <span class="warning-text">not today’s brief yet</span>' : ""}` : "Add a morning brief to see your day here";
+  document.querySelector("#morning-brief-context").innerHTML = brief ? `${escapeHtml(brief.sources || "Morning scan")}${brief.skipped ? ` · <span class="warning-text">${escapeHtml(brief.skipped)}</span>` : ""}${brief.slack ? ` · ${escapeHtml(brief.slack)}` : ""}${stale ? ' · <span class="warning-text">not today’s brief yet</span>' : ""}` : "Add a morning brief to see your day here";
   const calendar = stale ? [] : brief?.calendar || [];
   // Today's meetings as small cards: the time, the meeting, and a link to the invite. Past ones fade; the next one stands out.
   const now = new Date();
@@ -3546,7 +3546,7 @@ document.querySelector("#brief-quick-add").addEventListener("submit", event => {
 // --- Automation setup guide ---
 let automation = readAutomationSettings(localStorage);
 const saveAutomation = () => localStorage.setItem(AUTOMATION_KEY, JSON.stringify(automation));
-const AUTOMATION_FIELDS = { "#auto-name": "name", "#auto-email": "email", "#auto-jira-user": "jiraUser", "#auto-jira-site": "jiraSite", "#auto-timezone": "timezone", "#auto-run-time": "runTime", "#auto-folder": "folder", "#auto-extra": "extraAccounts" };
+const AUTOMATION_FIELDS = { "#auto-slack-id": "slackId", "#auto-name": "name", "#auto-email": "email", "#auto-jira-user": "jiraUser", "#auto-jira-site": "jiraSite", "#auto-timezone": "timezone", "#auto-run-time": "runTime", "#auto-folder": "folder", "#auto-extra": "extraAccounts" };
 if (!automation.timezone) automation.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
 for (const [selector, field] of Object.entries(AUTOMATION_FIELDS)) document.querySelector(selector).value = automation[field] ?? "";
 document.querySelector("#auto-slack").checked = Boolean(automation.slack);
