@@ -122,3 +122,23 @@ test("matches agency-style headings to dashboard clients", () => {
   assert.equal(matchClient("Highmark (TRUth) — PA Medicaid Brand + COMM SEPA", known), "Highmark");
   assert.equal(matchClient("Farm Bureau Financial Services (Slingshot)", known), null);
 });
+
+test("the brief searches Slack by each person's member ID, DMs, and threads, and says unread status is unavailable", async () => {
+  const { morningScanPrompt } = await import("../lib/client-todos.js");
+  const prompt = morningScanPrompt(["Nature's Sunshine"], { name: "Sam", email: "sam@example.com", slackId: "U0TEST1234" });
+  assert.match(prompt, /mention Sam's Slack member ID U0TEST1234 \(written <@U0TEST1234> in a message\)/);
+  assert.match(prompt, /DMs and group DMs: every conversation Sam is in/);
+  assert.match(prompt, /Threads: replies in threads Sam started or replied to/);
+  assert.match(prompt, /read or unread/);
+  assert.match(prompt, /Slack: 9 messages in the last 24 hours \(unread status unavailable\)/);
+  assert.doesNotMatch(prompt, /unread threads, and unread DMs/);
+  // Someone who hasn't filled in their ID sees what's missing; with Slack off, none of it appears.
+  assert.match(morningScanPrompt([], {}), /\[your Slack member ID\]/);
+  assert.doesNotMatch(morningScanPrompt([], { slack: false }), /member ID/);
+});
+
+test("a brief's Slack line is kept with its sources", async () => {
+  const { parseTodoFile } = await import("../lib/client-todos.js");
+  const { brief } = parseTodoFile("# Morning brief · 2026-11-06\nSources: Outlook + Jira + Slack\nSlack: no messages found in the last 24 hours (unread status unavailable)\n\n## Nature's Sunshine\n- [ ] Reply to Ray | tag: todo", { clients: ["Nature's Sunshine"], today: "2026-11-06" });
+  assert.equal(brief.slack, "no messages found in the last 24 hours (unread status unavailable)");
+});
