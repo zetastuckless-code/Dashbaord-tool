@@ -56,6 +56,11 @@
       </aside>
 
       <main class="main-content" id="overview" tabindex="-1">
+        <div class="folder-alert" id="folder-alert" role="alert" hidden>
+          <span class="folder-alert-icon" aria-hidden="true">!</span>
+          <span class="folder-alert-text"><b id="folder-alert-title"></b><span id="folder-alert-detail"></span></span>
+          <span class="folder-alert-actions"><button class="primary-button" id="folder-alert-approve" type="button">Allow folders</button><a class="text-button" href="?view=automation">Details</a></span>
+        </div>
         <header class="topbar">
           <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded="false">☰</button>
           <div>

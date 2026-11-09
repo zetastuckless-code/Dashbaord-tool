@@ -836,3 +836,11 @@ body.report-open::before{content:"";position:fixed;inset:0;background:rgba(20,22
 .report-hbar-track{height:18px;background:#f1f2f6;border-radius:5px;overflow:hidden}.report-hbar-track span{display:block;height:100%;background:var(--accent,#6658e8);border-radius:5px}
 .report-hbar b{font-variant-numeric:tabular-nums;min-width:90px;text-align:right}
 @media(max-width:640px){.report-hbar{grid-template-columns:1fr auto}.report-hbar-track{grid-column:1/-1;grid-row:2}}
+
+/* Folder access banner: the dashboard can't reach a folder, so nothing new comes in until it's fixed. */
+.folder-alert{position:sticky;top:10px;z-index:40;display:flex;align-items:center;gap:12px;margin:0 0 16px;padding:12px 16px;background:#fff6ea;border:1px solid #f0c48f;border-radius:12px;box-shadow:0 8px 24px rgba(138,85,22,.12);color:#5c3a10}
+.folder-alert[hidden]{display:none}
+.folder-alert-icon{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#e3973c;color:#fff;font-weight:800}
+.folder-alert-text{flex:1;min-width:0;font-size:13px;line-height:1.45}.folder-alert-text b{font-weight:700}
+.folder-alert-actions{display:flex;gap:10px;align-items:center;flex:none}
+@media(max-width:640px){.folder-alert{flex-wrap:wrap}.folder-alert-actions{width:100%}}

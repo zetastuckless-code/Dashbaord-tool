@@ -3420,6 +3420,7 @@ if (folderSupported) {
   loadFolderHandle(indexedDB, FOLDER_KEY).then(handle => {
     todoFolder = handle;
     renderFolderStatus();
+    checkFolderAccessAlert().catch(() => {});
     return checkTodoFolder();
   }).then(() => writeDuePacks()).catch(() => renderFolderStatus());
   setInterval(() => { if (todoFolder && !folderState.needsClick && document.visibilityState === "visible") checkTodoFolder(); }, 5 * 60_000);
@@ -3702,6 +3703,41 @@ function connectedFolders() {
     return []; // still loading
   }
 }
+/**
+ * The banner across the top of every page when the dashboard can't reach a connected folder: Chrome wants your OK again
+ * (usually after a restart) or the folder couldn't be read. Until then nothing new imports, so it says so, and the tab
+ * title gets a warning mark you can see from another tab.
+ */
+async function checkFolderAccessAlert() {
+  const banner = document.querySelector("#folder-alert");
+  if (!banner) return;
+  const folders = connectedFolders();
+  const states = await Promise.all(folders.map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")));
+  let lastChecks = {};
+  try { lastChecks = reportState.folders || {}; } catch { /* still loading */ }
+  const blocked = folders.filter((folder, index) => states[index] !== "granted");
+  const broken = folders.filter((folder, index) => states[index] === "granted" && folder.prefix !== null && lastChecks[folder.prefix]?.error);
+  const show = blocked.length + broken.length > 0;
+  banner.hidden = !show;
+  document.body.classList.toggle("folder-alert-open", show);
+  if (show) {
+    const names = list => list.map(folder => folder.label).join(", ");
+    const what = [...new Set([...blocked, ...broken].map(folder => folder.label === "Morning brief" ? "the morning brief" : "new reports"))].join(" and ");
+    document.querySelector("#folder-alert-title").textContent = blocked.length ? `The dashboard can’t reach ${blocked.length === 1 ? "a folder" : `${blocked.length} folders`}: ${names(blocked)}.` : `Couldn’t read ${names(broken)}.`;
+    document.querySelector("#folder-alert-detail").textContent = ` ${blocked.length ? "Chrome needs your OK again, usually after a restart." : "OneDrive may be offline or the folder moved."} Until then ${what} won’t come in.`;
+    document.querySelector("#folder-alert-approve").textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : "Try again";
+  }
+  const title = document.title.replace(/^⚠ /, "");
+  document.title = show ? `⚠ ${title}` : title;
+}
+document.querySelector("#folder-alert-approve")?.addEventListener("click", async () => {
+  await approveAllFolders().catch(() => {});
+  checkFolderAccessAlert().catch(() => {});
+});
+// Chrome can take a folder's access away at any time (a restart, a new day), so look again every minute and on return.
+setInterval(() => checkFolderAccessAlert().catch(() => {}), 60_000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkFolderAccessAlert().catch(() => {}); });
+
 /** "allowed · checked 9:05 AM, 2 new" or the error the last check hit. */
 function folderCheckText(prefix) {
   const last = prefix === null ? null : reportState.folders[prefix];
@@ -3710,6 +3746,7 @@ function folderCheckText(prefix) {
   return last.error ? `couldn't read it at ${when}: ${last.error}` : `allowed · checked ${when}${last.found ? `, ${last.found} new` : ""}`;
 }
 async function renderFolderAccess() {
+  checkFolderAccessAlert().catch(() => {});
   const box = document.querySelector("#folder-access");
   const folders = connectedFolders();
   box.hidden = !folders.length;
