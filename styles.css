@@ -145,7 +145,7 @@ body.client-view .topbar h1{max-width:60vw}
 .pacing-range select,.pacing-range input{height:36px;border:1px solid #dfe2ea;border-radius:8px;background:#fff;padding:0 10px;font:600 12px "DM Sans",sans-serif;color:#30384b;min-width:150px}
 .pacing-range select:focus,.pacing-range input:focus{outline:2px solid #6558e833;border-color:#6558e8}
 .pacing-custom{display:flex;flex-wrap:wrap;gap:14px}.pacing-custom[hidden]{display:none}
-body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:none!important}
+body.sources-view .main-content>:not(.topbar):not(#folder-alert):not(#data-sources-page){display:none!important}
 .data-sources[hidden]{display:none}.data-sources{margin-top:4px}
 .sources-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin:14px 0 18px;padding:14px 16px;background:#fff;border:1px solid var(--line);border-radius:11px}
 .sources-controls label{display:grid;gap:4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#636c7e}
@@ -193,7 +193,7 @@ body.sources-view .main-content>:not(.topbar):not(#data-sources-page){display:no
 .io-edit{margin-left:auto;font-size:12px}
 .client-back[hidden]{display:none}
 .campaign-line.line-done{padding-block:4px;color:#636c7e;background:#fafafc}.campaign-line.line-done .campaign-title small{display:none}.campaign-line.line-done .campaign-title strong{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.campaign-line.line-done .metric-cell strong{font-weight:500;color:#636c7e}.campaign-line.line-done .status-dot-label{font-size:11px}
-body.alerts-view .main-content>:not(.topbar):not(#alerts-page){display:none!important}
+body.alerts-view .main-content>:not(.topbar):not(#folder-alert):not(#alerts-page){display:none!important}
 .alerts-page[hidden]{display:none}.alerts-page{display:grid;gap:14px;margin-bottom:24px}
 .alerts-page-summary{display:flex;gap:10px;flex-wrap:wrap}.alerts-summary-chip{display:flex;align-items:baseline;gap:8px;padding:10px 16px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;font:inherit;color:var(--ink)}.alerts-summary-chip strong{font:800 20px Manrope,sans-serif}.alerts-summary-chip.critical strong{color:var(--red)}.alerts-summary-chip.warning strong{color:var(--amber)}.alerts-summary-chip.info strong{color:var(--blue)}.alerts-summary-chip.active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(99,87,229,.18)}
 .alerts-page-list{display:grid;gap:12px}
@@ -247,8 +247,8 @@ body.alerts-view .main-content>:not(.topbar):not(#alerts-page){display:none!impo
 .brief-calendar,.brief-items{list-style:none;margin:0;padding:0;display:grid;gap:7px}.brief-calendar li{display:grid;grid-template-columns:62px 1fr;gap:8px;font-size:12px}.brief-calendar b{color:#596273;font-weight:600}.brief-items li{display:flex;gap:8px;font-size:12px;color:var(--ink)}.brief-items small{display:block;color:#636c7e;font-size:12px;margin-top:1px}.brief-items a,.todo-list a{color:var(--primary);text-decoration:none}.brief-empty{margin:0;font-size:12px;color:#636c7e}
 .todo-dot{flex:0 0 8px;height:8px;border-radius:50%;margin-top:5px;background:var(--blue)}.todo-dot.urgent{background:var(--red)}.todo-dot.waiting{background:var(--amber)}.todo-dot.fyi{background:var(--green)}
 .todo-tag{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:999px;font:700 11px "DM Sans";letter-spacing:.03em;text-transform:uppercase;font-style:normal;vertical-align:1px;background:#eaf2fc;color:#2c66b0}.todo-tag.urgent{background:#fdecef;color:#a8384a}.todo-tag.waiting{background:#fff3e5;color:#8a5516}.todo-tag.fyi{background:#eaf8f3;color:#136c4e}
-body.brief-view .main-content>:not(.topbar):not(#morning-brief):not(#brief-page){display:none!important}
-body.automation-view .main-content>:not(.topbar):not(#automation-page){display:none!important}
+body.brief-view .main-content>:not(.topbar):not(#folder-alert):not(#morning-brief):not(#brief-page){display:none!important}
+body.automation-view .main-content>:not(.topbar):not(#folder-alert):not(#automation-page){display:none!important}
 .brief-page[hidden],.automation-page[hidden]{display:none}.brief-page{margin:0 0 18px;padding-bottom:14px}.brief-filter{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)}.brief-filter select,#brief-quick-client{font:500 12px "DM Sans";border:1px solid var(--line);border-radius:7px;padding:6px 8px;color:var(--ink);background:#fff}
 .brief-groups{display:grid;gap:16px;padding:4px 0 0}.brief-group-head{display:flex;justify-content:space-between;align-items:baseline;padding:0 20px}.brief-group-head h3{margin:0;font:700 13px Manrope,sans-serif}.brief-group-head small{color:#636c7e;font-size:12px}.brief-group .todo-list{padding-top:4px}.todo-list li.fyi label span{color:#596273}
 .automation-page{display:grid;gap:14px;margin-bottom:24px;max-width:980px}.automation-intro{padding:20px 22px}.automation-intro h2{margin:0 0 6px;font:750 18px Manrope,sans-serif}.automation-intro p{margin:0 0 12px;color:#596273;font-size:13px;line-height:1.55}.automation-progress{display:grid;gap:6px;font-size:12px;color:#596273}.automation-progress .progress-track{margin:0}
@@ -393,7 +393,7 @@ body[data-sky-time=dawn] .sky-sun{top:auto;bottom:-4vw;left:10vw;right:auto;widt
 @supports (grid-template-rows:subgrid){.client-grid{row-gap:0}.client-card{display:grid;grid-row:span 5;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);row-gap:0;margin-bottom:14px}.client-card .progress-track[hidden]{display:block;visibility:hidden}}
 
 /* Getting started: a full-page welcome on an empty workspace, then a short checklist on the overview. */
-body.first-run .main-content>:not(.topbar):not(#welcome){display:none!important}
+body.first-run .main-content>:not(.topbar):not(#folder-alert):not(#welcome){display:none!important}
 body.first-run #workspace-backup-button,body.first-run #export-dashboard-button,body.first-run .top-actions .icon-button{display:none}
 .welcome[hidden]{display:none}
 .welcome{max-width:820px;margin:0 0 18px;padding:28px 30px 24px;border-radius:14px}
@@ -451,7 +451,7 @@ body.first-run #workspace-backup-button,body.first-run #export-dashboard-button,
 .campaign-card-head .metric-cell small{letter-spacing:.2px}
 
 /* Report review page */
-body.review-view .main-content>:not(.topbar):not(#review-page){display:none!important}
+body.review-view .main-content>:not(.topbar):not(#folder-alert):not(#review-page){display:none!important}
 .review-page[hidden]{display:none}.review-page{display:grid;gap:14px;max-width:980px;margin-bottom:24px}
 .review-section .report-inbox,.review-section .report-activity,.review-imports{margin:0;padding:0 20px 18px}
 .review-imports{list-style:none;display:grid;gap:10px}
@@ -484,7 +484,7 @@ body.review-view .main-content>:not(.topbar):not(#review-page){display:none!impo
 .dcm-source{margin:12px 0 4px;font:700 12px Manrope,sans-serif;color:var(--ink)}.dcm-source:first-child{margin-top:0}
 
 /* Billing: the client's setup on its tab, and the monthly list on the Billing page */
-body.billing-view .main-content>:not(.topbar):not(#billing-page){display:none!important}
+body.billing-view .main-content>:not(.topbar):not(#folder-alert):not(#billing-page){display:none!important}
 .billing-page[hidden],.client-billing[hidden]{display:none}.billing-page{max-width:980px;margin-bottom:24px}.client-billing{margin:0 0 20px}
 .file-button{display:inline-flex;align-items:center;cursor:pointer}
 .billing-client-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 14px;padding:0 20px 14px}
@@ -518,7 +518,7 @@ body.billing-view .main-content>:not(.topbar):not(#billing-page){display:none!im
 .kpi-watch-worst{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 
 /* Settings: one page, grouped into short sections of label, explanation, and the control or link */
-body.settings-view .main-content>:not(.topbar):not(#settings-page){display:none!important}
+body.settings-view .main-content>:not(.topbar):not(#folder-alert):not(#settings-page){display:none!important}
 .settings-page[hidden]{display:none}.settings-page{display:grid;gap:14px;max-width:880px;margin-bottom:24px}
 .settings-rows{display:grid;padding:0 20px 8px}
 .settings-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;padding:12px 0;border-top:1px solid #f0f1f5}

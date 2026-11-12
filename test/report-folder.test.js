@@ -43,3 +43,15 @@ test("Downloads: only new files at the top, from after it was connected", async 
   const { files } = await findNewReports(downloads, {}, { now, onlyReportFolders: false, lookbackDays: 3, maxDepth: 0, since: now - DAY });
   assert.deepEqual(files.map(entry => entry.key), ["Carter_blood_care_daily_report_9.csv"]);
 });
+
+test("a subfolder or file that can't be opened is skipped, and the rest of the folder still comes in", async () => {
+  const notFound = () => { throw Object.assign(new Error("A requested file or directory could not be found at the time an operation was processed."), { name: "NotFoundError" }); };
+  const gone = { kind: "directory", name: "Moved Report", values: async function* () { notFound(); } };
+  const offline = { kind: "file", name: "Online-only report.csv", getFile: async () => notFound() };
+  const shared = dir("Shared", [gone, dir("Report", [offline, file("Weekly report.csv")])]);
+  const scan = await findNewReports(shared, {}, { now });
+  assert.deepEqual(scan.files.map(entry => entry.key), ["Report/Weekly report.csv"]);
+  assert.deepEqual(scan.skipped.map(entry => entry.path), ["Moved Report", "Report/Online-only report.csv"]);
+  // The watched folder itself failing to open is still an error.
+  await assert.rejects(findNewReports({ kind: "directory", name: "Gone", values: async function* () { notFound(); } }, {}, { now }));
+});
