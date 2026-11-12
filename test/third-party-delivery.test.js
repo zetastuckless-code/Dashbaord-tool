@@ -178,3 +178,26 @@ test("placements named with flight dates go on Flight 1, Flight 2… lines, from
   // Two ranges for three flight lines, with no IO, isn't guessed.
   assert.equal(assignByFlight(lines, names.slice(0, 2)).size, 0);
 });
+
+test("a DCM campaign skipped indefinitely stays skipped in later reports until a campaign is picked for it", async () => {
+  const { planDelivery, rememberThirdPartyLinks, SKIP_ALWAYS } = await import("../lib/third-party-delivery.js");
+  const storage = { items: {}, setItem(key, value) { this.items[key] = value; } };
+  const lines = [{ client: "RAC", name: "RAC National OLA Q2 2026", campaignGroup: "RAC National OLA Q2 2026" }];
+  const parsed = { source: "CM360", campaigns: [{ key: "35351866", sourceCampaignId: "35351866", sourceCampaignName: "RAC_National_OLA_Q2_2026" }], placements: [{ sourceCampaignId: "35351866", placement: "Display_300x250", date: "2026-10-27", impressions: 10 }], records: [] };
+  const entry = parsed.campaigns[0];
+  // Ticked: saved as a standing skip.
+  let links = rememberThirdPartyLinks(storage, {}, [{ entry, target: null, skipped: true, skipAlways: true }], "CM360");
+  assert.equal(links["CM360::35351866"], SKIP_ALWAYS);
+  const later = planDelivery(lines, parsed, links)[0];
+  assert.equal(later.skipped, true);
+  assert.equal(later.skippedAlways, true);
+  assert.equal(later.target, null);
+  // Skipped just this once leaves no link behind; unticking a standing skip removes it.
+  assert.equal(rememberThirdPartyLinks(storage, {}, [{ entry, target: null, skipped: true, skipAlways: false }], "CM360")["CM360::35351866"], undefined);
+  links = rememberThirdPartyLinks(storage, links, [{ entry, target: null, skipped: true, skipAlways: false }], "CM360");
+  assert.equal(links["CM360::35351866"], undefined);
+  // Picking a campaign by hand wins over the standing skip.
+  const picked = planDelivery(lines, parsed, { "CM360::35351866": SKIP_ALWAYS }, { 35351866: "rac::rac national ola q2 2026" })[0];
+  assert.equal(picked.skipped, undefined);
+  assert.equal(picked.target, "rac::rac national ola q2 2026");
+});

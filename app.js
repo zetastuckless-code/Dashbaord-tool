@@ -66,7 +66,7 @@ import { importClients, markImportsReviewed, pendingImportReviews, readReviewedI
 import { readOnboarding, setupProgress, writeOnboarding } from "./lib/onboarding.js";
 import { deleteRawRows, readRawRows, saveRawRows } from "./lib/raw-delivery-store.js";
 import { clearDeliveryStores, LOCAL_STORAGE_LIMIT, lineKey as deliveryKey, localStorageUsed, readLineDeliveries, storageLevel, writeLineDeliveries } from "./lib/line-delivery-store.js";
-import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, LEAVE_OUT, placementChoiceKey, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberPlacementLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
+import { applyDcmTopUps, applyDelivery, isAddedValue, DELIVERY_SOURCES, deliveryComparison, LEAVE_OUT, SKIP_ALWAYS, placementChoiceKey, rawRowsForPlan, planDelivery, readThirdPartyLinks, rememberPlacementLinks, rememberThirdPartyLinks } from "./lib/third-party-delivery.js";
 import writeExcelFile from "write-excel-file/universal";
 import readXlsxFile, { readSheetNames } from "read-excel-file";
 import { attachLineDays, billedBefore, reviewBillingRow, unreviewBillingRow, billingFileMonth, billingFileName, billingMonth, billingSheets, computeClientBilling, importedHistory, repairImportedHistory, latestProjection, monthLabel, monthName, projectionDue, setProjection, parseBillingSheet, previousMonth, RATE_TYPES, readBilling, SOURCES as BILLING_SOURCES, writeBilling } from "./lib/billing.js";
@@ -1986,7 +1986,7 @@ async function prepareImport(file, { allowDuplicate = false } = {}) {
       recordImport(file.name, fingerprint, "Rejected", 0, messages);
       return { status: "rejected", messages };
     }
-    return { status: "ready", pending: { kind: "delivery", fileName: file.name, fingerprint, report, parsed: report.parsed, targets: {}, placements: {} } };
+    return { status: "ready", pending: { kind: "delivery", fileName: file.name, fingerprint, report, parsed: report.parsed, targets: {}, placements: {}, skipAlways: {} } };
   }
   if (report.kind === "daily-delivery" || report.kind === "line-items") {
     // Flashtalking daily files and DSP line-item exports are not imported on their own; campaign reports carry the lines.
@@ -3901,7 +3901,9 @@ const readReportActivity = () => { try { const value = JSON.parse(localStorage.g
 function importIsClear() {
   if (pendingValidatedImport.kind === "delivery") {
     const plan = deliveryPlan();
-    const unmatched = plan.find(item => !item.target);
+    // A file holding only campaigns you skip for good has nothing to import and nothing to review.
+    if (plan.length && plan.every(item => item.skippedAlways)) return { clear: false, skip: true, reason: `Every ${deliveryLabel()} campaign in it is set to skip` };
+    const unmatched = plan.find(item => !item.target && !item.skippedAlways);
     if (unmatched) return { clear: false, reason: `${deliveryLabel()} campaign “${unmatched.entry.sourceCampaignName || unmatched.entry.sourceCampaignId}” doesn't match a campaign on the dashboard. Pick the campaign once and later reports follow it.` };
     if (!plan.some(item => item.assigned.size)) return { clear: false, reason: "None of its lines matched a line on the dashboard. Review it to check the campaign." };
     return { clear: true };
@@ -3981,10 +3983,10 @@ async function checkReportFolder({ ask = false } = {}) {
             if (pendingValidatedImport.kind !== "delivery") normalizeLineSkips();
             const check = importIsClear();
             if (check.clear) { const lines = commitPendingImport({ automatic: true }); results.push(["imported", `${part.name}: ${lines} line${lines === 1 ? "" : "s"}`]); imported.push(part.name); }
-            else results.push(["needs review", `${part.name}: ${check.reason}`]);
+            else results.push([check.skip ? "skipped" : "needs review", `${part.name}: ${check.reason}`]);
             pendingValidatedImport = null;
           }
-          outcome = ["couldn't read", "needs review", "imported", "already imported"].find(value => results.some(([result]) => result === value));
+          outcome = ["couldn't read", "needs review", "imported", "already imported", "skipped"].find(value => results.some(([result]) => result === value));
           reason = results.map(([, text]) => text).filter(Boolean).join(" · ");
         } else {
           const prepared = await prepareImport(entry.file);
@@ -3999,7 +4001,7 @@ async function checkReportFolder({ ask = false } = {}) {
               outcome = "imported";
               reason = `${lines} line${lines === 1 ? "" : "s"}`;
               imported.push(entry.name);
-            } else { outcome = "needs review"; reason = check.reason; }
+            } else { outcome = check.skip ? "skipped" : "needs review"; reason = check.reason; }
           }
         }
       } catch (error) {
@@ -4034,7 +4036,7 @@ async function checkReportFolder({ ask = false } = {}) {
   renderReportAutomation();
 }
 
-const outcomeLabel = { imported: "Imported", "needs review": "Needs review", "couldn't read": "Couldn't read", "already imported": "Already imported" };
+const outcomeLabel = { imported: "Imported", "needs review": "Needs review", "couldn't read": "Couldn't read", "already imported": "Already imported", skipped: "Skipped" };
 function renderReportAutomation() {
   renderFolderAccess();
   const inbox = readReportInbox(localStorage);
@@ -4622,7 +4624,13 @@ function deliveryPlan() {
     return [key, item ? `${groupName(item)} — ${value.slice(NEW_LINE.length)}` : LEAVE_OUT];
   }));
   const plan = planDelivery([...live, ...added], pending.parsed, thirdPartyLinks, targets, choices, { flightsFor });
-  return Object.assign(plan.map(item => pending.targets[item.entry.key] === SKIP_DELIVERY ? { ...item, target: null, skipped: true } : item), { added, choices });
+  // A skip ticked "indefinitely" here (or unticked on one skipped before) is saved with the import.
+  const always = key => pending.skipAlways?.[key];
+  return Object.assign(plan.map(item => {
+    if (pending.targets[item.entry.key] === SKIP_DELIVERY) return { ...item, target: null, skipped: true, skipAlways: always(item.entry.key) ?? false, skippedAlways: false };
+    if (item.skippedAlways && always(item.entry.key) === false) return { ...item, skippedAlways: false, skipAlways: false };
+    return item;
+  }), { added, choices });
 }
 /** "Display", "Native", "Video"… from what most of the placements are, for a new line's name. */
 function suggestedLineName(names) {
@@ -4674,6 +4682,8 @@ function renderDeliveryAssignments() {
   document.querySelector("#import-assignment-list").innerHTML = plan.map(item => {
     const chosen = pendingValidatedImport.targets[item.entry.key];
     const undecided = !item.target && !item.skipped;
+    const forGood = item.skipped && (pendingValidatedImport.skipAlways?.[item.entry.key] ?? Boolean(item.skippedAlways));
+    const skipBox = item.skipped ? `<label class="skip-always"><input type="checkbox" data-skip-always="${escapeHtml(item.entry.key)}"${forGood ? " checked" : ""}> Skip this campaign indefinitely<small>${forGood ? "Later reports leave it out without asking. Untick it or pick a campaign to bring it back." : "Only this file leaves it out. Tick to leave it out of every report from now on."}</small></label>` : "";
     const options = `${undecided ? '<option value="" selected disabled>Choose a campaign (required)</option>' : ""}<option value="${SKIP_DELIVERY}"${item.skipped ? " selected" : ""}>Skip this campaign</option>${groups.map(group => `<option value="${escapeHtml(group.key)}"${item.target === group.key ? " selected" : ""}>${escapeHtml(group.client)} · ${escapeHtml(group.name)}${!chosen && item.target === group.key ? " (matched)" : ""}</option>`).join("")}`;
     const perLine = item.lines.map((name, index) => [name, [...item.assigned.values()].filter(value => value === index).length]);
     const lines = item.target ? `<ul class="delivery-lines">${perLine.map(([name, count]) => `<li><span>${escapeHtml(name.includes(" — ") ? name.split(" — ").slice(1).join(" — ") : name)}</span><span>${count ? `${count} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${count === 1 ? "" : "s"}` : '<em class="muted">nothing matched</em>'}</span></li>`).join("")}</ul>${item.unassigned.length || item.chosen?.size ? (() => {
@@ -4683,12 +4693,12 @@ function renderDeliveryAssignments() {
       const picked = [...(item.chosen || [])].filter(name => !other.includes(name) && !isAddedValue(name));
       return `${other.length || free.length || picked.length ? `<div class="warn-pills">${other.length || picked.length ? placementPicker(item, other, picked, unit) : ""}${free.length ? warnPill(`${free.length} added value`, `Added-value ${unit}s are free and no line is for added value, so they’re left out:`, free, "subtle") : ""}</div>` : ""}`;
     })() : ""}` : "";
-    return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>${deliveryLabel()} campaign${item.entry.sourceCampaignId ? ` ${escapeHtml(item.entry.sourceCampaignId)}` : ""} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? `<small class="import-required-note">Pick the dashboard campaign this ${deliveryLabel()} campaign belongs to. Later reports follow your choice.</small>` : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${lines}</div>`;
+    return `<div class="import-assignment-block${undecided ? " needs-choice" : ""}"><div class="import-assignment-row"><span><strong>${escapeHtml(item.entry.sourceCampaignName || item.entry.sourceCampaignId)}</strong><small>${deliveryLabel()} campaign${item.entry.sourceCampaignId ? ` ${escapeHtml(item.entry.sourceCampaignId)}` : ""} · ${item.entry.days} day${item.entry.days === 1 ? "" : "s"}, ${escapeHtml(item.entry.firstDate)} to ${escapeHtml(item.entry.lastDate)}</small>${undecided ? `<small class="import-required-note">Pick the dashboard campaign this ${deliveryLabel()} campaign belongs to. Later reports follow your choice.</small>` : ""}</span><select data-delivery-target="${escapeHtml(item.entry.key)}" aria-label="Dashboard campaign for ${escapeHtml(item.entry.sourceCampaignName)}"${undecided ? ' aria-invalid="true" required' : ""}>${options}</select></div>${skipBox}${lines}</div>`;
   }).join("");
   const undecided = plan.filter(item => !item.target && !item.skipped).length;
   const assigned = plan.some(item => item.target && item.assigned.size);
   const errorBox = document.querySelector("#import-setup-error");
-  const message = undecided ? `Pick the campaign for ${undecided === 1 ? `the highlighted ${deliveryLabel()} campaign` : `the ${undecided} highlighted ${deliveryLabel()} campaigns`} before importing, or skip it.` : !assigned ? "Nothing in it matches a line in the chosen campaign." : "";
+  const message = undecided ? `Pick the campaign for ${undecided === 1 ? `the highlighted ${deliveryLabel()} campaign` : `the ${undecided} highlighted ${deliveryLabel()} campaigns`} before importing, or skip it.` : !assigned && !plan.every(item => item.skipped) ? "Nothing in it matches a line in the chosen campaign." : "";
   errorBox.hidden = !message;
   errorBox.textContent = message;
   document.querySelector("#import-preview").hidden = true;
@@ -4703,6 +4713,14 @@ document.querySelector("#import-assignment-list").addEventListener("change", eve
     // Keep the list open after a pick so the next one is right there.
     const entryKey = pick.dataset.placementPickAll || pick.dataset.placementPick.slice(0, pick.dataset.placementPick.indexOf("::"));
     document.querySelector(`#import-assignment-list [data-placement-pick-all="${CSS.escape(entryKey)}"]`)?.closest(".warn-pill")?.setAttribute("open", "");
+    return;
+  }
+  const always = event.target.closest("[data-skip-always]");
+  if (always && pendingValidatedImport?.kind === "delivery") {
+    const key = always.dataset.skipAlways;
+    pendingValidatedImport.skipAlways[key] = always.checked;
+    if (!always.checked) pendingValidatedImport.targets[key] = SKIP_DELIVERY;
+    renderDeliveryAssignments();
     return;
   }
   const select = event.target.closest("[data-delivery-target]");
@@ -4728,7 +4746,8 @@ function commitDeliveryImport({ automatic = false } = {}) {
   const touched = campaigns.filter(record => plan.some(item => item.target && groupKey(record) === item.target) && record.thirdPartyFiles?.[0] === fileName);
   const warnings = [
     ...plan.filter(item => item.target && item.unassigned.some(name => !isAddedValue(name))).map(item => ({ ...item, unassigned: item.unassigned.filter(name => !isAddedValue(name)) })).map(item => `${item.unassigned.length} ${deliveryLabel()} ${pendingValidatedImport.parsed.source === "DSP" ? "line item" : "placement"}${item.unassigned.length === 1 ? "" : "s"} in “${item.entry.sourceCampaignName}” didn’t match a line: ${item.unassigned.slice(0, 3).join(", ")}${item.unassigned.length > 3 ? "…" : ""}`),
-    ...plan.filter(item => item.skipped).map(item => `${deliveryLabel()} campaign “${item.entry.sourceCampaignName}” was skipped.`),
+    // A campaign skipped for good is your standing choice, not something to flag on every import.
+    ...plan.filter(item => item.skipped && !item.skippedAlways && !item.skipAlways).map(item => `${deliveryLabel()} campaign “${item.entry.sourceCampaignName}” was skipped.`),
     ...(automatic ? ["Imported automatically from the watched report folder."] : [])
   ];
   const flagged = warnings.filter(warning => !warning.startsWith("Imported automatically"));
