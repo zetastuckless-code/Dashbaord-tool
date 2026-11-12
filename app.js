@@ -3743,7 +3743,8 @@ function folderCheckText(prefix) {
   const last = prefix === null ? null : reportState.folders[prefix];
   if (!last) return "allowed";
   const when = new Date(last.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return last.error ? `couldn't read it at ${when}: ${last.error}` : `allowed · checked ${when}${last.found ? `, ${last.found} new` : ""}`;
+  const skipped = last.skipped?.length ? ` · skipped ${last.skipped.length} item${last.skipped.length === 1 ? "" : "s"} OneDrive hasn’t synced (${last.skipped.slice(0, 2).map(path => `“${path}”`).join(", ")}${last.skipped.length > 2 ? "…" : ""})` : "";
+  return last.error ? `couldn't read it at ${when}: ${last.error}` : `allowed · checked ${when}${last.found ? `, ${last.found} new` : ""}${skipped}`;
 }
 async function renderFolderAccess() {
   checkFolderAccessAlert().catch(() => {});
@@ -3753,7 +3754,9 @@ async function renderFolderAccess() {
   if (!folders.length) return;
   const states = await Promise.all(folders.map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")));
   const waiting = states.filter(state => state !== "granted").length;
-  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : "All folders allowed"}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && reportState.folders[folder.prefix]?.error) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
+  const unread = folders.filter((folder, index) => states[index] === "granted" && folder.prefix !== null && reportState.folders[folder.prefix]?.error).length;
+  const summary = waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : unread ? `Allowed, but ${unread === 1 ? "1 folder" : `${unread} folders`} couldn’t be read` : "All folders allowed and read";
+  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${summary}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && reportState.folders[folder.prefix]?.error) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
 }
 /** Asks for each folder in turn from one click, then reads what came in while they were blocked. */
 async function approveAllFolders() {
@@ -3763,11 +3766,19 @@ async function approveAllFolders() {
     } catch { /* Chrome only asks right after a click; the next click asks for whatever is left */ }
   }
   await checkTodoFolder();
+  // A check already under way would make this one return early with the old result, so wait for it first.
+  for (let waited = 0; reportState.running && waited < 120; waited += 1) await new Promise(resolve => setTimeout(resolve, 500));
   await checkReportFolder();
   renderFolderStatus();
   renderReportAutomation();
-  const left = (await Promise.all(connectedFolders().map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")))).filter(state => state !== "granted").length;
-  showToast(left ? "Some folders still need you" : "Folders allowed", left ? `${left} folder${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} your OK. Click Re-approve again.` : "The dashboard can read every connected folder again.");
+  const folders = connectedFolders();
+  const states = await Promise.all(folders.map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")));
+  const left = states.filter(state => state !== "granted").length;
+  // Allowed isn't the same as read: a folder that moved or went offline still needs looking at.
+  const unread = folders.filter((folder, index) => states[index] === "granted" && folder.prefix !== null && reportState.folders[folder.prefix]?.error);
+  if (left) showToast("Some folders still need you", `${left} folder${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} your OK. Click Re-approve again.`);
+  else if (unread.length) showToast("Allowed, but not read", `Couldn’t read ${unread.map(folder => folder.label).join(", ")}: ${reportState.folders[unread[0].prefix].error}.`);
+  else showToast("Folders allowed", "The dashboard can read every connected folder again.");
 }
 document.querySelector("#folder-access").addEventListener("click", event => {
   if (event.target.closest("#folder-access-approve")) approveAllFolders();
@@ -3946,11 +3957,12 @@ async function checkReportFolder({ ask = false } = {}) {
         const scan = await findNewReports(folder, view, options);
         reportState.scanned += scan.scanned;
         reportState.truncated ||= scan.truncated;
-        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: scan.files.length, error: "" };
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: scan.files.length, error: "", skipped: scan.skipped.map(item => item.path) };
+        if (scan.skipped.length) console.warn("Skipped items the dashboard couldn't open", folder.name, scan.skipped);
         files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
       } catch (error) {
         console.warn("Couldn't read a watched folder", folder.name, error);
-        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, error: error?.message || String(error) };
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, error: error?.name === "NotFoundError" ? "the folder wasn't found. It may have moved or been renamed, so pick it again" : error?.message || String(error) };
       }
     }
     for (const entry of files.sort((a, b) => a.lastModified - b.lastModified)) {
