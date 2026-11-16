@@ -55,3 +55,14 @@ test("a subfolder or file that can't be opened is skipped, and the rest of the f
   // The watched folder itself failing to open is still an error.
   await assert.rejects(findNewReports({ kind: "directory", name: "Gone", values: async function* () { notFound(); } }, {}, { now }));
 });
+
+test("a file OneDrive never hands over is skipped after the time limit, and the newest file date is reported", async () => {
+  const { withTimeout } = await import("../lib/report-folder.js");
+  const stuck = { kind: "file", name: "Stuck report.csv", getFile: () => new Promise(() => {}) };
+  const scan = await findNewReports(dir("DCM", [stuck, file("Daily report.csv", 2), file("Older report.csv", 5)]), {}, { now, onlyReportFolders: false, fileTimeoutMs: 20 });
+  assert.deepEqual(scan.files.map(entry => entry.name), ["Older report.csv", "Daily report.csv"]);
+  assert.deepEqual(scan.skipped.map(entry => entry.path), ["Stuck report.csv"]);
+  assert.equal(scan.newest, now - 2 * DAY);
+  await assert.rejects(withTimeout(new Promise(() => {}), 10, "too slow"), { name: "TimeoutError", message: "too slow" });
+  assert.equal(await withTimeout(Promise.resolve(5), 10, "too slow"), 5);
+});

@@ -30,7 +30,7 @@ import { dailyTotalRows, reportWorkbook } from "./lib/report-export.js";
 import { bestDays, bucketLabel, buildReport, pacingSeries, pivotReport, REPORT_GRAINS, REPORT_RANGES, resolveReportRange } from "./lib/report-builder.js";
 import { buildBillingCsv, buildChatGptPrompt, buildGuide, buildLinesCsv, buildSnapshotMarkdown, SNAPSHOT_FILES, SNAPSHOT_FOLDER } from "./lib/dashboard-snapshot.js";
 import { addTrailEntry, clientFileHistory, filterTrail, groupTrailByDay, readUploadTrail, seedUploadTrail, TRAIL_KIND_OPTIONS, TRAIL_KINDS, trailDuplicate, trailFailed, writeUploadTrail } from "./lib/upload-trail.js";
-import { findNewReports, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
+import { findNewReports, withTimeout, noteReport, openReportAt, readReportInbox, readReportLedger, readReportSettings, REPORT_INBOX_KEY, REPORT_LEDGER_KEY, REPORT_SETTINGS_KEY } from "./lib/report-folder.js";
 import { applyBrief, AUTOMATION_KEY, BRIEF_KEY, INTERNAL, isOpen, mergeTodos, morningScanPrompt, readAutomationSettings, parseTodoFile, pruneTodos, readBrief, readTodos, setTodoDone, sortTodos, todoTemplate, writeTodos } from "./lib/client-todos.js";
 import { previewCampaignImport } from "./lib/import-preview.js";
 import { applyImportRollback, clearImportRollback, createImportRollback, createRemovalUndo, readImportRollback, readUndoStack, undoLabel, writeImportRollback } from "./lib/import-rollback.js";
@@ -3717,15 +3717,24 @@ async function checkFolderAccessAlert() {
   try { lastChecks = reportState.folders || {}; } catch { /* still loading */ }
   const blocked = folders.filter((folder, index) => states[index] !== "granted");
   const broken = folders.filter((folder, index) => states[index] === "granted" && folder.prefix !== null && lastChecks[folder.prefix]?.error);
-  const show = blocked.length + broken.length > 0;
+  let stale = null;
+  try { stale = staleSince(DCM_PREFIX); } catch { /* still loading */ }
+  const show = blocked.length + broken.length > 0 || Boolean(stale);
   banner.hidden = !show;
   document.body.classList.toggle("folder-alert-open", show);
   if (show) {
     const names = list => list.map(folder => folder.label).join(", ");
     const what = [...new Set([...blocked, ...broken].map(folder => folder.label === "Morning brief" ? "the morning brief" : "new reports"))].join(" and ");
-    document.querySelector("#folder-alert-title").textContent = blocked.length ? `The dashboard can’t reach ${blocked.length === 1 ? "a folder" : `${blocked.length} folders`}: ${names(blocked)}.` : `Couldn’t read ${names(broken)}.`;
-    document.querySelector("#folder-alert-detail").textContent = ` ${blocked.length ? "Chrome needs your OK again, usually after a restart." : "OneDrive may be offline or the folder moved."} Until then ${what} won’t come in.`;
-    document.querySelector("#folder-alert-approve").textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : "Try again";
+    if (!blocked.length && !broken.length) {
+      // The folders read fine, but nothing new has landed in the DCM and DSP folder for days.
+      document.querySelector("#folder-alert-title").textContent = `No new DCM or DSP files since ${shortDay(stale)}.`;
+      document.querySelector("#folder-alert-detail").textContent = " The folder reads fine, so the emails or the Power Automate flow that saves them have likely stopped. Check the flow’s run history.";
+      document.querySelector("#folder-alert-approve").textContent = "Check again";
+    } else {
+      document.querySelector("#folder-alert-title").textContent = blocked.length ? `The dashboard can’t reach ${blocked.length === 1 ? "a folder" : `${blocked.length} folders`}: ${names(blocked)}.` : `Couldn’t read ${names(broken)}.`;
+      document.querySelector("#folder-alert-detail").textContent = ` ${blocked.length ? "Chrome needs your OK again, usually after a restart." : "OneDrive may be offline or the folder moved."} Until then ${what} won’t come in.`;
+      document.querySelector("#folder-alert-approve").textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : "Try again";
+    }
   }
   const title = document.title.replace(/^⚠ /, "");
   document.title = show ? `⚠ ${title}` : title;
@@ -3738,13 +3747,25 @@ document.querySelector("#folder-alert-approve")?.addEventListener("click", async
 setInterval(() => checkFolderAccessAlert().catch(() => {}), 60_000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkFolderAccessAlert().catch(() => {}); });
 
+/**
+ * The newest file in the DCM and DSP folder when it's more than 3 days old. Those emails come in daily, so a quiet
+ * folder usually means the flow that saves them (Power Automate) stopped, even while the folder itself reads fine.
+ */
+function staleSince(prefix) {
+  const last = prefix === DCM_PREFIX ? reportState.folders?.[prefix] : null;
+  if (!last || last.error || !last.newest || Date.now() - last.newest < 3 * 86_400_000) return null;
+  return new Date(last.newest);
+}
+function shortDay(date) { return date.toLocaleDateString([], { month: "short", day: "numeric" }); }
 /** "allowed · checked 9:05 AM, 2 new" or the error the last check hit. */
 function folderCheckText(prefix) {
   const last = prefix === null ? null : reportState.folders[prefix];
   if (!last) return "allowed";
   const when = new Date(last.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const skipped = last.skipped?.length ? ` · skipped ${last.skipped.length} item${last.skipped.length === 1 ? "" : "s"} OneDrive hasn’t synced (${last.skipped.slice(0, 2).map(path => `“${path}”`).join(", ")}${last.skipped.length > 2 ? "…" : ""})` : "";
-  return last.error ? `couldn't read it at ${when}: ${last.error}` : `allowed · checked ${when}${last.found ? `, ${last.found} new` : ""}${skipped}`;
+  const stale = staleSince(prefix);
+  const newest = last.newest ? ` · newest file ${shortDay(new Date(last.newest))}${stale ? ", nothing new since. Check the flow that saves these emails" : ""}` : "";
+  return last.error ? `couldn't read it at ${when}: ${last.error}` : `allowed · checked ${when}${last.found ? `, ${last.found} new` : ""}${newest}${skipped}`;
 }
 async function renderFolderAccess() {
   checkFolderAccessAlert().catch(() => {});
@@ -3755,8 +3776,8 @@ async function renderFolderAccess() {
   const states = await Promise.all(folders.map(folder => folder.handle.queryPermission({ mode: folder.mode }).catch(() => "prompt")));
   const waiting = states.filter(state => state !== "granted").length;
   const unread = folders.filter((folder, index) => states[index] === "granted" && folder.prefix !== null && reportState.folders[folder.prefix]?.error).length;
-  const summary = waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : unread ? `Allowed, but ${unread === 1 ? "1 folder" : `${unread} folders`} couldn’t be read` : "All folders allowed and read";
-  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${summary}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && reportState.folders[folder.prefix]?.error) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
+  const summary = waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : unread ? `Allowed, but ${unread === 1 ? "1 folder" : `${unread} folders`} couldn’t be read` : staleSince(DCM_PREFIX) ? `Allowed and read, but no new DCM or DSP files since ${shortDay(staleSince(DCM_PREFIX))}` : "All folders allowed and read";
+  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${summary}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && (reportState.folders[folder.prefix]?.error || staleSince(folder.prefix))) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
 }
 /** Asks for each folder in turn from one click, then reads what came in while they were blocked. */
 async function approveAllFolders() {
@@ -3956,10 +3977,10 @@ async function checkReportFolder({ ask = false } = {}) {
         const view = Object.fromEntries(Object.entries(ledger).filter(([key]) => prefix ? key.startsWith(prefix) : !key.startsWith(DCM_PREFIX) && !key.startsWith(DL_PREFIX)).map(([key, value]) => [key.slice(prefix.length), value]));
         const since = Number(localStorage.getItem(DOWNLOADS_SINCE_KEY)) || Date.now();
         const options = prefix === DL_PREFIX ? { ...reportSettings, onlyReportFolders: false, lookbackDays: 3, maxDepth: 0, since } : prefix ? { ...reportSettings, onlyReportFolders: false } : reportSettings;
-        const scan = await findNewReports(folder, view, options);
+        const scan = await withTimeout(findNewReports(folder, view, options), 5 * 60_000, "OneDrive didn't answer for 5 minutes, so this check moved on. It tries again on the next check");
         reportState.scanned += scan.scanned;
         reportState.truncated ||= scan.truncated;
-        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: scan.files.length, error: "", skipped: scan.skipped.map(item => item.path) };
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: scan.files.length, error: "", skipped: scan.skipped.map(item => item.path), newest: scan.newest };
         if (scan.skipped.length) console.warn("Skipped items the dashboard couldn't open", folder.name, scan.skipped);
         files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
       } catch (error) {
@@ -3971,6 +3992,9 @@ async function checkReportFolder({ ask = false } = {}) {
       let outcome;
       let reason = "";
       try {
+        // Read the file once, with a time limit, so a file OneDrive never delivers can't stall the check. The copy in
+        // memory is what the import reads from then on.
+        entry.file = new File([await withTimeout(entry.file.arrayBuffer(), 90_000, "OneDrive didn't download it in time. It tries again on the next check")], entry.file.name, { lastModified: entry.file.lastModified, type: entry.file.type });
         // A zip with several reports is taken one report at a time; its outcome is the one that most needs you.
         const parts = isZipName(entry.name) && entry.file.size <= 50 * 1024 * 1024 ? await zipReports(entry.file) : [entry.file];
         if (parts.length > 1) {
@@ -4005,6 +4029,14 @@ async function checkReportFolder({ ask = false } = {}) {
           }
         }
       } catch (error) {
+        // A file OneDrive didn't deliver in time isn't marked as seen, so the next check tries it again.
+        if (error?.name === "TimeoutError") {
+          console.warn("OneDrive didn't deliver a report in time", entry.name);
+          activity.unshift({ at: new Date().toISOString(), name: entry.name, outcome: "waiting on OneDrive", reason: error.message });
+          pendingValidatedImport = null;
+          save();
+          continue;
+        }
         // A file that breaks the reader is set aside for review instead of stopping every report after it.
         console.warn("Couldn't import a report from the folder", entry.name, error);
         outcome = "couldn't read";
@@ -4036,7 +4068,7 @@ async function checkReportFolder({ ask = false } = {}) {
   renderReportAutomation();
 }
 
-const outcomeLabel = { imported: "Imported", "needs review": "Needs review", "couldn't read": "Couldn't read", "already imported": "Already imported", skipped: "Skipped" };
+const outcomeLabel = { imported: "Imported", "needs review": "Needs review", "couldn't read": "Couldn't read", "already imported": "Already imported", skipped: "Skipped", "waiting on OneDrive": "Waiting on OneDrive" };
 function renderReportAutomation() {
   renderFolderAccess();
   const inbox = readReportInbox(localStorage);
