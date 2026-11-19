@@ -3730,16 +3730,28 @@ async function checkFolderAccessAlert() {
       document.querySelector("#folder-alert-title").textContent = `No new DCM or DSP files since ${shortDay(stale)}.`;
       document.querySelector("#folder-alert-detail").textContent = " The folder reads fine, so the emails or the Power Automate flow that saves them have likely stopped. Check the flow’s run history.";
       document.querySelector("#folder-alert-approve").textContent = "Check again";
+      document.querySelector("#folder-alert-approve").dataset.mode = "";
     } else {
       document.querySelector("#folder-alert-title").textContent = blocked.length ? `The dashboard can’t reach ${blocked.length === 1 ? "a folder" : `${blocked.length} folders`}: ${names(blocked)}.` : `Couldn’t read ${names(broken)}.`;
       document.querySelector("#folder-alert-detail").textContent = ` ${blocked.length ? "Chrome needs your OK again, usually after a restart." : "OneDrive may be offline or the folder moved."} Until then ${what} won’t come in.`;
-      document.querySelector("#folder-alert-approve").textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : "Try again";
+      // A folder whose saved link finds nothing needs picking again; trying again only repeats the same miss.
+      const missing = !blocked.length && broken.find(folder => lastChecks[folder.prefix]?.missing);
+      if (missing) document.querySelector("#folder-alert-detail").textContent = ` OneDrive may have re-created or moved “${missing.handle.name}” when it reconnected, so the dashboard needs you to pick it again. Until then ${what} won’t come in.`;
+      const button = document.querySelector("#folder-alert-approve");
+      button.textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : missing ? "Pick it again" : "Try again";
+      button.dataset.mode = missing ? "repick" : "";
+      button.dataset.prefix = missing ? missing.prefix : "";
     }
   }
   const title = document.title.replace(/^⚠ /, "");
   document.title = show ? `⚠ ${title}` : title;
 }
-document.querySelector("#folder-alert-approve")?.addEventListener("click", async () => {
+document.querySelector("#folder-alert-approve")?.addEventListener("click", async event => {
+  if (event.currentTarget.dataset.mode === "repick") {
+    // The folder picker has to open from this click, so it's the same as the folder's own Connect button.
+    document.querySelector(repickButtonFor(event.currentTarget.dataset.prefix))?.click();
+    return;
+  }
   await approveAllFolders().catch(() => {});
   checkFolderAccessAlert().catch(() => {});
 });
@@ -3757,6 +3769,10 @@ function staleSince(prefix) {
   return new Date(last.newest);
 }
 function shortDay(date) { return date.toLocaleDateString([], { month: "short", day: "numeric" }); }
+/** The button that picks a watched folder again, for one whose saved link no longer finds it. */
+function repickButtonFor(prefix) {
+  return { "": "#report-connect-button", [DCM_PREFIX]: "#dcm-connect-button", [DL_PREFIX]: "#downloads-connect-button" }[prefix] || null;
+}
 /** "allowed · checked 9:05 AM, 2 new" or the error the last check hit. */
 function folderCheckText(prefix) {
   const last = prefix === null ? null : reportState.folders[prefix];
@@ -3777,7 +3793,7 @@ async function renderFolderAccess() {
   const waiting = states.filter(state => state !== "granted").length;
   const unread = folders.filter((folder, index) => states[index] === "granted" && folder.prefix !== null && reportState.folders[folder.prefix]?.error).length;
   const summary = waiting ? `${waiting} of ${folders.length} folder${folders.length === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} your OK this visit` : unread ? `Allowed, but ${unread === 1 ? "1 folder" : `${unread} folders`} couldn’t be read` : staleSince(DCM_PREFIX) ? `Allowed and read, but no new DCM or DSP files since ${shortDay(staleSince(DCM_PREFIX))}` : "All folders allowed and read";
-  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${summary}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && (reportState.folders[folder.prefix]?.error || staleSince(folder.prefix))) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small></li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
+  box.innerHTML = `<div class="folder-access-head"><b>Folder access</b><span>${summary}</span><button class="${waiting ? "primary-button" : "secondary-button"}" type="button" id="folder-access-approve">${waiting ? "Re-approve all folders" : "Check access again"}</button></div><ul>${folders.map((folder, index) => `<li class="${states[index] === "granted" && !(folder.prefix !== null && (reportState.folders[folder.prefix]?.error || staleSince(folder.prefix))) ? "ok" : "warn"}"><span>${escapeHtml(folder.label)}</span><small>“${escapeHtml(folder.handle.name)}” · ${states[index] === "granted" ? folderCheckText(folder.prefix) : "needs a click"}</small>${states[index] === "granted" && folder.prefix !== null && reportState.folders[folder.prefix]?.missing ? `<button class="text-button" type="button" data-repick="${escapeHtml(folder.prefix)}">Pick it again</button>` : ""}</li>`).join("")}</ul><p>When Chrome asks, pick “Allow on every visit” if it offers it, so you won’t need this next time.</p>`;
 }
 /** Asks for each folder in turn from one click, then reads what came in while they were blocked. */
 async function approveAllFolders() {
@@ -3803,6 +3819,8 @@ async function approveAllFolders() {
 }
 document.querySelector("#folder-access").addEventListener("click", event => {
   if (event.target.closest("#folder-access-approve")) approveAllFolders();
+  const repick = event.target.closest("[data-repick]");
+  if (repick) document.querySelector(repickButtonFor(repick.dataset.repick))?.click();
 });
 
 function renderAutomationPage() {
@@ -3985,7 +4003,7 @@ async function checkReportFolder({ ask = false } = {}) {
         files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
       } catch (error) {
         console.warn("Couldn't read a watched folder", folder.name, error);
-        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, error: error?.name === "NotFoundError" ? "the folder wasn't found. It may have moved or been renamed, so pick it again" : error?.message || String(error) };
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, missing: error?.name === "NotFoundError", error: error?.name === "NotFoundError" ? "the folder wasn't found. OneDrive may have re-created or moved it, so pick it again" : error?.message || String(error) };
       }
     }
     for (const entry of files.sort((a, b) => a.lastModified - b.lastModified)) {
