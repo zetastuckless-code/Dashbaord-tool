@@ -66,3 +66,13 @@ test("a file OneDrive never hands over is skipped after the time limit, and the 
   await assert.rejects(withTimeout(new Promise(() => {}), 10, "too slow"), { name: "TimeoutError", message: "too slow" });
   assert.equal(await withTimeout(Promise.resolve(5), 10, "too slow"), 5);
 });
+
+test("a listing that breaks part-way keeps what it read; one that gives up nothing is still an error", async () => {
+  const notFound = () => Object.assign(new Error("A requested file or directory could not be found at the time an operation was processed."), { name: "NotFoundError" });
+  const breaksAfter = (name, children) => ({ kind: "directory", name, values: async function* () { yield* children; throw notFound(); } });
+  const scan = await findNewReports(breaksAfter("OneDrive-SharedLibraries-ZetaGlobal", [dir("Indy Report", [file("Weekly report.csv")])]), {}, { now });
+  assert.deepEqual(scan.files.map(entry => entry.key), ["Indy Report/Weekly report.csv"]);
+  assert.equal(scan.skipped.length, 1);
+  assert.match(scan.skipped[0].path, /the rest of/);
+  await assert.rejects(findNewReports(breaksAfter("Empty", []), {}, { now }), { name: "NotFoundError" });
+});
