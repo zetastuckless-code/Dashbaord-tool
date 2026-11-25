@@ -3736,9 +3736,11 @@ async function checkFolderAccessAlert() {
       document.querySelector("#folder-alert-detail").textContent = ` ${blocked.length ? "Chrome needs your OK again, usually after a restart." : "OneDrive may be offline or the folder moved."} Until then ${what} won’t come in.`;
       // A folder whose saved link finds nothing needs picking again; trying again only repeats the same miss.
       const missing = !blocked.length && broken.find(folder => lastChecks[folder.prefix]?.missing);
-      if (missing) document.querySelector("#folder-alert-detail").textContent = ` OneDrive may have re-created or moved “${missing.handle.name}” when it reconnected, so the dashboard needs you to pick it again. Until then ${what} won’t come in.`;
+      // Picked fresh and still not listed: Chrome gives up on the whole folder when one thing inside it is broken.
+      const listing = missing && lastChecks[missing.prefix]?.listing;
+      if (missing) document.querySelector("#folder-alert-detail").textContent = listing ? ` Chrome can’t list what’s inside “${missing.handle.name}”, usually because one library or folder in it is broken in OneDrive. Pick the folder inside it that holds your reports. Until then ${what} won’t come in.` : ` OneDrive may have re-created or moved “${missing.handle.name}” when it reconnected, so the dashboard needs you to pick it again. Until then ${what} won’t come in.`;
       const button = document.querySelector("#folder-alert-approve");
-      button.textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : missing ? "Pick it again" : "Try again";
+      button.textContent = blocked.length ? `Allow ${blocked.length === 1 ? "folder" : "folders"}` : listing ? "Pick a folder inside it" : missing ? "Pick it again" : "Try again";
       button.dataset.mode = missing ? "repick" : "";
       button.dataset.prefix = missing ? missing.prefix : "";
     }
@@ -3769,6 +3771,14 @@ function staleSince(prefix) {
   return new Date(last.newest);
 }
 function shortDay(date) { return date.toLocaleDateString([], { month: "short", day: "numeric" }); }
+/** When each watched folder was last picked, kept across reloads, so a fresh pick that still fails gets a different fix. */
+const FOLDER_PICKED_KEY = "northstar-folder-picked-at";
+function notePicked(prefix) {
+  try { localStorage.setItem(FOLDER_PICKED_KEY, JSON.stringify({ ...JSON.parse(localStorage.getItem(FOLDER_PICKED_KEY) || "{}"), [prefix]: Date.now() })); } catch { /* the message just stays general */ }
+}
+function pickedRecently(prefix) {
+  try { return Date.now() - (JSON.parse(localStorage.getItem(FOLDER_PICKED_KEY) || "{}")[prefix] || 0) < 24 * 3_600_000; } catch { return false; }
+}
 /** The button that picks a watched folder again, for one whose saved link no longer finds it. */
 function repickButtonFor(prefix) {
   return { "": "#report-connect-button", [DCM_PREFIX]: "#dcm-connect-button", [DL_PREFIX]: "#downloads-connect-button" }[prefix] || null;
@@ -4003,7 +4013,7 @@ async function checkReportFolder({ ask = false } = {}) {
         files.push(...scan.files.map(entry => ({ ...entry, key: prefix + entry.key, path: prefix === DL_PREFIX ? ["Downloads", ...entry.path] : prefix ? ["DCM folder", ...entry.path] : entry.path })));
       } catch (error) {
         console.warn("Couldn't read a watched folder", folder.name, error);
-        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, missing: error?.name === "NotFoundError", error: error?.name === "NotFoundError" ? "the folder wasn't found. OneDrive may have re-created or moved it, so pick it again" : error?.message || String(error) };
+        reportState.folders[prefix] = { checkedAt: new Date().toISOString(), found: 0, missing: error?.name === "NotFoundError", listing: error?.name === "NotFoundError" && pickedRecently(prefix), error: error?.name !== "NotFoundError" ? error?.message || String(error) : pickedRecently(prefix) ? "Chrome can't list what's inside it. Picked fresh, this usually means one library or folder inside it is broken in OneDrive, and Chrome then lists nothing. Pick the library or folder inside it that holds your reports" : "the folder wasn't found. OneDrive may have re-created or moved it, so pick it again" };
       }
     }
     for (const entry of files.sort((a, b) => a.lastModified - b.lastModified)) {
@@ -4129,6 +4139,7 @@ document.querySelector("#report-connect-button").addEventListener("click", async
     const handle = await window.showDirectoryPicker({ id: "northstar-reports", mode: "read" });
     reportFolder = handle;
     await saveFolderHandle(indexedDB, REPORT_FOLDER_KEY, handle);
+    notePicked("");
     await checkReportFolder({ ask: true });
   } catch { /* the picker was closed */ }
   renderReportAutomation();
@@ -4145,6 +4156,7 @@ document.querySelector("#downloads-connect-button").addEventListener("click", as
     // Only files downloaded from now on: what's already there was never meant for the dashboard.
     try { localStorage.setItem(DOWNLOADS_SINCE_KEY, String(Date.now())); } catch { /* every scan then starts from now */ }
     await saveFolderHandle(indexedDB, DOWNLOADS_FOLDER_KEY, handle);
+    notePicked(DL_PREFIX);
     await checkReportFolder({ ask: true });
   } catch { /* the picker was closed, or Chrome blocked that folder */ }
   renderReportAutomation();
@@ -4159,6 +4171,7 @@ document.querySelector("#dcm-connect-button").addEventListener("click", async ()
     const handle = await window.showDirectoryPicker({ id: "northstar-dcm", mode: "read" });
     dcmFolder = handle;
     await saveFolderHandle(indexedDB, DCM_FOLDER_KEY, handle);
+    notePicked(DCM_PREFIX);
     await checkReportFolder({ ask: true });
   } catch { /* the picker was closed */ }
   renderReportAutomation();
